@@ -1,0 +1,1 @@
+ALTER TABLE `accounts` ADD `is_guest` integer DEFAULT 0 NOT NULL;

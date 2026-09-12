@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./themes.css";
+import {headers} from 'next/headers';
+import {I18nProvider} from './components/i18n';
 
 export const metadata: Metadata = {
   title: "面试自习室｜每日学习与复习",
@@ -13,14 +16,15 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const h=await headers();const cookie=h.get('cookie')?.match(/(?:^|;\s*)study-language=(zh|en)(?:;|$)/)?.[1];const locale=cookie==='en'||(!cookie&&h.get('accept-language')?.toLowerCase().startsWith('en'))?'en':'zh';
   return (
-    <html lang="zh-CN" suppressHydrationWarning>
-      <body className="antialiased">{children}</body>
+    <html lang={locale==='en'?'en':'zh-CN'} suppressHydrationWarning>
+      <body className="antialiased"><I18nProvider initialLocale={locale}>{children}</I18nProvider></body>
     </html>
   );
 }

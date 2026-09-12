@@ -23,7 +23,7 @@ f('p-go-f01','go','Channel','接收 channel 时判断其是否已关闭且数据
 f('p-go-f02','go','并发','等待一组 goroutine 结束，标准库 sync 中常用的计数同步类型是 ____。',['WaitGroup','sync.WaitGroup'],'WaitGroup 通过 Add、Done、Wait 管理任务计数。常见做法是启动 goroutine 前 Add，在任务内 defer Done；它本身不传播错误。'),
 f('p-go-f03','go','内存','切片 s 的容量由内置函数 ____(s) 取得。',['cap'],'len 是当前长度，cap 是从起始位置到底层数组末端的可用容量。追加超过容量时需要分配新的底层数组。'),
 f('p-go-f04','go','资源释放','在函数退出前安排资源关闭，一般写 ____ f.Close()。',['defer'],'defer 会在外围函数退出时执行，包括常见 panic 展开路径；不是在当前循环迭代结束时执行，所以大循环中应注意资源堆积。'),
-f('p-go-f05','go','取消','context 被取消或超时后，Done 返回的 channel 会被 ____。填写中文动词。',['关闭'],'关闭 channel 可同时通知多个监听者。取消不会自动杀死 goroutine，代码应在 select 中响应 ctx.Done()。'),
+f('p-go-f05','go','取消','context 被取消或超时后，Done 返回的 channel 会被 ____。填写中文动词。',['关闭','closed'],'关闭 channel 可同时通知多个监听者。取消不会自动杀死 goroutine，代码应在 select 中响应 ctx.Done()。'),
 f('p-go-f06','go','字符串','Go 中用于表示一个 Unicode 码点的预定义类型别名是 ____。',['rune'],'rune 是 int32 的别名。字符串按字节存储，range 字符串按 UTF-8 解码码点；一个用户看到的字符也可能由多个码点组成。'),
 f('p-be-f01','backend','SQL','SQL 中对分组后的聚合结果筛选，使用 ____ 子句。',['HAVING'],'WHERE 先筛选输入行，HAVING 筛选分组聚合后的结果。例如 GROUP BY user_id HAVING COUNT(*) > 1。'),
 f('p-be-f02','backend','SQL','统计表中所有行（包含字段为 NULL 的行），写 COUNT(____)。',['*'],'COUNT(*) 统计行数；COUNT(column) 只统计该字段非 NULL 的行，因此两者在含 NULL 的数据上可能不同。'),
