@@ -1,0 +1,11 @@
+# Training content and modes
+
+`practice.ts` adds 48 original training questions about the topics covered by the source document. It does not replace or rewrite the 305 imported questions. There are 12 single-choice, 12 fill-in, 12 short-answer, and 12 code questions. Each has a reference answer and explanation. Subjective questions include a rubric; code questions include a reference implementation. Go snippets are function/type fragments with required imports called out in the explanation, not standalone programs.
+
+Objective grading compares only accepted answers (NFKC, trim, case folding, collapsed whitespace). Subjective answers are not automatically graded, and code is never executed by the website. Exam solutions stay server-side until hand-in. Simulation and random training reveal solutions only after the current answer is submitted. Blank submission is an explicit supported action.
+
+Exam: 12 distinct questions, 3 of each type, filtered by track. Simulation: 6 short questions and 2 code questions. Random: sampling with replacement, a separate saved occurrence for every appearance. All modes use 30 or 60 minutes of foreground active study, support pause/resume, and save timer credit every 15 seconds (and at answer/pause/finish). Closed/offline pages do not accrue time. Unexpected tab/process termination may lose up to the unsaved heartbeat interval. Only random sessions count toward the Beijing-calendar-day time goal. Submitted responses and completed reviews are account-scoped D1 records, independent from the document's spaced-repetition progress.
+
+When expanding, append stable namespaced question IDs and preserve previously published IDs, types, and answers used by historical runs. Each question carries a `track`, `topic`, and optional `jobTags`/`source`, suitable for a future language or job-specific bank. Add its track to the supported track registry and ensure at least 3 questions of every exam type and 6 short questions plus 2 code questions per track before exposing full modes. Do not label heuristic rubric matching as AI grading. Actual code execution would need a separate isolated runner.
+
+Validation: `node tests/practice.mjs` uses the real API and an isolated Worker-native D1 database. `node tests/auth-study.mjs` protects existing login and review behavior. New schema migrations are append-only.
