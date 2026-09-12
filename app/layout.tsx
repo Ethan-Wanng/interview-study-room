@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "./themes.css";
+import "./immersive.css";
 import {headers} from 'next/headers';
 import {I18nProvider} from './components/i18n';
 

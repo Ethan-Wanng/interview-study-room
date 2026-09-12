@@ -1,9 +1,9 @@
 import {sessionUser,assertSameOrigin,AuthError} from '@/lib/site-auth';
 import {studyDb,dayNow} from '@/db/study';
-import {choose,emptyAnswer,snapshot,RunRow} from '@/db/practice';
-import {practiceMap} from '@/content/practice';
+import {choose,emptyAnswer,snapshot,RunRow,savedQuestion} from '@/db/practice';
+import {practiceCatalog} from '@/db/catalog';
 import type {Payload,Mode} from '@/lib/practice-types';
-import {trainingTracks} from '@/lib/practice-types';
+
 export const dynamic='force-dynamic';
 const fail=(error:string,status=400)=>Response.json({error},{status});
 export async function GET(req:Request){const language=req.headers.get('x-study-language')==='en'?'en':'zh';try{const user=await sessionUser(req.headers);if(!user)return fail('请重新登录网站。',401);return Response.json(await snapshot(user.id,new URL(req.url).searchParams.get('id')??undefined,language),{headers:{'Cache-Control':'no-store'}})}catch(e){console.error(e);return fail('训练记录暂时无法读取，请重试。',503)}}
@@ -13,8 +13,9 @@ export async function POST(req:Request){const language=req.headers.get('x-study-
  const db=studyDb(),now=Date.now();
  if(p.action==='goal'){if(![30,60].includes(p.minutes))return fail('请选择 30 或 60 分钟。');await db.prepare('INSERT INTO practice_preferences(user_id,minutes) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET minutes=excluded.minutes').bind(user,p.minutes).run();return Response.json(await snapshot(user,undefined,language));}
  if(p.action==='start'){
-  if(!['exam','interview','random'].includes(p.mode)||!trainingTracks.some(t=>t.id===p.track)||![30,60].includes(p.minutes))return fail('训练设置无效。');
-  const ids=choose(p.mode,p.track),payload:Payload={mode:p.mode as Mode,track:p.track,minutes:p.minutes,ids,answers:ids.map(emptyAnswer),index:0,seconds:0,lastTick:now};
+  const content=await practiceCatalog();
+  if(!['exam','interview','random'].includes(p.mode)||(p.track!=='all'&&!content.subjects.some(s=>s.id===p.track))||![30,60].includes(p.minutes))return fail('训练设置无效。');
+  const ids=choose(p.mode,p.track,content.questions.map(s=>s.question));if(!ids.length)return fail('所选学科暂无适合此模式的已发布题目。');const questionSnapshots=ids.map(id=>content.questions.find(s=>s.question.id===id)!);const payload:Payload={mode:p.mode as Mode,track:p.track,minutes:p.minutes,ids,questionSnapshots,answers:ids.map(emptyAnswer),index:0,seconds:0,lastTick:now};
   // Unique active-run index makes repeat clicks and concurrent tabs resume the same run.
   await db.prepare("INSERT OR IGNORE INTO practice_runs(id,user_id,status,payload,revision,last_op,created_at,updated_at) VALUES(?,?,'active',?,0,?,?,?)").bind(crypto.randomUUID(),user,JSON.stringify(payload),crypto.randomUUID(),now,now).run();
   return Response.json(await snapshot(user,undefined,language));
@@ -28,14 +29,14 @@ export async function POST(req:Request){const language=req.headers.get('x-study-
   if(!Number.isInteger(p.index)||p.index<0||p.index>=v.ids.length||typeof p.value!=='string'||p.value.length>20000)return fail('答案无效或过长。');
   if(v.mode!=='exam'&&p.index!==v.index)return fail('请回答当前题目。');
   if(v.mode!=='exam'&&v.answers[p.index].submitted)return fail('本题已提交，请继续下一题。');
-  const q=practiceMap.get(v.ids[p.index])!;if(q.type==='choice'&&!['0','1','2','3',''].includes(p.value))return fail('请选择有效选项。');
+  const q=savedQuestion(v,p.index).question;if(q.type==='choice'&&!['0','1','2','3',''].includes(p.value))return fail('请选择有效选项。');
   v.answers[p.index]={value:p.value,submitted:true,self:null};
  }else if(p.action==='self'){
-  if(!Number.isInteger(p.index)||p.index<0||p.index>=v.ids.length||![0,1,2].includes(p.value)||!v.answers[p.index].submitted||practiceMap.get(v.ids[p.index])!.accepted)return fail('自评无效。');
+  if(!Number.isInteger(p.index)||p.index<0||p.index>=v.ids.length||![0,1,2].includes(p.value)||!v.answers[p.index].submitted||savedQuestion(v,p.index).question.accepted)return fail('自评无效。');
   if(v.mode==='exam')return fail('考试交卷后请对照要点查看主观题。');v.answers[p.index].self=p.value;
  }else if(p.action==='next'){
   if(v.mode==='exam'||!v.answers[v.index].submitted)return fail('请先提交当前答案。');
-  if(v.mode==='random'){v.ids.push(...choose('random',v.track));v.answers.push(emptyAnswer());v.index++;}
+  if(v.mode==='random'){const content=await practiceCatalog();const next=choose('random',v.track,content.questions.map(s=>s.question));if(!next.length){status='completed'}else{v.questionSnapshots=v.ids.map((_,i)=>savedQuestion(v,i));v.ids.push(next[0]);v.questionSnapshots.push(content.questions.find(s=>s.question.id===next[0])!);v.answers.push(emptyAnswer());v.index++;}}
   else if(v.index<v.ids.length-1)v.index++;else status='completed';
  }else if(p.action==='tick'){
   if(p.elapsed===undefined)return fail('计时时长无效。');
