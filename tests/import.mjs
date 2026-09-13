@@ -1,0 +1,13 @@
+import {createRequire} from 'node:module';
+import assert from 'node:assert/strict';
+const require=createRequire(import.meta.url),local=createRequire(require.resolve('wrangler/package.json'));
+const {build}=local('esbuild');
+const out=await build({entryPoints:['lib/import-questions.ts'],bundle:true,write:false,format:'esm',platform:'node'});
+const {textToRows,rowsToQuestions}=await import('data:text/javascript;base64,'+Buffer.from(out.outputFiles[0].text).toString('base64'));
+const rows=textToRows('章节：并发\n题目：什么是锁？\n答案：互斥机制\n1. 保护共享数据\n2. 注意死锁\n解析：边界\n题目：如何解锁？\n答案：释放锁');
+assert.equal(rows.length,2);assert.match(rows[0]['答案'],/2. 注意死锁/);
+assert.equal(textToRows('1. What is a lock?\nAnswer: Mutual exclusion\n2. What is a mutex?\nAnswer: A lock').length,2);
+const XLSX=await import('xlsx');const sheet=XLSX.utils.json_to_sheet([{Question:'Which?',Answer:'one',Type:'choice',A:'one',B:'two',C:'three',D:'four','Correct option':'A'}]);
+const book=XLSX.utils.book_new();XLSX.utils.book_append_sheet(book,sheet,'Questions');const loaded=XLSX.read(XLSX.write(book,{type:'buffer',bookType:'xlsx'}));
+const q=rowsToQuestions(XLSX.utils.sheet_to_json(loaded.Sheets.Questions),'space','chapter','practice')[0];assert.deepEqual(q.accepted,['0']);assert.equal(q.status,'draft');assert.equal(q.section,'chapter');assert.equal(q.subjectId,'space');
+console.log('PASS: numbered and explicit questions, numbered answer preservation, Excel round trip, scoped drafts and choice mapping.');

@@ -40,6 +40,16 @@ try{
  await ok(await post({action:'saveQuestion',question:{...testQ,status:'archived'}},editor));state=await ok(await call('/api/practice',{action:'next',id:state.active.id,revision:state.active.revision},learner));assert.equal(state.active,null);assert.equal(state.review.items[0].question.answer,'kg');
  assert.equal((await call('/api/practice',{action:'start',mode:'random',track:subject,minutes:30},learner)).status,400);
  const newInvite=(await ok(await post({action:'invite',subjects:[],allowNew:true},owner))).key;r=await post({action:'register',inviteKey:newInvite,name:'Math editor',subjectNames:'数学，化学'});await ok(r);panel=await ok(await call('/api/admin',null,owner));assert.ok(panel.subjects.some(s=>s.name==='数学'));assert.ok(panel.subjects.some(s=>s.name==='化学'));
+ await ok(await post({action:'subject',name:'编辑者新空间',nameEn:'Editor space'},editor));
+ const expanded=await ok(await call('/api/admin',null,editor));const fresh=expanded.subjects.find(s=>s.name==='编辑者新空间');assert.ok(fresh);assert.ok(expanded.admin.subjects.includes(fresh.id));
+ const imported={...doc,id:'imp-12345678-1234-1234-1234-123456789abc',subjectId:fresh.id};
+ await ok(await post({action:'importQuestions',questions:[imported]},editor));await ok(await post({action:'importQuestions',questions:[imported]},editor));
+ const importedPanel=await ok(await call('/api/admin',null,editor));assert.equal(importedPanel.questions.filter(q=>q.id===imported.id).length,1);assert.equal(importedPanel.questions.find(q=>q.id===imported.id).status,'draft');
+ assert.equal((await post({action:'importQuestions',questions:[{...imported,subjectId:'go'}]},editor)).status,403);
+ const studyState=await ok(await call('/api/study',null,learner));const today=studyState.today;
+ await db.prepare("UPDATE progress SET stage=3,due='2099-01-01',last_day='2000-01-01',rating='good' WHERE question_id=?").bind(managed.id).run();
+ const early=await ok(await call('/api/study',{action:'rate',questionId:managed.id,rating:'good'},learner));assert.equal(early.progress[0].due,'2099-01-01');assert.equal(early.progress[0].stage,3);
+ const forgotten=await ok(await call('/api/study',{action:'rate',questionId:managed.id,rating:'again'},learner));assert.equal(forgotten.progress[0].stage,0);assert.notEqual(forgotten.progress[0].due,'2099-01-01');
  const unused=(await ok(await post({action:'invite',subjects:[subject],allowNew:false},editor))).key;await ok(await post({action:'disableAdmin',id:editorPanel.admin.id},owner));assert.equal((await call('/api/admin',null,editor)).status,401);assert.equal((await post({action:'login',key:editorKey})).status,401);assert.equal((await post({action:'register',inviteKey:unused,name:'Disabled invitation',subjectNames:'物理'})).status,400);
  r=await post({action:'rotateKey'},owner);const rotated=(await ok(r.clone())).key;owner=r.headers.get('set-cookie').split(';')[0];assert.equal((await post({action:'login',key:ownerKey})).status,401,'bootstrap cannot bypass rotation');assert.equal((await post({action:'login',key:rotated})).status,200);
  const rows=await db.prepare('SELECT key_hash FROM administrators').all();assert.ok(rows.results.every(row=>/^[a-f0-9]{64}$/.test(row.key_hash)));

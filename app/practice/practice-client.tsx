@@ -34,8 +34,8 @@ export default function PracticeClient({username}:{username:string}){const {loca
  async function start(mode:Mode){const d=await act({action:'start',mode,track,minutes:mode==='random'?(data?.goal??30):Number(minutes)});if(d){setReview(null);setSelected(0);acc.current=0;setRunning(true)}}
  async function submit(value=draft){if(!run)return;const d=await act({action:'answer',index,value});if(d){setDrafts(v=>({...v,[key]:value}));if(run.mode==='exam'&&index<run.items.length-1)setSelected(index+1)}}
  const answered=run?.items.filter(i=>i.response.submitted).length??0,objective=run?.items.filter(i=>i.question.type==='choice'||i.question.type==='fill')??[],correct=objective.filter(i=>i.response.submitted&&i.correct===true).length;
- return <div className="practice-shell"><header className="practice-header"><Link href="/" className="practice-brand"><BookOpen size={23}/><span>{t("面试自习室")}<small>{t("训练中心")}</small></span></Link><div className="top-actions"><LanguageControl/><ThemeControl/><AccountMenu username={username}/></div></header><main className="practice-main">{!username&&<p className="visitor-banner">{t("游客模式 · 注册新账号可保留当前进度")}</p>}
- <div className="practice-crumb"><Link href="/"><ArrowLeft size={16}/>{t("文档学习与复习")}</Link>{run&&<span>/ {t(names[run.mode])}</span>}</div>
+ return <div className="practice-shell"><header className="practice-header"><a href="/" className="practice-brand"><BookOpen size={23}/><span>{t("面试自习室")}<small>{t("训练中心")}</small></span></a><div className="top-actions"><LanguageControl/><ThemeControl/><AccountMenu username={username}/></div></header><main className="practice-main">{!username&&<p className="visitor-banner">{t("游客模式 · 注册新账号可保留当前进度")}</p>}
+ <div className="practice-crumb"><a href="/" className="button secondary"><ArrowLeft size={16}/>{locale==='en'?'Back to home':'返回主页'}</a>{run&&<span>/ {t(names[run.mode])}</span>}</div>
  {error&&<div className="error" role="alert">{t(error)}<button onClick={()=>void load()}>{t("重新载入")}</button></div>}
  {!data&&!error&&<section className="practice-panel" role="status">{t("正在载入你的训练记录…")}</section>}
  {data&&!run&&<>
