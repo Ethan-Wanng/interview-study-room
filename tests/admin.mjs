@@ -74,7 +74,8 @@ try{
  const early=await ok(await call('/api/study',{action:'rate',questionId:managed.id,rating:'good'},learner));assert.equal(early.progress[0].due,'2099-01-01');assert.equal(early.progress[0].stage,3);
  const forgotten=await ok(await call('/api/study',{action:'rate',questionId:managed.id,rating:'again'},learner));assert.equal(forgotten.progress[0].stage,0);assert.notEqual(forgotten.progress[0].due,'2099-01-01');
  const removable=(await ok(await post({action:'saveQuestion',question:quiz},editor))).question;
- const deletionPlan=(await ok(await post({action:'savePlan',...config,ids:[removable.id],status:'published'},editor))).plan;
+ assert.equal((await post({action:'savePlan',...config,ids:[removable.id],status:'published'},editor)).status,409);
+ const deletionPlan=(await ok(await post({action:'savePlan',...config,title:'删除题目回归方案',ids:[removable.id],status:'published'},editor))).plan;
  assert.equal((await post({action:'deleteQuestion',id:removable.id,revision:999},editor)).status,409);
  await ok(await post({action:'deleteQuestion',id:removable.id,revision:removable.revision},editor));
  const afterDelete=await ok(await call('/api/admin',null,editor));assert.ok(!afterDelete.questions.some(q=>q.id===removable.id));assert.equal(afterDelete.plans.find(p=>p.id===deletionPlan.id).status,'archived');assert.equal((await post({action:'planStatus',id:deletionPlan.id,status:'published'},editor)).status,409);

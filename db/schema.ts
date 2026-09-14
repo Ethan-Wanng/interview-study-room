@@ -41,4 +41,11 @@ export const autoQuestionInsertReceipts=sqliteTable('auto_question_insert_receip
 export const practicePlanQuestions=sqliteTable('practice_plan_questions',{
  planId:text('plan_id').notNull().references(()=>practicePlans.id,{onDelete:'cascade'}),
  questionId:text('question_id').notNull().references(()=>managedQuestions.id),sortOrder:integer('sort_order').notNull(),
-},t=>[primaryKey({columns:[t.planId,t.sortOrder]})]);
+},t=>[primaryKey({columns:[t.planId,t.sortOrder]}),uniqueIndex('idx_plan_question_unique').on(t.planId,t.questionId)]);
+
+// Names of newly created/renamed plans. Triggers also check legacy plan rows,
+// so historical data needs no destructive deduplication or bulk backfill.
+export const practicePlanNames=sqliteTable('practice_plan_names',{
+ spaceId:text('space_id').notNull(),type:text('type').notNull(),name:text('name').notNull(),
+ planId:text('plan_id').notNull().unique().references(()=>practicePlans.id,{onDelete:'cascade'}),
+},t=>[primaryKey({columns:[t.spaceId,t.type,t.name]})]);

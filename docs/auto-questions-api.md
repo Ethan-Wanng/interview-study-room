@@ -45,3 +45,15 @@ Content-Type: application/json
 ```
 
 返回 `count`、新增题目 `ids` 和状态。相同幂等键与相同内容重试返回首次结果及 `replayed: true`；同一键搭配不同内容返回 409。按学科、题库类型和规范化标题查重；本批次重复、现有题库重复及并发写入冲突均拒绝整批。`GET /api/admin/auto-questions` 使用相同 Token，返回最近 50 条执行日志。
+
+## 幂等与名称唯一性（第三阶段）
+
+同一 `Idempotency-Key` 保护整个题目发布、题集创建、顺序关联及最终返回结果。相同键和相同 JSON 内容（对象字段顺序不影响）返回首次结果并增加 `replayed: true`，HTTP 200；首次创建 HTTP 201。同键不同内容返回 HTTP 409，不修改任何已创建数据。并发请求也遵循此规则，重放检查优先于名称及题目查重。
+
+题集名称按空间、类型、去除首尾空白后的名称判重。同一空间同一类型不可重名（包含草稿、已发布和归档方案）；不同类型或空间可以同名。题集内所有学科须属于同一空间，Go 与后端通用均属于 `go-interview`。新的幂等键提交已有题集名称，在新增题目前返回 HTTP 409：
+
+```json
+{"success":false,"error":"QUESTION_SET_ALREADY_EXISTS","code":"QUESTION_SET_ALREADY_EXISTS","message":"训练20260916 已存在"}
+```
+
+迁移 `0009_blue_ikaris.sql` 增加名称登记表 `practice_plan_names`，主键为 `(space_id,type,name)`，以及关联表的 `(plan_id,question_id)` 唯一索引。题集插入和修改触发器维护名称登记并检查现有 `practice_plans`，因此历史题集无需批量改写也能阻止重名；手动组卷同样受约束。名称登记与自动创建的其他写入共享原事务，任何冲突均回滚。迁移不会清理已有历史重名题集，但禁止新建同名项。

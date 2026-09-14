@@ -11,6 +11,10 @@ export type QuestionSetCreationCode='QUESTION_SET_CREATE_FAILED'|'QUESTION_LINK_
 export class QuestionSetCreationError extends AuthError{
  constructor(public code:QuestionSetCreationCode){super(code,code==='QUESTION_PUBLISH_VALIDATION_FAILED'?400:500)}
 }
+export class QuestionSetAlreadyExistsError extends AuthError{
+ readonly code='QUESTION_SET_ALREADY_EXISTS';
+ constructor(name:string){super(name+' 已存在',409)}
+}
 export function questionSetInput(value:unknown):QuestionSetInput|undefined{
  if(value===undefined)return undefined;
  if(!value||typeof value!=='object'||Array.isArray(value))throw new QuestionSetValidationError('INVALID_QUESTION_SET_TYPE');
