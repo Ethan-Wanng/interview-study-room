@@ -5,6 +5,7 @@ import {questionInput} from '@/lib/admin-validation';
 import {AuthError} from '@/lib/site-auth';
 import {fingerprint,normalizedTitle,requestHash,secureToken} from '@/lib/auto-questions';
 import type {ManagedQuestion} from '@/lib/catalog-types';
+import {questionSetInput,QuestionSetValidationError} from '@/lib/question-set';
 
 export const dynamic='force-dynamic';
 const headers={'Cache-Control':'no-store'};
@@ -14,7 +15,7 @@ function authorize(req:Request){
  const match=/^Bearer ([A-Za-z0-9_-]{32,128})$/.exec(req.headers.get('authorization')??'');
  if(!match||!secureToken(match[1],token()))throw new AuthError('Token 无效。',401);
 }
-function fail(error:unknown){if(error instanceof AuthError)return respond({error:error.message},error.status);console.error('Auto questions failed',error);return respond({error:'自动出题暂时不可用，请稍后重试。'},503)}
+function fail(error:unknown){if(error instanceof QuestionSetValidationError)return respond({error:error.message,code:error.code},400);if(error instanceof AuthError)return respond({error:error.message},error.status);console.error('Auto questions failed',error);return respond({error:'自动出题暂时不可用，请稍后重试。'},503)}
 async function log(key:string,status:string,count:number,detail:string){
  try{await studyDb().prepare('INSERT INTO auto_question_logs(id,key,status,count,detail,created_at) VALUES(?,?,?,?,?,?)').bind(crypto.randomUUID(),key,status,count,detail.slice(0,500),Date.now()).run()}catch(error){console.error('Auto question log failed',error)}
 }
@@ -38,6 +39,8 @@ export async function POST(req:Request){
   let input:unknown;try{input=JSON.parse(raw)}catch{throw new AuthError('JSON 格式无效。')}
   if(!input||typeof input!=='object'||Array.isArray(input))throw new AuthError('请求格式无效。');
   const p=input as Record<string,unknown>,hash=requestHash(p);
+  // Stage 1 accepts and validates metadata only; no plan is created yet.
+  questionSetInput(p.questionSet);
   const replay=await previous(key,hash);if(replay){await log(key,'replayed',replay.count,'返回已有执行结果');return respond({...replay,replayed:true})}
   if(!Array.isArray(p.questions)||p.questions.length<1||p.questions.length>100)throw new AuthError('每次提交 1–100 道题。');
   if(p.status!==undefined&&!['draft','published'].includes(String(p.status)))throw new AuthError('状态必须为 draft 或 published。');

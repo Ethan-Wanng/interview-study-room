@@ -1,5 +1,11 @@
 # 后台自动出题接口
 
+## questionSet（第一阶段）
+
+可选参数 `questionSet: { "type": "training", "name": "训练20260916" }`：类型支持 `training`、`mock`、`exam`，名称必须是去除首尾空白后长度为 1–100 个 Unicode 字符的字符串。非法类型返回 HTTP 400，`error` 和 `code` 均为 `INVALID_QUESTION_SET_TYPE`；非法名称对应 `INVALID_QUESTION_SET_NAME`。
+
+第一阶段仅接收与验证该参数，尚不创建题集。省略时继续仅新增题目。题目数量仍须为 1–100，空数组保持原有 400 响应。后续创建将复用现有 `practice_plans` 和 `PracticePlan`：`training → random`、`mock → interview`、`exam → exam`，名称对应现有 `title`。本阶段无数据库迁移，也不扩展事务或日志。
+
 将自动生成的题目提交到 `POST /api/admin/auto-questions`。服务端使用 Sites 密钥 `AUTO_QUESTION_API_TOKEN` 验证 `Authorization: Bearer <Token>`；Token 不应写入源码或浏览器代码。每次写入必须带 `Idempotency-Key`（8–128 个字母、数字或 `._:-`）。单批支持 1–100 道，默认保存为草稿；只有显式传 `status: "published"` 且每题满足发布校验时才直接发布。
 
 ```http
