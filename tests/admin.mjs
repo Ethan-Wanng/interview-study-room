@@ -33,6 +33,11 @@ try{
  const concurrent=await Promise.all([post({action:'saveQuestion',question:{...managed,zh:{...text,title:'Velocity A'}}},editor),post({action:'saveQuestion',question:{...managed,zh:{...text,title:'Velocity B'}}},editor)]);assert.deepEqual(concurrent.map(r=>r.status).sort(),[200,409]);
  const quiz={...doc,kind:'practice',type:'choice',zh:{...text,title:'Which unit measures speed?',options:['m/s','kg','s','N'],answer:'m/s',explanation:'Speed is distance per time.'},en:null,accepted:['0']};
  let testQ=(await ok(await post({action:'saveQuestion',question:quiz},editor))).question;
+ const hierarchy=await ok(await call('/test-catalog'));assert.equal(hierarchy.spaces.find(s=>s.id==='go-interview').name,'GO面试');assert.deepEqual(hierarchy.tracks.filter(s=>['go','backend'].includes(s.id)).map(s=>s.spaceId),['go-interview','go-interview']);
+ await ok(await post({action:'space',name:'Java面试',nameEn:'Java interviews'},editor));const hp=await ok(await call('/api/admin',null,editor));const javaSpace=hp.spaces.find(s=>s.name==='Java面试').id;
+ await ok(await post({action:'subject',name:'Java',spaceId:javaSpace},editor));const hp2=await ok(await call('/api/admin',null,editor));assert.equal(hp2.subjects.find(s=>s.name==='Java').spaceId,javaSpace);
+ const otherSpace='sp-unavailable';assert.equal((await post({action:'subject',name:'Missing',spaceId:otherSpace},editor)).status,400);
+ assert.equal((await call('/api/practice',{action:'start',mode:'exam',track:subject,spaceId:javaSpace,minutes:30},learner)).status,400);
  const config={title:'Physics plan',subjectId:subject,chapter:'基础',mode:'exam',minutes:30,counts:{choice:1,fill:0,short:0,code:0}};
  assert.equal((await post({action:'generatePlan',...config,subjectId:'go'},editor)).status,403);
  assert.equal((await post({action:'generatePlan',...config,counts:{choice:2,fill:0,short:0,code:0}},editor)).status,400);
@@ -65,6 +70,14 @@ try{
  await db.prepare("UPDATE progress SET stage=3,due='2099-01-01',last_day='2000-01-01',rating='good' WHERE question_id=?").bind(managed.id).run();
  const early=await ok(await call('/api/study',{action:'rate',questionId:managed.id,rating:'good'},learner));assert.equal(early.progress[0].due,'2099-01-01');assert.equal(early.progress[0].stage,3);
  const forgotten=await ok(await call('/api/study',{action:'rate',questionId:managed.id,rating:'again'},learner));assert.equal(forgotten.progress[0].stage,0);assert.notEqual(forgotten.progress[0].due,'2099-01-01');
+ const removable=(await ok(await post({action:'saveQuestion',question:quiz},editor))).question;
+ const deletionPlan=(await ok(await post({action:'savePlan',...config,ids:[removable.id],status:'published'},editor))).plan;
+ assert.equal((await post({action:'deleteQuestion',id:removable.id,revision:999},editor)).status,409);
+ await ok(await post({action:'deleteQuestion',id:removable.id,revision:removable.revision},editor));
+ const afterDelete=await ok(await call('/api/admin',null,editor));assert.ok(!afterDelete.questions.some(q=>q.id===removable.id));assert.equal(afterDelete.plans.find(p=>p.id===deletionPlan.id).status,'archived');assert.equal((await post({action:'planStatus',id:deletionPlan.id,status:'published'},editor)).status,409);
+ const builtin=(await ok(await call('/api/admin',null,owner))).questions.find(q=>q.id.startsWith('go-')&&q.kind==='practice')??(await ok(await call('/api/admin',null,owner))).questions.find(q=>q.kind==='practice'&&q.subjectId==='go');
+ assert.equal((await post({action:'deleteQuestion',id:builtin.id,revision:builtin.revision},editor)).status,403);
+ await ok(await post({action:'deleteQuestion',id:builtin.id,revision:builtin.revision},owner));assert.ok(!(await ok(await call('/api/admin',null,owner))).questions.some(q=>q.id===builtin.id));
  const unused=(await ok(await post({action:'invite',subjects:[subject],allowNew:false},editor))).key;await ok(await post({action:'disableAdmin',id:editorPanel.admin.id},owner));assert.equal((await call('/api/admin',null,editor)).status,401);assert.equal((await post({action:'login',key:editorKey})).status,401);assert.equal((await post({action:'register',inviteKey:unused,name:'Disabled invitation',subjectNames:'物理'})).status,400);
  r=await post({action:'rotateKey'},owner);const rotated=(await ok(r.clone())).key;owner=r.headers.get('set-cookie').split(';')[0];assert.equal((await post({action:'login',key:ownerKey})).status,401,'bootstrap cannot bypass rotation');assert.equal((await post({action:'login',key:rotated})).status,200);
  const rows=await db.prepare('SELECT key_hash FROM administrators').all();assert.ok(rows.results.every(row=>/^[a-f0-9]{64}$/.test(row.key_hash)));

@@ -1,9 +1,10 @@
 import type {PracticeQuestion,QuestionType} from '@/content/practice';
-export type Subject={id:string;name:string;nameEn:string};
+export type Space={id:string;name:string;nameEn:string;createdBy?:string};
+export type Subject={id:string;name:string;nameEn:string;spaceId:string};
 export type Block={type:'text'|'code';text:string};
 export type QuestionText={title:string;answer:string;explanation:string;options:string[];rubric:string[];blocks:Block[];code:string};
 export type ManagedQuestion={id:string;subjectId:string;kind:'document'|'practice';type:QuestionType;status:'published'|'draft'|'archived';revision:number;topic:string;section:string;accepted:string[];zh:QuestionText;en:QuestionText|null;updatedAt?:number};
 export type DocumentQuestion={id:string;track:string;category:string;section:string;title:string;blocks:Block[];sourceParagraph:number;english?:{title:string;blocks:Block[]}};
-export type StudyBank={tracks:{id:string;name:string;nameEn:string}[];source:string;notes:string[];questions:DocumentQuestion[]};
+export type StudyBank={spaces:Space[];tracks:Subject[];source:string;notes:string[];questions:DocumentQuestion[]};
 export type QuestionSnapshot={question:PracticeQuestion;english:Partial<PracticeQuestion>|null};
 export const emptyText=():QuestionText=>({title:'',answer:'',explanation:'',options:['','','',''],rubric:[],blocks:[{type:'text',text:''}],code:''});
