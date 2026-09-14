@@ -22,3 +22,13 @@ export const managedQuestions=sqliteTable('managed_questions',{id:text('id').pri
 export const practicePlans=sqliteTable('practice_plans',{id:text('id').primaryKey(),subjectId:text('subject_id').notNull(),status:text('status').notNull(),payload:text('payload').notNull(),createdBy:text('created_by').notNull(),createdAt:integer('created_at').notNull()},t=>[index('idx_practice_plans_status').on(t.status)]);
 
 export const spaces=sqliteTable('spaces',{id:text('id').primaryKey(),name:text('name').notNull(),nameEn:text('name_en').notNull(),createdBy:text('created_by').notNull()});
+
+export const autoQuestionKeys=sqliteTable('auto_question_keys',{
+ key:text('key').primaryKey(),requestHash:text('request_hash').notNull(),response:text('response').notNull(),createdAt:integer('created_at').notNull(),
+});
+export const autoQuestionFingerprints=sqliteTable('auto_question_fingerprints',{
+ fingerprint:text('fingerprint').primaryKey(),questionId:text('question_id').notNull().unique(),createdAt:integer('created_at').notNull(),
+});
+export const autoQuestionLogs=sqliteTable('auto_question_logs',{
+ id:text('id').primaryKey(),key:text('key').notNull(),status:text('status').notNull(),count:integer('count').notNull(),detail:text('detail').notNull(),createdAt:integer('created_at').notNull(),
+},t=>[index('idx_auto_question_logs_created').on(t.createdAt)]);

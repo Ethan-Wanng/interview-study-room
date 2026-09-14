@@ -1,0 +1,17 @@
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+const require=createRequire(import.meta.url);
+const {build}=require('esbuild');
+const out=await build({entryPoints:['lib/auto-questions.ts'],bundle:true,write:false,format:'esm',platform:'node'});
+const {fingerprint,normalizedTitle,requestHash,secureToken}=await import('data:text/javascript;base64,'+Buffer.from(out.outputFiles[0].text).toString('base64'));
+assert.equal(normalizedTitle(' Go：Goroutine？ '),normalizedTitle('go goroutine'));
+assert.equal(requestHash({a:1,b:2}),requestHash({b:2,a:1}));
+assert.notEqual(requestHash({a:1}),requestHash({a:2}));
+const q=(subjectId,kind,title)=>({subjectId,kind,zh:{title}});
+assert.equal(fingerprint(q('go','practice','Go：锁？')),fingerprint(q('go','practice','go 锁')));
+assert.notEqual(fingerprint(q('go','practice','锁')),fingerprint(q('backend','practice','锁')));
+assert.notEqual(fingerprint(q('go','practice','锁')),fingerprint(q('go','document','锁')));
+assert.equal(secureToken('a'.repeat(43),'a'.repeat(43)),true);
+assert.equal(secureToken('b'.repeat(43),'a'.repeat(43)),false);
+assert.equal(secureToken('a'.repeat(43),undefined),false);
+console.log('PASS: canonical request hashes, scoped question fingerprints and token checks.');

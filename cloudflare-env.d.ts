@@ -3,5 +3,6 @@ declare namespace Cloudflare {
     DB?: D1Database;
     BUCKET?: R2Bucket;
     ADMIN_BOOTSTRAP_HASH?: string;
+    AUTO_QUESTION_API_TOKEN?: string;
   }
 }
