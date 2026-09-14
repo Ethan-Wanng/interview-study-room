@@ -5,3 +5,5 @@
 .study-toolbar{flex-wrap:wrap;gap:16px}.space-picker{display:flex;align-items:center;gap:10px;font-size:14px}.space-picker select{max-width:260px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;color:inherit}.study-toolbar [data-slot=tabs-list]{height:auto;flex-wrap:wrap}.practice-crumb a{display:inline-flex;align-items:center;gap:8px}@media(max-width:767px){.space-picker select{max-width:210px}.study-toolbar [data-slot=tabs]{width:100%}}
 
 .published-plans{margin-bottom:28px}.published-plan{display:flex;justify-content:space-between;align-items:center;gap:18px;padding:22px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}.published-plan h3{font-size:18px}.published-plan p{margin-top:8px;color:var(--quiet);font-size:14px}
+
+.center-mode-tabs{margin-bottom:24px}.center-mode-tabs [data-slot=tabs-list]{height:auto;padding:5px;gap:8px;flex-wrap:wrap}.center-mode-tabs [data-slot=tabs-trigger]{min-height:46px;padding:10px 24px;font-size:16px}.practice-modes:empty{display:none}.practice-modes>.practice-panel:only-child{grid-column:1/-1}

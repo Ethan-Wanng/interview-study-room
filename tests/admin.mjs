@@ -41,6 +41,9 @@ try{
  const config={title:'Physics plan',subjectId:subject,chapter:'基础',mode:'exam',minutes:30,counts:{choice:1,fill:0,short:0,code:0}};
  assert.equal((await post({action:'generatePlan',...config,subjectId:'go'},editor)).status,403);
  assert.equal((await post({action:'generatePlan',...config,counts:{choice:2,fill:0,short:0,code:0}},editor)).status,400);
+ const manual=(await ok(await post({action:'generatePlan',...config,ids:[testQ.id]},editor))).plan;assert.equal(manual.questions[0].question.id,testQ.id);assert.equal(manual.questions.length,1);
+ assert.equal((await post({action:'generatePlan',...config,ids:[testQ.id,testQ.id]},editor)).status,400);
+ assert.equal((await post({action:'generatePlan',...config,mode:'interview',ids:[testQ.id]},editor)).status,400);
  const generated=(await ok(await post({action:'generatePlan',...config},editor))).plan;assert.equal(generated.questions.length,1);assert.equal(generated.questions[0].question.answer,'m/s');
  const plan=(await ok(await post({action:'savePlan',...config,ids:generated.questions.map(q=>q.question.id),status:'draft'},editor))).plan;
  assert.equal((await call('/api/practice',{action:'start',planId:plan.id},learner)).status,404);

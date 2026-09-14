@@ -53,7 +53,7 @@ export async function POST(req:Request){try{assertSameOrigin(req);const raw=awai
   const c=await catalog(),subjectId=textValue(p.subjectId,100,true);requireScope(a,subjectId);if(!c.subjects.some(s=>s.id===subjectId))throw new AuthError('请选择有效学科。');
   if(!['exam','interview','random'].includes(p.mode)||![30,60].includes(p.minutes))throw new AuthError('请选择模式及 30 或 60 分钟。');
   const title=textValue(p.title,120,true),chapter=textValue(p.chapter??'',100);const pool=c.questions.filter(q=>q.subjectId===subjectId&&q.kind==='practice'&&q.status==='published'&&(!chapter||q.section===chapter));let chosen;
-  if(p.action==='generatePlan'){
+  if(p.action==='generatePlan'&&p.ids===undefined){
    const types=['choice','fill','short','code'];if(!p.counts||types.some(t=>!Number.isInteger(p.counts[t])||p.counts[t]<0||p.counts[t]>30))throw new AuthError('每种题型数量应为 0–30。');
    if(p.mode==='interview'&&(p.counts.choice||p.counts.fill))throw new AuthError('模拟面试请选择简答或代码题。');
    if(types.reduce((n,t)=>n+p.counts[t],0)>60)throw new AuthError('每份最多 60 道题。');

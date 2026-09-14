@@ -17,3 +17,5 @@
 .plan-manager [data-slot=select-trigger]{width:100%;min-height:48px;margin-top:8px;background:var(--surface-soft)}.plan-manager>.button{margin-top:20px}.plan-manager>p{margin:18px 0}.plan-manager .import-preview{border:1px solid var(--line);border-radius:10px}.plan-manager .admin-team-row{flex-wrap:wrap}
 
 .admin-space-bar{max-width:400px;margin-bottom:24px}.admin-space-bar [data-slot=select-trigger]{width:100%;min-height:46px;background:var(--surface);margin-top:8px}
+
+.plan-question-list{max-height:440px;overflow:auto;border:1px solid var(--line);border-radius:10px;margin:16px 0}.admin-main .plan-question-choice{display:flex;gap:14px;align-items:flex-start;padding:16px;margin:0;border-bottom:1px solid var(--line);cursor:pointer}.plan-question-choice [data-slot=checkbox]{flex:none;width:22px;height:22px;margin-top:3px;border:2px solid var(--quiet)}.plan-question-choice small{display:block;color:var(--quiet);font-size:14px}.plan-question-choice b{font-weight:500}.plan-question-choice:has([data-state=checked]){background:var(--accent)}.plan-picker{margin-top:20px}
