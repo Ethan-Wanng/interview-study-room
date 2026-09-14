@@ -57,6 +57,13 @@
       "when": 1789401349085,
       "tag": "0007_breezy_nuke",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1789419501556,
+      "tag": "0008_friendly_sunfire",
+      "breakpoints": true
     }
   ]
 }

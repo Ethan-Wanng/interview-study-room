@@ -32,3 +32,13 @@ export const autoQuestionFingerprints=sqliteTable('auto_question_fingerprints',{
 export const autoQuestionLogs=sqliteTable('auto_question_logs',{
  id:text('id').primaryKey(),key:text('key').notNull(),status:text('status').notNull(),count:integer('count').notNull(),detail:text('detail').notNull(),createdAt:integer('created_at').notNull(),
 },t=>[index('idx_auto_question_logs_created').on(t.createdAt)]);
+
+// Transaction-local insertion receipts; removed before a successful batch commits.
+export const autoQuestionInsertReceipts=sqliteTable('auto_question_insert_receipts',{
+ batchId:text('batch_id').notNull(),sortOrder:integer('sort_order').notNull(),
+ questionId:text('question_id').notNull().references(()=>managedQuestions.id),snapshot:text('snapshot').notNull(),
+},t=>[primaryKey({columns:[t.batchId,t.sortOrder]})]);
+export const practicePlanQuestions=sqliteTable('practice_plan_questions',{
+ planId:text('plan_id').notNull().references(()=>practicePlans.id,{onDelete:'cascade'}),
+ questionId:text('question_id').notNull().references(()=>managedQuestions.id),sortOrder:integer('sort_order').notNull(),
+},t=>[primaryKey({columns:[t.planId,t.sortOrder]})]);

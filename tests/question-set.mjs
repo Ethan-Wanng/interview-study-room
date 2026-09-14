@@ -19,7 +19,7 @@ try{
  assert.equal((await call({...old,status:'published'},'stage-one-legacy')).status,409);
  assert.equal((await call(old,undefined,'bad-token')).status,401);
  for(const [type,mode] of [['training','random'],['mock','interview'],['exam','exam']]){
-  const body={status:'published',questionSet:{type,name:'训练20260916'},questions:[question('阶段一新增 '+type)]};
+  const body={status:'published',questionSet:{type,name:'训练20260916'},questions:[{...question('阶段一新增 '+type),kind:'practice',zh:{title:'阶段一新增 '+type,answer:'答案',explanation:'解析',rubric:['要点']}}]};
   r=await call(body);assert.equal(r.status,201,await r.clone().text());assert.equal((await r.json()).status,'published');
   r=await mf.dispatchFetch('https://site.test/validate',{method:'POST',body:JSON.stringify({...body,questions:[]})});assert.deepEqual(await r.json(),{questionSet:body.questionSet,mode});
  }
@@ -38,7 +38,7 @@ try{
  }
  // Validation failures and rejected batches must not insert any questions/plans.
  r=await call({questions:[question('整批新题'),question('阶段一旧请求')]});assert.equal(r.status,409);
- assert.equal(await count('managed_questions'),4);assert.equal(await count('auto_question_keys'),4);assert.equal(await count('practice_plans'),0);
+ assert.equal(await count('managed_questions'),4);assert.equal(await count('auto_question_keys'),4);assert.equal(await count('practice_plans'),3);
  r=await mf.dispatchFetch('https://site.test/api/admin/auto-questions',{headers:{authorization:'Bearer '+token}});assert.equal(r.status,200);const {logs}=await r.json();assert.ok(logs.some(x=>x.status==='success'));assert.ok(logs.some(x=>x.status==='replayed'));assert.ok(logs.some(x=>x.status==='rejected'));
- console.log('PASS: legacy API, all questionSet types, names and boundaries, exact error codes, empty-batch compatibility, auth, idempotency, duplicates, unchanged logs and no plan creation.');
+ console.log('PASS: legacy API, all questionSet types, names and boundaries, exact error codes, empty-batch compatibility, auth, idempotency, duplicates, unchanged logs and compatible plan creation.');
 }finally{await mf.dispose()}

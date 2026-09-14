@@ -1,6 +1,6 @@
 import {studyDb} from '@/db/study';
 import {catalog,asPractice} from '@/db/catalog';
-import {plans} from '@/db/practice-plans';
+import {plans,planSubjectIds} from '@/db/practice-plans';
 import {shuffle} from '@/db/practice';
 import {AuthError,assertSameOrigin,hashToken,rateLimit} from '@/lib/site-auth';
 import {newKey,requireAdmin,currentAdmin,canEdit,requireScope,adminCookie,adminToken,clearAdminCookie,bootstrapHash,type Administrator} from '@/lib/admin-auth';
@@ -8,7 +8,7 @@ import {nameKey,textValue,questionInput} from '@/lib/admin-validation';
 export const dynamic='force-dynamic';
 const noCache={'Cache-Control':'no-store'};
 const json=(v:unknown,cookie?:string)=>Response.json(v,{headers:{...noCache,...(cookie?{'Set-Cookie':cookie}:{})}});
-async function panel(a:Administrator){const db=studyDb(),c=await catalog();const [invites,admins]=await Promise.all([a.role==='owner'?db.prepare('SELECT id,creator_id,subjects,allow_new,expires_at,used_by,revoked FROM admin_invites ORDER BY created_at DESC LIMIT 100').all():db.prepare('SELECT id,creator_id,subjects,allow_new,expires_at,used_by,revoked FROM admin_invites WHERE creator_id=? ORDER BY created_at DESC LIMIT 100').bind(a.id).all(),a.role==='owner'?db.prepare('SELECT id,name,role,subjects,enabled,created_by FROM administrators ORDER BY created_at DESC').all():Promise.resolve({results:[]})]);return {spaces:c.spaces.filter(s=>a.role==='owner'||s.createdBy===a.id||c.subjects.some(x=>x.spaceId===s.id&&canEdit(a,x.id))),plans:(await plans()).filter(p=>canEdit(a,p.subjectId)),admin:a,subjects:c.subjects.filter(s=>canEdit(a,s.id)),questions:c.questions.filter(q=>canEdit(a,q.subjectId)),invites:invites.results,administrators:admins.results}}
+async function panel(a:Administrator){const db=studyDb(),c=await catalog();const [invites,admins]=await Promise.all([a.role==='owner'?db.prepare('SELECT id,creator_id,subjects,allow_new,expires_at,used_by,revoked FROM admin_invites ORDER BY created_at DESC LIMIT 100').all():db.prepare('SELECT id,creator_id,subjects,allow_new,expires_at,used_by,revoked FROM admin_invites WHERE creator_id=? ORDER BY created_at DESC LIMIT 100').bind(a.id).all(),a.role==='owner'?db.prepare('SELECT id,name,role,subjects,enabled,created_by FROM administrators ORDER BY created_at DESC').all():Promise.resolve({results:[]})]);return {spaces:c.spaces.filter(s=>a.role==='owner'||s.createdBy===a.id||c.subjects.some(x=>x.spaceId===s.id&&canEdit(a,x.id))),plans:(await plans()).filter(p=>planSubjectIds(p).every(id=>canEdit(a,id))),admin:a,subjects:c.subjects.filter(s=>canEdit(a,s.id)),questions:c.questions.filter(q=>canEdit(a,q.subjectId)),invites:invites.results,administrators:admins.results}}
 export async function GET(req:Request){try{return json(await panel(await requireAdmin(req.headers)))}catch(e){return error(e)}}
 function error(e:unknown){if(e instanceof AuthError)return Response.json({error:e.message},{status:e.status,headers:noCache});console.error('Admin operation failed',e instanceof Error?e.message:'Unknown');return Response.json({error:'后台暂时不可用，请重试；未保存的输入仍保留在页面。'},{status:503,headers:noCache})}
 export async function POST(req:Request){try{assertSameOrigin(req);const raw=await req.text();if(raw.length>2000000)throw new AuthError('内容过长，请缩短后重试。');let p:any;try{p=JSON.parse(raw)}catch{throw new AuthError('请求格式无效。')}if(!p||typeof p!=='object')throw new AuthError('请求格式无效。');const db=studyDb(),now=Date.now();
@@ -63,7 +63,7 @@ export async function POST(req:Request){try{assertSameOrigin(req);const raw=awai
   if(p.action==='savePlan')await db.prepare('INSERT INTO practice_plans(id,subject_id,status,payload,created_by,created_at) VALUES(?,?,?,?,?,?)').bind(plan.id,subjectId,plan.status,JSON.stringify(plan),a.id,now).run();return json({ok:true,plan});
  }
  if(p.action==='planStatus'){
-  const plan=(await plans()).find(x=>x.id===p.id);if(!plan)throw new AuthError('找不到该训练方案。',404);requireScope(a,plan.subjectId);if(p.status==='published'){const c=await catalog();if(plan.questions.some(s=>!c.questions.some(q=>q.id===s.question.id&&q.status==='published')))throw new AuthError('方案包含已删除或下架的题目，请重新组卷。',409)}if(!['draft','published','archived'].includes(p.status))throw new AuthError('状态无效。');await db.prepare('UPDATE practice_plans SET status=? WHERE id=?').bind(p.status,plan.id).run();return json({ok:true});
+  const plan=(await plans()).find(x=>x.id===p.id);if(!plan)throw new AuthError('找不到该训练方案。',404);for(const subjectId of planSubjectIds(plan))requireScope(a,subjectId);if(p.status==='published'){const c=await catalog();if(plan.questions.some(s=>!c.questions.some(q=>q.id===s.question.id&&q.status==='published')))throw new AuthError('方案包含已删除或下架的题目，请重新组卷。',409)}if(!['draft','published','archived'].includes(p.status))throw new AuthError('状态无效。');await db.prepare('UPDATE practice_plans SET status=? WHERE id=?').bind(p.status,plan.id).run();return json({ok:true});
  }
  if(p.action==='deleteQuestion'){
   const c=await catalog(),q=c.questions.find(q=>q.id===p.id);if(!q)throw new AuthError('题目不存在，请重新载入。',404);requireScope(a,q.subjectId);if(p.revision!==q.revision)throw new AuthError('题目已被其他管理员修改，请重新载入后再编辑。',409);
