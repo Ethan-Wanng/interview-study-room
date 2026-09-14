@@ -1,12 +1,14 @@
 import {studyDb} from '@/db/study';
-import {catalog} from '@/db/catalog';
+import {catalog,asPractice} from '@/db/catalog';
+import {plans} from '@/db/practice-plans';
+import {shuffle} from '@/db/practice';
 import {AuthError,assertSameOrigin,hashToken,rateLimit} from '@/lib/site-auth';
 import {newKey,requireAdmin,currentAdmin,canEdit,requireScope,adminCookie,adminToken,clearAdminCookie,bootstrapHash,type Administrator} from '@/lib/admin-auth';
 import {nameKey,textValue,questionInput} from '@/lib/admin-validation';
 export const dynamic='force-dynamic';
 const noCache={'Cache-Control':'no-store'};
 const json=(v:unknown,cookie?:string)=>Response.json(v,{headers:{...noCache,...(cookie?{'Set-Cookie':cookie}:{})}});
-async function panel(a:Administrator){const db=studyDb(),c=await catalog();const [invites,admins]=await Promise.all([a.role==='owner'?db.prepare('SELECT id,creator_id,subjects,allow_new,expires_at,used_by,revoked FROM admin_invites ORDER BY created_at DESC LIMIT 100').all():db.prepare('SELECT id,creator_id,subjects,allow_new,expires_at,used_by,revoked FROM admin_invites WHERE creator_id=? ORDER BY created_at DESC LIMIT 100').bind(a.id).all(),a.role==='owner'?db.prepare('SELECT id,name,role,subjects,enabled,created_by FROM administrators ORDER BY created_at DESC').all():Promise.resolve({results:[]})]);return {admin:a,subjects:c.subjects.filter(s=>canEdit(a,s.id)),questions:c.questions.filter(q=>canEdit(a,q.subjectId)),invites:invites.results,administrators:admins.results}}
+async function panel(a:Administrator){const db=studyDb(),c=await catalog();const [invites,admins]=await Promise.all([a.role==='owner'?db.prepare('SELECT id,creator_id,subjects,allow_new,expires_at,used_by,revoked FROM admin_invites ORDER BY created_at DESC LIMIT 100').all():db.prepare('SELECT id,creator_id,subjects,allow_new,expires_at,used_by,revoked FROM admin_invites WHERE creator_id=? ORDER BY created_at DESC LIMIT 100').bind(a.id).all(),a.role==='owner'?db.prepare('SELECT id,name,role,subjects,enabled,created_by FROM administrators ORDER BY created_at DESC').all():Promise.resolve({results:[]})]);return {plans:(await plans()).filter(p=>canEdit(a,p.subjectId)),admin:a,subjects:c.subjects.filter(s=>canEdit(a,s.id)),questions:c.questions.filter(q=>canEdit(a,q.subjectId)),invites:invites.results,administrators:admins.results}}
 export async function GET(req:Request){try{return json(await panel(await requireAdmin(req.headers)))}catch(e){return error(e)}}
 function error(e:unknown){if(e instanceof AuthError)return Response.json({error:e.message},{status:e.status,headers:noCache});console.error('Admin operation failed',e instanceof Error?e.message:'Unknown');return Response.json({error:'后台暂时不可用，请重试；未保存的输入仍保留在页面。'},{status:503,headers:noCache})}
 export async function POST(req:Request){try{assertSameOrigin(req);const raw=await req.text();if(raw.length>2000000)throw new AuthError('内容过长，请缩短后重试。');let p:any;try{p=JSON.parse(raw)}catch{throw new AuthError('请求格式无效。')}if(!p||typeof p!=='object')throw new AuthError('请求格式无效。');const db=studyDb(),now=Date.now();
@@ -43,6 +45,22 @@ export async function POST(req:Request){try{assertSameOrigin(req);const raw=awai
   if(!Array.isArray(p.questions)||!p.questions.length||p.questions.length>100)throw new AuthError('每次导入 1–100 道题。');const c=await catalog();
   const questions=p.questions.map((v:any)=>{if(typeof v.id!=='string'||!/^imp-[a-f0-9-]{36}$/.test(v.id))throw new AuthError('导入编号无效。');const q=questionInput({...v,status:'draft',revision:1},v.id);requireScope(a,q.subjectId);if(!c.subjects.some(s=>s.id===q.subjectId))throw new AuthError('请选择有效学科。');const old=c.questions.find(x=>x.id===q.id);if(old)requireScope(a,old.subjectId);return q});
   await db.batch(questions.map((q:any)=>db.prepare('INSERT OR IGNORE INTO managed_questions(id,subject_id,kind,status,payload,revision,updated_by,updated_at) VALUES(?,?,?,?,?,?,?,?)').bind(q.id,q.subjectId,q.kind,'draft',JSON.stringify(q),1,a.id,now)));return json({ok:true,count:questions.length});
+ }
+ if(p.action==='generatePlan'||p.action==='savePlan'){
+  const c=await catalog(),subjectId=textValue(p.subjectId,100,true);requireScope(a,subjectId);if(!c.subjects.some(s=>s.id===subjectId))throw new AuthError('请选择有效学科。');
+  if(!['exam','interview','random'].includes(p.mode)||![30,60].includes(p.minutes))throw new AuthError('请选择模式及 30 或 60 分钟。');
+  const title=textValue(p.title,120,true),chapter=textValue(p.chapter??'',100);const pool=c.questions.filter(q=>q.subjectId===subjectId&&q.kind==='practice'&&q.status==='published'&&(!chapter||q.section===chapter));let chosen;
+  if(p.action==='generatePlan'){
+   const types=['choice','fill','short','code'];if(!p.counts||types.some(t=>!Number.isInteger(p.counts[t])||p.counts[t]<0||p.counts[t]>30))throw new AuthError('每种题型数量应为 0–30。');
+   if(p.mode==='interview'&&(p.counts.choice||p.counts.fill))throw new AuthError('模拟面试请选择简答或代码题。');
+   if(types.reduce((n,t)=>n+p.counts[t],0)>60)throw new AuthError('每份最多 60 道题。');
+   chosen=shuffle(types.flatMap(t=>{const candidates=pool.filter(q=>q.type===t);if(candidates.length<p.counts[t])throw new AuthError('题量不足：'+t+'，当前可用 '+candidates.length+' 道。请减少数量或先添加题目。');return shuffle(candidates).slice(0,p.counts[t])}));
+  }else{if(!Array.isArray(p.ids)||p.ids.length>60||new Set(p.ids).size!==p.ids.length)throw new AuthError('题目列表无效。');chosen=p.ids.map((id:string)=>{const q=pool.find(q=>q.id===id);if(!q)throw new AuthError('题目已变更或下架，请重新生成。',409);if(p.mode==='interview'&&!['short','code'].includes(q.type))throw new AuthError('模拟面试请选择简答或代码题。');return q})}
+  if(!chosen.length)throw new AuthError('请至少选择一道题。');const plan={id:crypto.randomUUID(),title,subjectId,chapter,mode:p.mode,minutes:p.minutes,status:p.status==='published'?'published':'draft',questions:chosen.map(asPractice)};
+  if(p.action==='savePlan')await db.prepare('INSERT INTO practice_plans(id,subject_id,status,payload,created_by,created_at) VALUES(?,?,?,?,?,?)').bind(plan.id,subjectId,plan.status,JSON.stringify(plan),a.id,now).run();return json({ok:true,plan});
+ }
+ if(p.action==='planStatus'){
+  const plan=(await plans()).find(x=>x.id===p.id);if(!plan)throw new AuthError('找不到该训练方案。',404);requireScope(a,plan.subjectId);if(!['draft','published','archived'].includes(p.status))throw new AuthError('状态无效。');await db.prepare('UPDATE practice_plans SET status=? WHERE id=?').bind(p.status,plan.id).run();return json({ok:true});
  }
  if(p.action==='saveQuestion'){
   const c=await catalog(),id=p.question?.id||'m-'+crypto.randomUUID(),old=c.questions.find(q=>q.id===id);if(p.question?.id&&!old)throw new AuthError('题目不存在，请重新载入。',404);const q=questionInput(p.question,id);if(!c.subjects.some(s=>s.id===q.subjectId))throw new AuthError('请选择有效学科。');requireScope(a,q.subjectId);if(old){requireScope(a,old.subjectId);if(old.kind!==q.kind)throw new AuthError('不能变更已有题目的题库类型。');if(old.revision!==q.revision)throw new AuthError('题目已被其他管理员修改，请重新载入后再编辑。',409)}

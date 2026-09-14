@@ -1,6 +1,7 @@
 import {sessionUser,assertSameOrigin,AuthError} from '@/lib/site-auth';
 import {studyDb,dayNow} from '@/db/study';
 import {choose,emptyAnswer,snapshot,RunRow,savedQuestion} from '@/db/practice';
+import {plans} from '@/db/practice-plans';
 import {practiceCatalog} from '@/db/catalog';
 import type {Payload,Mode} from '@/lib/practice-types';
 
@@ -13,9 +14,11 @@ export async function POST(req:Request){const language=req.headers.get('x-study-
  const db=studyDb(),now=Date.now();
  if(p.action==='goal'){if(![30,60].includes(p.minutes))return fail('请选择 30 或 60 分钟。');await db.prepare('INSERT INTO practice_preferences(user_id,minutes) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET minutes=excluded.minutes').bind(user,p.minutes).run();return Response.json(await snapshot(user,undefined,language));}
  if(p.action==='start'){
+  const plan=p.planId?(await plans(true)).find(x=>x.id===p.planId):null;if(p.planId&&!plan)return fail('该方案未发布或已下架。',404);
+  if(plan){p.mode=plan.mode;p.track=plan.subjectId;p.minutes=plan.minutes}
   const content=await practiceCatalog();
   if(!['exam','interview','random'].includes(p.mode)||(p.track!=='all'&&!content.subjects.some(s=>s.id===p.track))||![30,60].includes(p.minutes))return fail('训练设置无效。');
-  const ids=choose(p.mode,p.track,content.questions.map(s=>s.question));if(!ids.length)return fail('所选学科暂无适合此模式的已发布题目。');const questionSnapshots=ids.map(id=>content.questions.find(s=>s.question.id===id)!);const payload:Payload={mode:p.mode as Mode,track:p.track,minutes:p.minutes,ids,questionSnapshots,answers:ids.map(emptyAnswer),index:0,seconds:0,lastTick:now};
+  const pool=plan?.questions??content.questions;const ids=plan?(plan.mode==='random'?[pool[Math.floor(Math.random()*pool.length)].question.id]:pool.map(s=>s.question.id)):choose(p.mode,p.track,pool.map(s=>s.question));if(!ids.length)return fail('所选学科暂无适合此模式的已发布题目。');const questionSnapshots=ids.map(id=>pool.find(s=>s.question.id===id)!);const payload:Payload={mode:p.mode as Mode,track:p.track,minutes:p.minutes,ids,questionSnapshots,...(plan?{planId:plan.id,planTitle:plan.title,...(plan.mode==='random'?{planPool:plan.questions}:{})}:{}),answers:ids.map(emptyAnswer),index:0,seconds:0,lastTick:now};
   // Unique active-run index makes repeat clicks and concurrent tabs resume the same run.
   await db.prepare("INSERT OR IGNORE INTO practice_runs(id,user_id,status,payload,revision,last_op,created_at,updated_at) VALUES(?,?,'active',?,0,?,?,?)").bind(crypto.randomUUID(),user,JSON.stringify(payload),crypto.randomUUID(),now,now).run();
   return Response.json(await snapshot(user,undefined,language));
@@ -36,7 +39,7 @@ export async function POST(req:Request){const language=req.headers.get('x-study-
   if(v.mode==='exam')return fail('考试交卷后请对照要点查看主观题。');v.answers[p.index].self=p.value;
  }else if(p.action==='next'){
   if(v.mode==='exam'||!v.answers[v.index].submitted)return fail('请先提交当前答案。');
-  if(v.mode==='random'){const content=await practiceCatalog();const next=choose('random',v.track,content.questions.map(s=>s.question));if(!next.length){status='completed'}else{v.questionSnapshots=v.ids.map((_,i)=>savedQuestion(v,i));v.ids.push(next[0]);v.questionSnapshots.push(content.questions.find(s=>s.question.id===next[0])!);v.answers.push(emptyAnswer());v.index++;}}
+  if(v.mode==='random'){const content=await practiceCatalog();const pool=v.planPool??content.questions;const next=choose('random',v.track,pool.map(s=>s.question));if(!next.length){status='completed'}else{v.questionSnapshots=v.ids.map((_,i)=>savedQuestion(v,i));v.ids.push(next[0]);v.questionSnapshots.push(pool.find(s=>s.question.id===next[0])!);v.answers.push(emptyAnswer());v.index++;}}
   else if(v.index<v.ids.length-1)v.index++;else status='completed';
  }else if(p.action==='tick'){
   if(p.elapsed===undefined)return fail('计时时长无效。');
