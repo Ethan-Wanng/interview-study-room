@@ -30,7 +30,7 @@ export const autoQuestionFingerprints=sqliteTable('auto_question_fingerprints',{
  fingerprint:text('fingerprint').primaryKey(),questionId:text('question_id').notNull().unique(),createdAt:integer('created_at').notNull(),
 });
 export const autoQuestionLogs=sqliteTable('auto_question_logs',{
- id:text('id').primaryKey(),key:text('key').notNull(),status:text('status').notNull(),count:integer('count').notNull(),detail:text('detail').notNull(),createdAt:integer('created_at').notNull(),
+ id:text('id').primaryKey(),key:text('key').notNull(),status:text('status').notNull(),count:integer('count').notNull(),detail:text('detail').notNull(),createdAt:integer('created_at').notNull(),metadata:text('metadata'),
 },t=>[index('idx_auto_question_logs_created').on(t.createdAt)]);
 
 // Transaction-local insertion receipts; removed before a successful batch commits.

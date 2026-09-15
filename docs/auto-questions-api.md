@@ -57,3 +57,48 @@ Content-Type: application/json
 ```
 
 迁移 `0009_blue_ikaris.sql` 增加名称登记表 `practice_plan_names`，主键为 `(space_id,type,name)`，以及关联表的 `(plan_id,question_id)` 唯一索引。题集插入和修改触发器维护名称登记并检查现有 `practice_plans`，因此历史题集无需批量改写也能阻止重名；手动组卷同样受约束。名称登记与自动创建的其他写入共享原事务，任何冲突均回滚。迁移不会清理已有历史重名题集，但禁止新建同名项。
+
+## 返回值、查询与日志（第四阶段）
+
+带题集的首次成功返回 HTTP 201，保留 `ok` 并增加以下自动化字段；`questionCount` 已通过同一事务中的实际关联数量校验：
+
+```json
+{
+  "ok": true,
+  "success": true,
+  "count": 6,
+  "ids": ["q1", "q2", "q3", "q4", "q5", "q6"],
+  "status": "published",
+  "questionSet": {"id": "set-id", "type": "training", "name": "训练20260916", "questionCount": 6},
+  "replayed": false
+}
+```
+
+重试返回 HTTP 200 和首次完整结果，`replayed: true`。第四阶段之前保存的题集成功结果也会在重放时补充 `success` 和 `questionCount`，不重新写入题目。无 `questionSet` 的旧请求维持原有返回格式。
+
+### 查询
+
+`GET /api/admin/question-sets?type=training&name=训练20260916` 使用与自动出题相同的 Bearer Token。响应为 `{success:true,data:{id,type,name,spaceId,status,questionCount,linkedCount,associationSource,questions}}`。`questions` 保持创建时快照和请求顺序，每项包含 `question`、`english`、`sortOrder`。
+
+自动创建的题集使用实际 `practice_plan_questions` 关联，`associationSource: "links"`；查询时核对数量、ID 和顺序。关联数量损坏返回 HTTP 409 `QUESTION_COUNT_MISMATCH`，顺序或 ID 损坏返回 `QUESTION_LINK_FAILED`，不会报告成功。历史手动方案继续使用其原有内嵌快照，标记为 `associationSource: "snapshot"`。
+
+同时提供 type 和 name 时返回一个对象；未找到返回 HTTP 404 `QUESTION_SET_NOT_FOUND`。跨空间同名返回 HTTP 409 `QUESTION_SET_AMBIGUOUS`，可增加 `spaceId=go-interview` 精确查询；同空间历史重名也会报告歧义。省略其中任意过滤条件时返回最多 50 个题集组成的数组，并带 `hasMore`；可单独按 type、name 或 spaceId 筛选。接口仅增加读取能力，自动写入口仍为原 POST。
+
+### 执行日志
+
+`GET /api/admin/auto-questions` 保留 `{logs:[...]}` 和最近 50 条能力，按开始时间倒序。每次请求都有独立的 `executionId`，同一幂等键的重试也会留下独立记录。新增字段：
+
+| 字段 | 含义 |
+| --- | --- |
+| executionId / idempotencyKey | 本次执行 ID / 调用方幂等键；无有效键时为空字符串 |
+| questionSetType / questionSetName / questionSetId | 请求题集信息；失败时 ID 为 null，重放时为首次成功的 ID |
+| requestedCount | 本次提交题数 |
+| createdCount / linkedCount | 本次实际新增题数 / 建立关联数；失败或重放均为 0，无题集时关联数为 0 |
+| status | success、failed 或 replayed，不使用 partial |
+| replayed | 是否复用首次成功结果 |
+| errorCode / errorMessage | 失败错误码及说明，成功或重放为 null |
+| createdAt / finishedAt / durationMs | 开始时间、数据库日志写入时间、两者差值，单位毫秒 |
+
+重放的 POST 返回首次创建数量，而日志计数描述本次执行，避免把重试算作再次创建。成功日志在同一事务中、提交校验之后写入，失败回滚不会留下成功日志。失败和重放日志单独保存；日志存储本身不可用时只输出固定错误提示，不打印数据库错误对象或请求头。时间统计包含参数校验和数据库执行到日志写入的耗时，不包含后续网络传输。
+
+旧日志的 id、key、count、detail、created_at 字段继续返回；历史 rejected 状态统一映射为 failed。历史记录无法推断的关联数量和时间字段返回 null。迁移 `0010_short_mad_thinker.sql` 仅新增可空 metadata 列，保留现有日志。日志不保存 Authorization 或 Bearer Token 明文。

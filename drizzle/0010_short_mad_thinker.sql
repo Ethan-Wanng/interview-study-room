@@ -1,0 +1,1 @@
+ALTER TABLE `auto_question_logs` ADD `metadata` text;

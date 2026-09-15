@@ -39,6 +39,6 @@ try{
  // Validation failures and rejected batches must not insert any questions/plans.
  r=await call({questions:[question('整批新题'),question('阶段一旧请求')]});assert.equal(r.status,409);
  assert.equal(await count('managed_questions'),4);assert.equal(await count('auto_question_keys'),4);assert.equal(await count('practice_plans'),3);
- r=await mf.dispatchFetch('https://site.test/api/admin/auto-questions',{headers:{authorization:'Bearer '+token}});assert.equal(r.status,200);const {logs}=await r.json();assert.ok(logs.some(x=>x.status==='success'));assert.ok(logs.some(x=>x.status==='replayed'));assert.ok(logs.some(x=>x.status==='rejected'));
+ r=await mf.dispatchFetch('https://site.test/api/admin/auto-questions',{headers:{authorization:'Bearer '+token}});assert.equal(r.status,200);const {logs}=await r.json();assert.ok(logs.some(x=>x.status==='success'));assert.ok(logs.some(x=>x.status==='replayed'));assert.ok(logs.some(x=>x.status==='failed'));
  console.log('PASS: legacy API, all questionSet types, names and boundaries, exact error codes, empty-batch compatibility, auth, idempotency, duplicates, unchanged logs and compatible plan creation.');
 }finally{await mf.dispose()}

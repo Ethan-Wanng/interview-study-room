@@ -71,6 +71,13 @@
       "when": 1789420099732,
       "tag": "0009_blue_ikaris",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1789420943364,
+      "tag": "0010_short_mad_thinker",
+      "breakpoints": true
     }
   ]
 }
