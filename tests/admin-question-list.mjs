@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+const require=createRequire(import.meta.url),{build}=require('esbuild');
+const out=await build({entryPoints:['lib/admin-question-list.ts'],bundle:true,write:false,format:'esm',platform:'node'});
+const {adminQuestionList}=await import('data:text/javascript;base64,'+Buffer.from(out.outputFiles[0].text).toString('base64'));
+const subjects=[{id:'go',spaceId:'go-interview'},{id:'math',spaceId:'math-space'}];
+const q=(id,subjectId,status,updatedAt)=>({id,subjectId,status,updatedAt,kind:'practice',topic:'topic',zh:{title:id},en:null});
+const questions=[q('published','go','published',10),q('older-draft','go','draft',1),q('new-draft','math','draft',20),q('unauthorized','private','draft',30)];
+const filter={drafts:true,space:'go-interview',subject:'all',kind:'all',search:''};
+assert.deepEqual(adminQuestionList(questions,subjects,filter).map(q=>q.id),['new-draft','older-draft']);
+assert.deepEqual(adminQuestionList(questions,subjects,{...filter,drafts:false}).map(q=>q.id),['older-draft','published']);
+assert.deepEqual(adminQuestionList(questions,subjects,{...filter,subject:'go'}).map(q=>q.id),['older-draft']);
+assert.deepEqual(adminQuestionList(questions,subjects,{...filter,search:'NEW'}).map(q=>q.id),['new-draft']);
+assert.deepEqual(adminQuestionList(questions,subjects,{...filter,kind:'document'}),[]);
+assert.equal(questions[0].id,'published');
+console.log('PASS: drafts from all authorized spaces, newest first, current-space normal view, scope isolation and subject/kind/search filters.');
