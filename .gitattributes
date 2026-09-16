@@ -1,2 +1,3 @@
 drizzle/0008_friendly_sunfire.sql text eol=lf
 drizzle/0009_blue_ikaris.sql text eol=lf
+drizzle/0011_subject_integrity.sql text eol=lf

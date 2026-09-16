@@ -84,6 +84,20 @@ try{
  await ok(await post({action:'deleteQuestion',id:builtin.id,revision:builtin.revision},owner));assert.ok(!(await ok(await call('/api/admin',null,owner))).questions.some(q=>q.id===builtin.id));
  const unused=(await ok(await post({action:'invite',subjects:[subject],allowNew:false},editor))).key;await ok(await post({action:'disableAdmin',id:editorPanel.admin.id},owner));assert.equal((await call('/api/admin',null,editor)).status,401);assert.equal((await post({action:'login',key:editorKey})).status,401);assert.equal((await post({action:'register',inviteKey:unused,name:'Disabled invitation',subjectNames:'物理'})).status,400);
  r=await post({action:'rotateKey'},owner);const rotated=(await ok(r.clone())).key;owner=r.headers.get('set-cookie').split(';')[0];assert.equal((await post({action:'login',key:ownerKey})).status,401,'bootstrap cannot bypass rotation');assert.equal((await post({action:'login',key:rotated})).status,200);
+ // Empty custom subjects can be deleted, with scope and invite cleanup.
+ await ok(await post({action:'subject',name:'Delete empty',nameEn:'Delete empty'},owner));
+ const empty=(await ok(await call('/api/admin',null,owner))).subjects.find(s=>s.name==='Delete empty').id;
+ const pendingInvite=(await ok(await post({action:'invite',subjects:[empty],allowNew:false},owner))).key;
+ await db.prepare("UPDATE administrators SET subjects=json_insert(subjects,'$[#]',?) WHERE id=?").bind(empty,editorPanel.admin.id).run();
+ await ok(await post({action:'deleteSubject',id:empty},owner));
+ assert.ok(!(await ok(await call('/api/admin',null,owner))).subjects.some(s=>s.id===empty));
+ assert.equal((await post({action:'inspectInvite',inviteKey:pendingInvite})).status,400);
+ assert.ok(!JSON.parse((await db.prepare('SELECT subjects FROM administrators WHERE id=?').bind(editorPanel.admin.id).first()).subjects).includes(empty));
+ assert.equal((await post({action:'deleteSubject',id:subject},owner)).status,409);
+ assert.equal((await post({action:'deleteSubject',id:'go'},owner)).status,409);
+ assert.equal((await post({action:'deleteSubject',id:empty},owner)).status,404);
+ await assert.rejects(()=>db.prepare("INSERT INTO managed_questions(id,subject_id,kind,status,payload,revision,updated_by,updated_at) VALUES('stale-question',?,'practice','draft','{}',1,'test',0)").bind(empty).run(),/SUBJECT_NOT_FOUND/);
+ await assert.rejects(()=>db.prepare('DELETE FROM subjects WHERE id=?').bind(subject).run(),/SUBJECT_IN_USE/);
  const rows=await db.prepare('SELECT key_hash FROM administrators').all();assert.ok(rows.results.every(row=>/^[a-f0-9]{64}$/.test(row.key_hash)));
  console.log('PASS: isolated key authentication, bootstrap, invitation scopes and single use, new subject registration, live catalog edits, optimistic concurrency, new-subject study and practice, immutable answer snapshots, archiving, disabled keys/invites, key rotation, CSRF and hashed-key storage.');
 }finally{await mf.dispose()}

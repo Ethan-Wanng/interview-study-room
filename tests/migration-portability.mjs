@@ -14,6 +14,6 @@ try{
   }
   for(const statement of unstable_splitSqlQuery(sql))await db.prepare(statement).run();
  }
- assert.equal((await db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger'").first()).n,5);
- console.log('PASS: all migration files execute through the Wrangler SQL splitter, five triggers present, LF and parenthesized CASE guards.');
+ assert.equal((await db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger'").first()).n,10);
+ console.log('PASS: all migration files execute through the Wrangler SQL splitter, ten triggers present, LF and parenthesized CASE guards.');
 }finally{await mf.dispose()}

@@ -7,7 +7,7 @@ export const dynamic='force-dynamic';
 const respond=(body:unknown,status=200)=>Response.json(body,{status,headers:{'Cache-Control':'no-store'}});
 export async function GET(req:Request){
  try{
-  authorizeAutoQuestions(req);
+  await authorizeAutoQuestions(req);
   const params=new URL(req.url).searchParams,type=params.get('type'),name=params.get('name'),spaceId=params.get('spaceId');
   const filter=questionSetInput({type:type??'training',name:name??'查询'} )!;
   const conditions=["json_extract(p.payload,'$.mode') IN ('random','interview','exam')"],args:string[]=[];

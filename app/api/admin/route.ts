@@ -41,6 +41,19 @@ export async function POST(req:Request){try{assertSameOrigin(req);const raw=awai
  if(p.action==='space'){
   const name=textValue(p.name,80,true),nameEn=textValue(p.nameEn||name,80,true),c=await catalog();if(c.spaces.some(s=>nameKey(s.name)===nameKey(name)))throw new AuthError('该空间已存在。',409);await db.prepare('INSERT INTO spaces(id,name,name_en,created_by) VALUES(?,?,?,?)').bind('sp-'+crypto.randomUUID(),name,nameEn,a.id).run();return json({ok:true});
  }
+ if(p.action==='deleteSubject'){
+  const id=textValue(p.id,100,true);requireScope(a,id);
+  if(['go','backend'].includes(id))throw new AuthError('Go 和后端通用是系统学科，不能删除。',409);
+  if(!await db.prepare('SELECT id FROM subjects WHERE id=?').bind(id).first())throw new AuthError('学科不存在或已删除。',404);
+  try{
+   await db.batch([
+    db.prepare('DELETE FROM subjects WHERE id=?').bind(id),
+    db.prepare("UPDATE administrators SET subjects=(SELECT json_group_array(value) FROM json_each(administrators.subjects) WHERE value<>?) WHERE role='editor'").bind(id),
+    db.prepare("UPDATE admin_invites SET revoked=1 WHERE used_by IS NULL AND EXISTS(SELECT 1 FROM json_each(admin_invites.subjects) WHERE value=?)").bind(id),
+   ]);
+  }catch(e){if(e instanceof Error&&(e.message+' '+String(e.cause??'')).includes('SUBJECT_IN_USE'))throw new AuthError('该学科仍有关联题目或历史方案，暂不能删除。请先将题目移动到其他学科；历史记录需要保留。',409);throw e}
+  return json({ok:true});
+ }
  if(p.action==='subject'){
   const name=textValue(p.name,80,true),nameEn=textValue(p.nameEn||name,80,true),c=await catalog();if(c.subjects.some(s=>[nameKey(s.name),nameKey(s.nameEn)].includes(nameKey(name))))throw new AuthError('该学科已存在。',409);const spaceId=textValue(p.spaceId??'go-interview',100,true),space=c.spaces.find(s=>s.id===spaceId);if(!space)throw new AuthError('请选择有效空间。');if(a.role!=='owner'&&space.createdBy!==a.id&&!c.subjects.some(s=>s.spaceId===spaceId&&canEdit(a,s.id)))throw new AuthError('你没有管理该空间的权限。',403);const id='s-'+crypto.randomUUID();await db.batch([db.prepare('INSERT INTO subjects(id,name,name_en,name_key,created_by,space_id) VALUES(?,?,?,?,?,?)').bind(id,name,nameEn,nameKey(name),a.id,spaceId),db.prepare("UPDATE administrators SET subjects=json_insert(subjects,'$[#]',?) WHERE id=? AND role='editor'").bind(id,a.id)]);return json({ok:true});
  }

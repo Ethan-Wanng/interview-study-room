@@ -56,6 +56,7 @@ try{
  r=await get(query('training',firstBody.questionSet.name));assert.equal(r.status,409);assert.equal((await r.json()).code,'QUESTION_COUNT_MISMATCH');
  await db.prepare('INSERT INTO practice_plan_questions(plan_id,question_id,sort_order) VALUES(?,?,6)').bind(first.questionSet.id,first.ids[5]).run();
  // Same name in another space is ambiguous until the caller supplies spaceId.
+ await db.prepare("INSERT INTO subjects(id,name,name_en,name_key,created_by,space_id) VALUES('other','Other','Other','other-report','test','other')").run();
  const plan=await db.prepare('SELECT payload FROM practice_plans WHERE id=?').bind(first.questionSet.id).first();
  await db.prepare('INSERT INTO practice_plans(id,subject_id,status,payload,created_by,created_at) VALUES(?,?,?,?,?,?)').bind('other-space','other','published',plan.payload,'manual',Date.now()).run();
  r=await get(query('training',firstBody.questionSet.name));assert.equal(r.status,409);assert.equal((await r.json()).code,'QUESTION_SET_AMBIGUOUS');

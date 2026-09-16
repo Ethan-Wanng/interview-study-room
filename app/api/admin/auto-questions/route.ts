@@ -21,7 +21,7 @@ async function previous(key:string,hash:string){
  return JSON.parse(row.response);
 }
 export async function GET(req:Request){
- try{authorize(req);return respond({logs:await executionLogs()})}catch(error){return fail(error)}
+ try{await authorize(req);return respond({logs:await executionLogs()})}catch(error){return fail(error)}
 }
 export async function POST(req:Request){
  let key='',parsedHash:string|undefined;
@@ -32,7 +32,7 @@ export async function POST(req:Request){
   return respond(response);
  };
  try{
-  authorize(req);
+  await authorize(req);
   if(!req.headers.get('content-type')?.startsWith('application/json'))throw new AuthError('请求格式无效。',415);
   key=req.headers.get('idempotency-key')??'';
   if(!/^[A-Za-z0-9._:-]{8,128}$/.test(key))throw new AuthError('请提供 8–128 字符的 Idempotency-Key。');
