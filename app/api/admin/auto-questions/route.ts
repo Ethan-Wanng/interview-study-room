@@ -13,7 +13,7 @@ import {questionSetStatements} from '@/db/auto-question-set';
 export const dynamic='force-dynamic';
 const headers={'Cache-Control':'no-store'};
 const respond=(body:unknown,status=200)=>Response.json(body,{status,headers});
-function fail(error:unknown){if(error instanceof QuestionSetAlreadyExistsError)return respond({success:false,error:error.code,code:error.code,message:error.message},409);if(error instanceof QuestionSetValidationError||error instanceof QuestionSetCreationError)return respond({error:error.message,code:error.code},error.status);if(error instanceof AuthError)return respond({error:error.message},error.status);console.error('Auto questions failed');return respond({error:'自动出题暂时不可用，请稍后重试。'},503)}
+function fail(error:unknown){if(error instanceof QuestionSetAlreadyExistsError)return respond({success:false,error:error.code,code:error.code,message:error.message},409);if(error instanceof QuestionSetValidationError||error instanceof QuestionSetCreationError)return respond({error:error.message,code:error.code},error.status);if(error instanceof AuthError)return respond({error:error.message,...('code' in error?{code:String(error.code)}:error.status===409?{code:'QUESTION_CONFLICT'}:{})},error.status);console.error('Auto questions failed');return respond({error:'自动出题暂时不可用，请稍后重试。'},503)}
 async function previous(key:string,hash:string){
  const row=await studyDb().prepare('SELECT request_hash,response FROM auto_question_keys WHERE key=?').bind(key).first<{request_hash:string;response:string}>();
  if(!row)return null;
@@ -24,6 +24,7 @@ export async function GET(req:Request){
  try{await authorize(req);return respond({logs:await executionLogs()})}catch(error){return fail(error)}
 }
 export async function POST(req:Request){
+ const checkOnly=new URL(req.url).searchParams.get('check')==='1';
  let key='',parsedHash:string|undefined;
  const execution:Execution={executionId:crypto.randomUUID(),idempotencyKey:'',createdAt:Date.now(),requestedCount:0,questionSetType:null,questionSetName:null};
  const replayResponse=async(result:any)=>{
@@ -48,7 +49,7 @@ export async function POST(req:Request){
    execution.questionSetType=typeof set.type==='string'?set.type.slice(0,30):null;
    execution.questionSetName=typeof set.name==='string'?set.name.trim().slice(0,200):null;
   }
-  const replay=await previous(key,hash);if(replay)return replayResponse(replay);
+  const replay=await previous(key,hash);if(replay)return checkOnly?respond({checked:true,alreadyCreated:true,count:replay.count}):replayResponse(replay);
   const questionSet=questionSetInput(p.questionSet);
   if(!Array.isArray(p.questions)||p.questions.length<1||p.questions.length>100)throw new AuthError('每次提交 1–100 道题。');
   if(questionSet&&p.status!=='published')throw new QuestionSetCreationError('QUESTION_PUBLISH_VALIDATION_FAILED');
@@ -82,6 +83,7 @@ export async function POST(req:Request){
    if(q.kind==='practice'&&q.type==='choice'){q.zh.answer=q.zh.options[Number(q.accepted[0])]??'';if(q.en)q.en.answer=q.en.options[Number(q.accepted[0])]??''}
    return q;
   });
+  if(checkOnly)return respond({checked:true,count:questions.length,status:p.status??'draft'});
   const db=studyDb(),now=Date.now(),setId=questionSet?crypto.randomUUID():undefined;
   const result={ok:true,count:questions.length,ids:questions.map(q=>q.id),status:p.status??'draft',...(questionSet?{success:true,replayed:false,questionSet:{id:setId!,...questionSet,questionCount:questions.length}}:{})};
   try{
@@ -114,8 +116,8 @@ export async function POST(req:Request){
  }catch(error){
   // A concurrent commit may become visible after the first replay lookup,
   // including while the name or title preflight was running.
-  if(parsedHash){try{const raced=await previous(key,parsedHash);if(raced)return replayResponse(raced);}catch(conflict){error=conflict}}
+  if(parsedHash&&!checkOnly){try{const raced=await previous(key,parsedHash);if(raced)return replayResponse(raced);}catch(conflict){error=conflict}}
   const errorCode=error&&typeof error==='object'&&'code' in error?String(error.code):error instanceof AuthError?(error.status===401?'UNAUTHORIZED':error.status===409?'QUESTION_CONFLICT':'INVALID_REQUEST'):'INTERNAL_ERROR';
   const errorMessage=error instanceof AuthError?error.message:'自动出题暂时不可用，请稍后重试。';
-  await recordExecution(execution,{status:'failed',createdCount:0,linkedCount:0,questionSetId:null,errorCode,errorMessage});return fail(error)}
+  if(!checkOnly)await recordExecution(execution,{status:'failed',createdCount:0,linkedCount:0,questionSetId:null,errorCode,errorMessage});return fail(error)}
 }
