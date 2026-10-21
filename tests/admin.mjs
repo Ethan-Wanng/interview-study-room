@@ -33,7 +33,7 @@ try{
  const concurrent=await Promise.all([post({action:'saveQuestion',question:{...managed,zh:{...text,title:'Velocity A'}}},editor),post({action:'saveQuestion',question:{...managed,zh:{...text,title:'Velocity B'}}},editor)]);assert.deepEqual(concurrent.map(r=>r.status).sort(),[200,409]);
  const quiz={...doc,kind:'practice',type:'choice',zh:{...text,title:'Which unit measures speed?',options:['m/s','kg','s','N'],answer:'m/s',explanation:'Speed is distance per time.'},en:null,accepted:['0']};
  let testQ=(await ok(await post({action:'saveQuestion',question:quiz},editor))).question;
- const hierarchy=await ok(await call('/test-catalog'));assert.equal(hierarchy.spaces.find(s=>s.id==='go-interview').name,'GO面试');assert.deepEqual(hierarchy.tracks.filter(s=>['go','backend'].includes(s.id)).map(s=>s.spaceId),['go-interview','go-interview']);
+ const hierarchy=await ok(await call('/test-catalog'));assert.equal(hierarchy.spaces.find(s=>s.id==='go-interview').name,'GO面试');assert.deepEqual(hierarchy.tracks.filter(s=>['go','backend'].includes(s.id)).map(s=>s.spaceId),['go-interview','go-interview']);assert.equal(hierarchy.spaces.find(s=>s.id==='ai-development').name,'AI 开发');assert.deepEqual(hierarchy.tracks.find(s=>s.id==='ai-development'),{id:'ai-development',name:'AI 开发',nameEn:'AI development',spaceId:'ai-development'});
  await ok(await post({action:'space',name:'Java面试',nameEn:'Java interviews'},editor));const hp=await ok(await call('/api/admin',null,editor));const javaSpace=hp.spaces.find(s=>s.name==='Java面试').id;
  await ok(await post({action:'subject',name:'Java',spaceId:javaSpace},editor));const hp2=await ok(await call('/api/admin',null,editor));assert.equal(hp2.subjects.find(s=>s.name==='Java').spaceId,javaSpace);
  const otherSpace='sp-unavailable';assert.equal((await post({action:'subject',name:'Missing',spaceId:otherSpace},editor)).status,400);
@@ -95,6 +95,7 @@ try{
  assert.ok(!JSON.parse((await db.prepare('SELECT subjects FROM administrators WHERE id=?').bind(editorPanel.admin.id).first()).subjects).includes(empty));
  assert.equal((await post({action:'deleteSubject',id:subject},owner)).status,409);
  assert.equal((await post({action:'deleteSubject',id:'go'},owner)).status,409);
+ assert.equal((await post({action:'deleteSubject',id:'ai-development'},owner)).status,409);
  assert.equal((await post({action:'deleteSubject',id:empty},owner)).status,404);
  await assert.rejects(()=>db.prepare("INSERT INTO managed_questions(id,subject_id,kind,status,payload,revision,updated_by,updated_at) VALUES('stale-question',?,'practice','draft','{}',1,'test',0)").bind(empty).run(),/SUBJECT_NOT_FOUND/);
  await assert.rejects(()=>db.prepare('DELETE FROM subjects WHERE id=?').bind(subject).run(),/SUBJECT_IN_USE/);
