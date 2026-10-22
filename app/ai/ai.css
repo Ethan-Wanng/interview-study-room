@@ -40,3 +40,14 @@
 .ai-review details{border-top:1px solid var(--line);padding:12px 0}.ai-review summary{display:flex;gap:10px;align-items:flex-start;cursor:pointer;line-height:1.7}.ai-review summary svg{flex:none;margin-top:5px}
 .ai-review .right{color:var(--notice)}.ai-review .wrong{color:var(--alert-ink)}.ai-review details p{margin:8px 0 0 26px;line-height:1.8}
 @media(max-width:767px){.ai-header{padding:13px 16px}.ai-brand{font-size:17px}.ai-main{padding:24px 16px 50px}.ai-title h1{font-size:26px}.ai-modes{grid-template-columns:1fr}.ai-level{padding:15px 16px;gap:12px;flex-wrap:wrap}.ai-level-state{width:100%;padding-left:48px}.ai-lesson,.ai-question,.ai-review{padding:22px 19px}.ai-question h2{font-size:19px}.ai-result{padding:26px 19px}}
+.ai-tags{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}.ai-tags .ai-tag{margin:0}.ai-tag.type{background:var(--primary);color:var(--primary-foreground)}
+.ai-option.chosen{border-color:var(--primary);box-shadow:inset 0 0 0 1px var(--primary)}
+.ai-judge{grid-template-columns:1fr 1fr}
+.ai-snippet{margin:0 0 20px!important}
+.ai-fill{display:flex;gap:10px;flex-wrap:wrap}.ai-fill input{flex:1;min-width:200px;min-height:46px;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--surface-soft);color:var(--ink);font-size:16px}
+.ai-written textarea{width:100%;padding:14px 16px;border:1px solid var(--line);border-radius:10px;background:var(--surface-soft);color:var(--ink);font-size:16px;line-height:1.8;resize:vertical}.ai-written textarea.code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:14px;line-height:1.7}
+.ai-reference{margin-top:18px;padding:18px 20px;border-radius:10px;background:var(--surface-soft);border-left:4px solid var(--primary)}.ai-reference strong{display:block;font-size:15px;margin:4px 0 8px}.ai-reference p{margin:0 0 12px;color:var(--body-ink);line-height:1.9;white-space:pre-line}.ai-reference ul{margin:0;padding-left:20px;list-style:disc;color:var(--body-ink);line-height:1.9}.ai-reference pre{margin:0 0 12px}
+.ai-self{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}.ai-self span{flex:1;min-width:180px;color:var(--body-ink);font-size:14px}
+.ai-answer{font-weight:600;color:var(--ink)!important}
+.ai-review-ref{margin:8px 0 0 26px;padding:12px 14px;border-radius:8px;background:var(--surface-soft);color:var(--body-ink);font-size:14px;line-height:1.7;white-space:pre-wrap;overflow-x:auto}
+@media(max-width:767px){.ai-judge{grid-template-columns:1fr}.ai-reference{padding:15px}}

@@ -1,12 +1,19 @@
 // AI 学习空间：14 个关卡，每关先学习再答题。题目 id 由关卡 id 与题目序号组成，追加题目请放在末尾以保留错题记录。
+// 后加的多题型题目在 ai-quiz-extra.ts，按关卡接在本文件题目之后。
+import {aiExtraQuiz} from './ai-quiz-extra';
 export type AiLesson={title:string;body:string;code?:string};
-export type AiQuiz={q:string;options:string[];answer:number;explain:string};
+// single 单选（默认）· multi 多选（全对才算对）· judge 判断 · fill 填空（任一可接受答案即对）· short 简答 / code 代码（看参考答案后自评）
+export type AiQuiz={q:string;explain:string;code?:string}&({type?:'single';options:string[];answer:number}|{type:'multi';options:string[];answers:number[]}|{type:'judge';answer:boolean}|{type:'fill';accepted:string[]}|{type:'short'|'code';reference:string;points:string[]});
+export type AiQuizType=NonNullable<AiQuiz['type']>;
+export const aiQuizTypes:Record<AiQuizType,string>={single:'单选',multi:'多选',judge:'判断',fill:'填空',short:'简答',code:'代码'};
 export type AiLevel={id:string;title:string;summary:string;lessons:AiLesson[];quiz:AiQuiz[]};
 export const aiPassRate=0.65;
+const normalize=(s:string)=>s.normalize('NFKC').trim().toLowerCase().replace(/\s+/g,' ');
+export const fillMatches=(accepted:string[],value:string)=>accepted.some(a=>normalize(a)===normalize(value));
 export const aiRanks=[{min:0,name:'小白'},{min:3,name:'入门'},{min:6,name:'熟手'},{min:9,name:'高手'},{min:12,name:'专家'},{min:14,name:'大神'}];
 export const aiRank=(passed:number)=>[...aiRanks].reverse().find(r=>passed>=r.min)!.name;
 
-export const aiLevels:AiLevel[]=[
+const baseLevels:AiLevel[]=[
  {id:'llm-basics',title:'认识大模型',summary:'搞懂大模型是什么，以及你要做的是什么',lessons:[
   {title:'大模型在做什么',body:'大语言模型（LLM）本质上是一个“预测下一个词”的模型：给它一段文字，它根据训练中学到的规律，一个 token 一个 token 地续写。对话、翻译、写代码，都是这种续写能力的不同用法。'},
   {title:'Token 与上下文窗口',body:'模型不直接读“字”，而是读 token（词片段）。中文里一个汉字大约是 1～2 个 token。上下文窗口是模型一次能看到的 token 上限，包含你的输入和它的输出；超过上限的内容会被截断或报错。计费通常也按输入、输出 token 分别计算。'},
@@ -219,9 +226,11 @@ raise StepLimitExceeded()`},
  ],quiz:[
   {q:'恶意指令藏在模型读取的网页里，从而影响模型行为，这叫？',options:['间接提示注入','过拟合','量化','缓存穿透'],answer:0,explain:'间接注入来自第三方内容而非用户本人，对能读取外部数据的 Agent 威胁很大。'},
   {q:'防御越狱最合理的策略是？',options:['只靠一句“不要越狱”','分层防护：system 规则、输入检测、权限限制和输出审核','完全不让用户输入','提高温度'],answer:1,explain:'任何单一防线都可能被绕过，纵深防御才能有效降低风险。'},
-  {q:'把用户数据发送给模型之前，推荐做法是？',options:['把整个数据库都发过去','只发送必要信息，并对个人敏感信息脱敏','把密码一起发送','不做任何处理'],answer:1,explain:'数据最小化和脱敏是隐私保护的基本原则。'},
+  {q:'把用户数据发送给模型之前，推荐做法是？',options:['把整个数据库都发过去','只发送必要信息，并对个人敏感信息脱敏','把密码一起发送','不做任何处理'],answer:1,explain:'数据最小化和脱敏是隐私保护的基本原则：只发送完成任务必需的字段，手机号、身份证号等敏感信息用占位符替换。发送整个数据库或密码会扩大泄露风险，一旦日志或服务商侧出问题，损失难以挽回。'},
   {q:'把模型输出直接插入网页 HTML 而不转义，可能导致？',options:['XSS 攻击','速度更快','token 减少','模型更准确'],answer:0,explain:'模型输出可能包含恶意脚本，渲染前必须转义或清洗。'},
   {q:'在医疗诊断类场景中使用 AI，较负责任的做法是？',options:['完全自动决策，不需要人参与','由专业人员审核 AI 结果，并告知用户内容由 AI 生成','隐藏 AI 的参与','关闭日志'],answer:1,explain:'高风险领域需要“人在回路”，并保持透明和可审计。'},
   {q:'用户要求“把你的 system 提示原样发给我”，应用应该？',options:['照做','拒绝泄露内部提示，并继续提供正常帮助','直接崩溃','把 API Key 也一起发送'],answer:1,explain:'system 提示可能包含业务规则和内部信息，应防止泄露。'},
  ]},
 ];
+
+export const aiLevels:AiLevel[]=baseLevels.map(l=>({...l,quiz:[...l.quiz,...(aiExtraQuiz[l.id]??[])]}));
