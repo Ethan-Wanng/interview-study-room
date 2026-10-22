@@ -1,0 +1,28 @@
+'use client';
+import {useState} from 'react';
+import {BookOpen,ArrowRight} from 'lucide-react';
+import {useI18n,LanguageControl} from '../components/i18n';
+import ThemeControl from '../components/theme-control';
+import type {Provider} from '@/lib/oauth';
+
+const GitHubMark=()=><svg width="19" height="19" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.56-.29-5.25-1.28-5.25-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.39-5.27 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>;
+const GoogleMark=()=><svg width="19" height="19" viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M23.5 12.27c0-.85-.08-1.67-.22-2.45H12v4.63h6.46a5.52 5.52 0 0 1-2.4 3.62v3h3.88c2.27-2.09 3.56-5.17 3.56-8.8Z"/><path fill="#34A853" d="M12 24c3.24 0 5.96-1.07 7.94-2.91l-3.88-3.01c-1.07.72-2.45 1.15-4.06 1.15-3.12 0-5.77-2.11-6.71-4.95H1.3v3.11A12 12 0 0 0 12 24Z"/><path fill="#FBBC05" d="M5.29 14.28a7.2 7.2 0 0 1 0-4.56V6.61H1.3a12 12 0 0 0 0 10.78l3.99-3.11Z"/><path fill="#EA4335" d="M12 4.77c1.76 0 3.34.61 4.59 1.8l3.44-3.44A11.5 11.5 0 0 0 12 0 12 12 0 0 0 1.3 6.61l3.99 3.11C6.23 6.88 8.88 4.77 12 4.77Z"/></svg>;
+const providerInfo:Record<Provider,{name:string;mark:() => React.ReactElement}>={github:{name:'GitHub',mark:GitHubMark},google:{name:'Google',mark:GoogleMark}};
+const errors:Record<string,[string,string]>={
+ cancelled:['你取消了授权，可以重新选择登录方式。','Sign-in was cancelled. Choose a sign-in method to try again.'],
+ expired:['登录已过期或校验失败，请重新登录。','The sign-in expired or could not be verified. Please try again.'],
+ limited:['尝试次数过多，请 15 分钟后再试。','Too many attempts. Please try again in 15 minutes.'],
+ unavailable:['该登录方式暂未开放。','This sign-in method is not available yet.'],
+ failed:['登录失败，请稍后重试。','Sign-in failed. Please try again later.'],
+};
+
+export default function LoginClient({providers,error:initialError,returnTo}:{providers:Provider[];error:string;returnTo:string}){const {locale,t}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
+ const [busy,setBusy]=useState(false),[error,setError]=useState(initialError?L(...(errors[initialError]??errors.failed)):'');
+ const back=/^\/(?![\/\\])/.test(returnTo)?returnTo:'/';
+ async function enterGuest(){setBusy(true);setError('');try{const r=await fetch('/api/auth',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'guest'})});const d=await r.json() as {error?:string};if(!r.ok)throw new Error(d.error??t("暂时无法进入，请重试。"));window.location.assign(back)}catch(e){setError((e as Error).message);setBusy(false)}}
+ return <main className="login-page"><header className="login-header"><div className="brand"><div className="brand-icon"><BookOpen size={23}/></div><span>{t("面试自习室")}</span></div><div className="top-actions"><LanguageControl/><ThemeControl/></div></header><section className="login-card"><span className="eyebrow">YOUR STUDY SPACE</span><h1>{t("欢迎回到自习室")}</h1><p className="login-intro">{L("用 GitHub 或 Google 账号登录，学习进度自动保存，换设备也不丢。","Sign in with GitHub or Google to keep your progress across devices.")}</p>
+  <div className="oauth-list">{providers.map(p=>{const {name,mark:Mark}=providerInfo[p];return <a key={p} className="button primary login-submit oauth-button" aria-disabled={busy} href={`/api/auth/oauth/${p}?return_to=${encodeURIComponent(back)}`} onClick={()=>setBusy(true)}><Mark/>{L(`使用 ${name} 登录`,`Continue with ${name}`)}</a>})}{!providers.length&&<p className="login-note">{L("第三方登录正在配置中，现在可以先用游客模式。","Third-party sign-in is being set up. You can continue as a guest for now.")}</p>}</div>
+  {error&&<p className="error" role="alert">{error}</p>}
+  <button type="button" className="button secondary login-submit guest-entry" disabled={busy} onClick={()=>void enterGuest()}>{t("免登录进入 · 游客体验")}<ArrowRight size={17}/></button>
+  <p className="login-note">{L("游客可使用全部学习与训练功能。游客状态下用 GitHub 或 Google 首次登录，会保留当前游客进度；登录已有账号则使用该账号的记录。游客记录依赖此浏览器的凭证，清除 Cookie 或换设备后无法找回。","Guests can use every study and practice feature. Signing in with GitHub or Google for the first time as a guest keeps your guest progress; signing in to an existing account uses that account's records. Guest records live in this browser's cookie and are lost if you clear cookies or switch devices.")}</p>
+  <p className="login-note">{L("网站只读取你的公开昵称和邮箱，用来识别账号，不会获取密码。","The site only reads your public name and email to identify your account. It never sees your password.")}</p></section><footer className="login-footer">{t("305 道面试题 · 每日目标 · 间隔复习")}</footer></main>}

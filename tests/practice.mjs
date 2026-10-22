@@ -14,8 +14,8 @@ try{
  for(const type of ['choice','fill','short','code'])assert.equal(bank.filter(q=>q.type===type).length,12);
  for(const q of bank){assert.ok(q.answer&&q.explanation);if(q.type==='code'||q.type==='short')assert.ok(q.rubric.length>=3);if(q.accepted){for(const v of q.accepted){const result=await (await call('/grade',{id:q.id,value:' '+v.toUpperCase()+' '})).json();assert.equal(result.correct,true,q.id)}assert.equal((await (await call('/grade',{id:q.id,value:'a completely wrong answer'})).json()).correct,false)}}
  assert.equal((await call('/api/practice')).status,401);
- const register=async username=>{const r=await call('/api/auth',{action:'register',username,password:'valid-password-123'});assert.equal(r.status,200,await r.clone().text());return r.headers.get('set-cookie').split(';')[0]};
- const cookie=await register('practice_a'),other=await register('practice_b');
+ const register=async ()=>{const r=await call('/api/auth',{action:'guest'});assert.equal(r.status,200,await r.clone().text());return r.headers.get('set-cookie').split(';')[0]};
+ const cookie=await register(),other=await register();
  assert.equal((await call('/api/practice',{action:'goal',minutes:45},cookie)).status,400);
  assert.equal((await call('/api/practice',{action:'goal',minutes:60},cookie,'https://evil.test')).status,403);
  let r=await call('/api/practice',{action:'goal',minutes:60},cookie);assert.equal(r.status,200);assert.equal((await r.json()).goal,60);

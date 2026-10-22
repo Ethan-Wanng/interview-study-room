@@ -32,11 +32,7 @@ try{
  const row=await db.prepare('SELECT payload FROM practice_runs WHERE id=?').bind(run.id).first();const payload=JSON.parse(row.payload);payload.lastTick=Date.now()-121000;await db.prepare('UPDATE practice_runs SET payload=? WHERE id=?').bind(JSON.stringify(payload),run.id).run();
  response=await call('/api/practice',{action:'answer',id:run.id,revision:run.revision,index:0,value:'',elapsed:120},cookie,'en');assert.equal(response.status,200);state=await response.json();assert.equal(state.active.seconds,120);assert.equal(state.seconds,120);assert.ok(state.active.items[0].question.explanation);assert.equal(state.active.items[0].question.answer,content.practiceEnglish[run.items[0].question.id].answer);
  const zh=await (await call('/api/practice',null,cookie,'zh')).json();assert.equal(zh.active.id,run.id);assert.equal(zh.active.items[0].response.submitted,true);assert.equal(zh.active.items[0].question.prompt,content.practiceQuestions.find(q=>q.id===run.items[0].question.id).prompt);
- response=await call('/api/auth',{action:'register',username:'guest_promoted',password:'a-new-password-123'},cookie);assert.equal(response.status,200,await response.clone().text());const registeredCookie=response.headers.get('set-cookie').split(';')[0];assert.equal((await response.json()).user.id,guest.id,'registration keeps the same owner ID');
- const saved=await (await call('/api/study',null,registeredCookie)).json();assert.equal(saved.progress.length,1);assert.equal((await (await call('/api/practice',null,registeredCookie)).json()).active.id,run.id);
- assert.equal((await call('/api/study',null,cookie)).status,401,'guest credential is revoked on registration');
- assert.equal((await db.prepare('SELECT is_guest FROM accounts WHERE id=?').bind(guest.id).first()).is_guest,0);
- response=await call('/api/auth',{action:'login',username:'guest_promoted',password:'a-new-password-123'});assert.equal(response.status,200);
+ // Upgrading a guest through GitHub / Google sign-in is covered by tests/auth-study.mjs.
  assert.equal((await (await call('/api/practice',null,cookieB)).json()).active,null);
- console.log('PASS: optional guest entry, distinct anonymous identities, upgrade without data loss, session rotation, 120-second answer-triggered save, English/Chinese session content, complete UI and glossary catalogs, all 11 time slots and legacy theme compatibility.');
+ console.log('PASS: optional guest entry, distinct anonymous identities, 120-second answer-triggered save, English/Chinese session content, complete UI and glossary catalogs, all 11 time slots and legacy theme compatibility.');
 }finally{await mf.dispose()}
