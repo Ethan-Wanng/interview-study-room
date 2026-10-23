@@ -3,6 +3,7 @@ import {useState} from 'react';
 import {ArrowRight,Check,Eye,RotateCcw,X} from 'lucide-react';
 import {useI18n} from '../components/i18n';
 import KeywordText,{findTerms,termDefinition} from '../components/keyword-text';
+import {InterviewItem} from './interview-reading';
 import {aiQuizTypes,fillMatches,type AiQuiz} from '@/content/ai-journey';
 
 export type Result={correct:boolean;given:string};
@@ -39,7 +40,7 @@ export default function QuestionCard({item,label,result,last,onAnswer,onNext}:{i
  const self=q.type==='short'||q.type==='code';
  const terms=done?findTerms(q.q,...('options' in q?q.options:[]),q.explain,q.type==='short'?q.reference:'',...(self?q.points:[])):[];
  return <section className="ai-card ai-question"><div className="ai-tags"><span className="ai-tag type">{aiQuizTypes[type]}</span>{label&&<span className="ai-tag">{label}</span>}</div><h2>{q.q}</h2>{q.code&&<pre className="ai-snippet"><code>{q.code}</code></pre>}{input}
-  {done&&<div className={'ai-explain '+(result.correct?'right':'wrong')}><strong>{result.correct?(self?L('已记为答对','Marked as correct'):L('回答正确','Correct')):(self?L('已加入错题本，之后再练一次','Added to the mistake book for another try'):L('回答错误，已加入错题本','Incorrect — added to the mistake book'))}</strong>{!result.correct&&!self&&<p className="ai-answer">{L('正确答案：','Answer: ')}{answerText(q,L)}</p>}<p><KeywordText text={q.explain}/></p>{terms.length>0&&<div className="ai-terms"><strong>{L('本题名词','Terms in this question')}</strong><dl>{terms.map(k=><div key={k}><dt>{k}</dt><dd>{termDefinition(k,locale)}</dd></div>)}</dl></div>}</div>}
+  {done&&<div className={'ai-explain '+(result.correct?'right':'wrong')}><strong>{result.correct?(self?L('已记为答对','Marked as correct'):L('回答正确','Correct')):(self?L('已加入错题本，之后再练一次','Added to the mistake book for another try'):L('回答错误，已加入错题本','Incorrect — added to the mistake book'))}</strong>{!result.correct&&!self&&<p className="ai-answer">{L('正确答案：','Answer: ')}{answerText(q,L)}</p>}<p><KeywordText text={q.explain}/></p>{terms.length>0&&<div className="ai-terms"><strong>{L('本题名词','Terms in this question')}</strong><dl>{terms.map(k=><div key={k}><dt>{k}</dt><dd>{termDefinition(k,locale)}</dd></div>)}</dl></div>}{q.interview&&<InterviewItem id={q.interview} label={L('延伸阅读 · 面试题','Further reading · interview')}/>}</div>}
   {done&&self&&!result.correct&&<div className="ai-retry">{!practising?<button className="button secondary" onClick={()=>setPractising(true)}><RotateCcw size={16}/>{L('再写一遍巩固','Write it again')}</button>:<>
    <strong>{L('再写一遍巩固','Write it again')}</strong>
    <label className="ai-hide-ref"><input type="checkbox" checked={hideRef} disabled={checked} onChange={e=>setHideRef(e.target.checked)}/>{L('写的时候遮住参考答案','Hide the reference while writing')}</label>

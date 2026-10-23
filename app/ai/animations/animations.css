@@ -94,3 +94,9 @@
 @media(max-width:767px){.an-caption p{font-size:15px}.an-controls{gap:8px;flex-wrap:nowrap}.an-controls .button{min-width:0;flex:1;padding:10px 8px;white-space:nowrap;font-size:14px}}
 .an-col{fill:var(--primary);transform-box:fill-box;transform-origin:center bottom;transform:scaleY(var(--p));animation:an-growy .9s cubic-bezier(.2,.8,.2,1) both}.an-col.ok{fill:var(--notice)}.an-col.warm{fill:#e09a35}.an-col.quiet{fill:var(--quiet);opacity:.55}
 @keyframes an-growy{from{transform:scaleY(0)}to{transform:scaleY(var(--p))}}
+.an-timeline{position:relative;height:8px;margin-top:12px;border-radius:8px;background:var(--line);cursor:pointer;overflow:hidden}.an-timeline i{position:absolute;left:0;top:0;bottom:0;background:var(--primary);border-radius:8px;transition:width .05s linear}
+.an-clock{font-size:13px;color:var(--quiet);font-variant-numeric:tabular-nums}
+.an-speed{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}.an-speed button{border:0;background:var(--surface);color:var(--body-ink);padding:8px 12px;font-size:13px;cursor:pointer}.an-speed button.on{background:var(--primary);color:var(--primary-foreground)}
+.an-controls{align-items:center}
+.an-out{animation:an-out .5s ease both;pointer-events:none}.an-xin{animation:an-xin .5s ease both}
+@keyframes an-out{to{opacity:0}}@keyframes an-xin{from{opacity:0}to{opacity:1}}
