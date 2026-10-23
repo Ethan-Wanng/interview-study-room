@@ -14,7 +14,7 @@ try{
  assert.equal((await call('/api/admin')).status,401);
  assert.equal((await post({action:'login',key:'adm_'+'0'.repeat(64)})).status,401);
  let r=await post({action:'login',key:ownerKey});await ok(r.clone());let owner=r.headers.get('set-cookie').split(';')[0];assert.match(owner,/__Host-study-admin/);
- let panel=await ok(await call('/api/admin',null,owner));assert.equal(panel.admin.role,'owner');assert.equal(panel.questions.length,403);assert.ok(!JSON.stringify(panel).includes(ownerKey));
+ let panel=await ok(await call('/api/admin',null,owner));assert.equal(panel.admin.role,'owner');assert.equal(panel.questions.length,433);assert.ok(!JSON.stringify(panel).includes(ownerKey));
  assert.equal((await call('/api/admin',{action:'subject',name:'Physics'},owner,'https://evil.test')).status,403);
  await ok(await post({action:'subject',name:'物理',nameEn:'Physics'},owner));panel=await ok(await call('/api/admin',null,owner));const subject=panel.subjects.find(s=>s.name==='物理').id;
  const invite=await ok(await post({action:'invite',subjects:[subject],allowNew:false},owner));assert.match(invite.key,/^inv_/);
@@ -33,7 +33,7 @@ try{
  const concurrent=await Promise.all([post({action:'saveQuestion',question:{...managed,zh:{...text,title:'Velocity A'}}},editor),post({action:'saveQuestion',question:{...managed,zh:{...text,title:'Velocity B'}}},editor)]);assert.deepEqual(concurrent.map(r=>r.status).sort(),[200,409]);
  const quiz={...doc,kind:'practice',type:'choice',zh:{...text,title:'Which unit measures speed?',options:['m/s','kg','s','N'],answer:'m/s',explanation:'Speed is distance per time.'},en:null,accepted:['0']};
  let testQ=(await ok(await post({action:'saveQuestion',question:quiz},editor))).question;
- const hierarchy=await ok(await call('/test-catalog'));assert.equal(hierarchy.spaces.find(s=>s.id==='go-interview').name,'GO面试');assert.deepEqual(hierarchy.tracks.filter(s=>['go','backend'].includes(s.id)).map(s=>s.spaceId),['go-interview','go-interview']);assert.equal(hierarchy.spaces.find(s=>s.id==='ai-development').name,'AI 开发');assert.deepEqual(hierarchy.tracks.find(s=>s.id==='ai-development'),{id:'ai-development',name:'AI 开发',nameEn:'AI development',spaceId:'ai-development'});assert.equal(hierarchy.questions.filter(q=>q.track==='ai-development').length,50);
+ const hierarchy=await ok(await call('/test-catalog'));assert.equal(hierarchy.spaces.find(s=>s.id==='go-interview').name,'GO面试');assert.deepEqual(hierarchy.tracks.filter(s=>['go','backend'].includes(s.id)).map(s=>s.spaceId),['go-interview','go-interview']);assert.equal(hierarchy.spaces.find(s=>s.id==='ai-development').name,'AI 开发');assert.deepEqual(hierarchy.tracks.find(s=>s.id==='ai-development'),{id:'ai-development',name:'AI 开发',nameEn:'AI development',spaceId:'ai-development'});assert.equal(hierarchy.questions.filter(q=>q.track==='ai-development').length,80);
  await ok(await post({action:'space',name:'Java面试',nameEn:'Java interviews'},editor));const hp=await ok(await call('/api/admin',null,editor));const javaSpace=hp.spaces.find(s=>s.name==='Java面试').id;
  await ok(await post({action:'subject',name:'Java',spaceId:javaSpace},editor));const hp2=await ok(await call('/api/admin',null,editor));assert.equal(hp2.subjects.find(s=>s.name==='Java').spaceId,javaSpace);
  const otherSpace='sp-unavailable';assert.equal((await post({action:'subject',name:'Missing',spaceId:otherSpace},editor)).status,400);
