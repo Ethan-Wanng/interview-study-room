@@ -13,3 +13,8 @@ export const dayThemes=[
 ];
 export function timeTheme(date=new Date()){const h=date.getHours()+date.getMinutes()/60;return dayThemes.find(t=>h>=t.start&&h<t.end)!.id}
 export function validTheme(value:string|null){if(value==='day')return 'forenoon';return value==='auto'||dayThemes.some(t=>t.id===value)?value!:'auto'}
+// 灯光模式与时间主题相互独立、可以同时生效：开灯 = 该时段配色的亮色版本，关灯 = 暗色版本。
+// 没有手动选过时，沿用该时段本来的明暗（白天亮、夜里暗）。
+export type Lamp='on'|'off';
+export const validLamp=(value:string|null):Lamp|null=>value==='on'||value==='off'?value:null;
+export const naturalLamp=(id:string):Lamp=>dayThemes.find(t=>t.id===id)?.dark?'off':'on';

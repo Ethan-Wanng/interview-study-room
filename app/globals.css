@@ -60,3 +60,10 @@ body{background:var(--sky);background-attachment:fixed;color:var(--ink)}.workspa
 .site-nav a.on{background:var(--primary);color:var(--primary-foreground,#fff);box-shadow:0 2px 8px color-mix(in srgb,var(--primary) 30%,transparent)}
 .site-nav{flex-shrink:0}.site-nav a{white-space:nowrap}
 @media(max-width:767px){.site-nav a{padding:6px 11px;font-size:14px}.site-nav svg{display:none}}
+/* 灯光开关（开灯亮色 / 关灯暗色），与时间主题选择并排 */
+.theme-controls{display:inline-flex;align-items:center;gap:8px}
+.lamp-toggle{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 13px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink);font-weight:650;font-size:14px;cursor:pointer;white-space:nowrap;transition:background .2s,color .2s,box-shadow .2s}
+.lamp-toggle.on svg{color:#e0a100;filter:drop-shadow(0 0 4px rgba(255,196,0,.55))}
+.lamp-toggle.off{background:var(--surface-soft);color:var(--quiet)}
+.lamp-toggle:hover{box-shadow:0 2px 8px color-mix(in srgb,var(--primary) 22%,transparent)}
+@media(max-width:767px){.lamp-toggle{width:36px;padding:0;justify-content:center}.lamp-toggle span{display:none}.topbar .top-actions{min-width:0;flex:1 1 0;justify-content:flex-end}}
