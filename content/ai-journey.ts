@@ -1,19 +1,12 @@
 // AI 学习空间：15 个关卡，每关先学习再答题。关卡按难度分为入门、进阶、高阶、专家四档，越往后题目越多、越难。
-// 每道题都有固定 id（错题本按 id 记录），新增题目请使用新的 id，不要修改或复用已有 id。
-export type AiLesson={title:string;body:string;code?:string};
-// single 单选（默认）· multi 多选（全对才算对）· judge 判断 · fill 填空（任一可接受答案即对）· short 简答 / code 代码（看参考答案后自评）
-export type AiQuiz={id:string;q:string;explain:string;code?:string;interview?:string}&({type?:'single';options:string[];answer:number}|{type:'multi';options:string[];answers:number[]}|{type:'judge';answer:boolean}|{type:'fill';accepted:string[]}|{type:'short'|'code';reference:string;points:string[]});
-export type AiQuizType=NonNullable<AiQuiz['type']>;
-export const aiQuizTypes:Record<AiQuizType,string>={single:'单选',multi:'多选',judge:'判断',fill:'填空',short:'简答',code:'代码'};
-export type AiLevel={id:string;title:string;summary:string;lessons:AiLesson[];quiz:AiQuiz[]};
+import {tierAt,rankAt,type AiLevel,type Tier,type Rank} from './journey';
+export {aiQuizTypes,fillMatches,type AiLesson,type AiQuiz,type AiQuizType,type AiLevel} from './journey';
 export const aiPassRate=0.65;
 // 难度分档：from/to 为关卡序号（从 0 开始，含两端）。
-export const aiTiers=[{name:'入门',nameEn:'Beginner',from:0,to:3},{name:'进阶',nameEn:'Intermediate',from:4,to:8},{name:'高阶',nameEn:'Advanced',from:9,to:11},{name:'专家',nameEn:'Expert',from:12,to:14}];
-export const aiTier=(index:number)=>aiTiers.find(t=>index>=t.from&&index<=t.to)??aiTiers[aiTiers.length-1];
-export const aiRanks=[{min:0,name:'小白'},{min:3,name:'入门'},{min:6,name:'熟手'},{min:9,name:'高手'},{min:12,name:'专家'},{min:15,name:'大神'}];
-export const aiRank=(passed:number)=>[...aiRanks].reverse().find(r=>passed>=r.min)!.name;
-const normalize=(s:string)=>s.normalize('NFKC').trim().toLowerCase().replace(/\s+/g,' ');
-export const fillMatches=(accepted:string[],value:string)=>accepted.some(a=>normalize(a)===normalize(value));
+export const aiTiers:Tier[]=[{name:'入门',nameEn:'Beginner',from:0,to:3},{name:'进阶',nameEn:'Intermediate',from:4,to:8},{name:'高阶',nameEn:'Advanced',from:9,to:11},{name:'专家',nameEn:'Expert',from:12,to:14}];
+export const aiTier=(index:number)=>tierAt(aiTiers,index);
+export const aiRanks:Rank[]=[{min:0,name:'小白'},{min:3,name:'入门'},{min:6,name:'熟手'},{min:9,name:'高手'},{min:12,name:'专家'},{min:15,name:'大神'}];
+export const aiRank=(passed:number)=>rankAt(aiRanks,passed);
 
 export const aiLevels:AiLevel[]=[
  {id:'llm-basics',title:'认识大模型',summary:'搞懂大模型是什么，以及你要做的是什么',lessons:[

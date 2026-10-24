@@ -66,3 +66,12 @@
 @media(prefers-reduced-motion:reduce){.lc-card{animation:none}}
 .ai-interviews{margin-top:24px;padding:24px 28px}.ai-interviews h2{display:flex;align-items:center;gap:8px;font-size:18px;margin:0 0 6px}.ai-interviews>p{margin:0 0 12px}
 .ai-interview{border-top:1px solid var(--line);padding:12px 0}.ai-explain .ai-interview{margin-top:12px;border-top:1px dashed var(--line)}.ai-interview summary{display:flex;align-items:flex-start;gap:8px;cursor:pointer;line-height:1.7;color:var(--ink);font-weight:600}.ai-interview summary svg{flex:none;margin-top:5px;color:var(--primary)}.ai-interview summary em{flex:none;font-style:normal;font-size:12px;font-weight:700;color:var(--primary);background:var(--surface);border:1px solid var(--line);border-radius:99px;padding:1px 8px;margin-top:2px}.ai-interview-body{margin:8px 0 0 24px}.ai-interview-body p{margin:0 0 10px;color:var(--body-ink);line-height:1.9}
+/* 学习首页：学科卡片 */
+.learn-subjects{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px;margin-top:8px}
+.learn-subject{display:flex;flex-direction:column;gap:10px;padding:24px;text-decoration:none;color:inherit;transition:transform .2s,box-shadow .2s}
+.learn-subject:hover{transform:translateY(-3px)}
+.learn-subject strong{font-size:22px}
+.learn-icon{font-size:38px;line-height:1}
+.learn-foot{display:flex;justify-content:space-between;align-items:center;font-size:14px;color:var(--quiet)}
+.learn-foot b{display:inline-flex;align-items:center;gap:5px;color:var(--primary)}
+.learn-hint{margin-top:26px;color:var(--quiet);font-size:15px;text-align:center}

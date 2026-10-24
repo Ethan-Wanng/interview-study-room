@@ -188,6 +188,23 @@ export const glossaryEnglish:Record<string,string>={
 'context engineering':'Deciding which information (prompts, documents, history, tool results) goes into each model call, how much, and in what order.',
 'Model Context Protocol':'MCP: an open protocol for connecting AI applications to external tools and data sources in a uniform way.',
 '技术栈':'Tech stack: the combination of languages, frameworks, databases and infrastructure a team or project uses.',
+'rune':'Go’s type for one Unicode code point, an alias of int32; ranging over a string yields runes.',
+'UTF-8':'A variable-length character encoding: ASCII letters take 1 byte, common Chinese characters take 3.',
+'Swiss Table':'The default map implementation since Go 1.24: entries are grouped and control bytes let lookups compare several slots at once.',
+'GOMAXPROCS':'Sets the number of Ps, i.e. how many goroutines can run Go code in parallel. It does not cap goroutines or OS threads.',
+'GOGC':'Controls GC pacing, default 100. Higher values mean fewer collections and more memory use.',
+'GOMEMLIMIT':'A soft memory limit for the Go runtime; GC works harder near it. It is not a hard process or container limit.',
+'工作窃取':'Work stealing: an idle P takes some runnable goroutines from another P’s local queue.',
+'抢占':'Preemption: the runtime interrupts a long-running goroutine so others can run; asynchronous preemption exists since Go 1.14.',
+'饥饿模式':'Starvation mode of sync.Mutex: after waiters wait too long, unlock hands the lock directly to the queue head and newcomers cannot barge in.',
+'自旋锁':'Spin lock: retries in a loop instead of sleeping when the lock is taken. Good only for very short waits, as it burns CPU.',
+'sync.Map':'The standard library’s concurrent map, suited to read-mostly workloads or goroutines working on disjoint keys.',
+'errgroup':'golang.org/x/sync/errgroup waits for a group of goroutines, returns the first error, and can cancel the rest via context or limit concurrency.',
+'闭包':'Closure: a function value that references outer variables. It captures the variable itself, not its value at creation time.',
+'内联':'Inlining: the compiler copies a small function’s body into the call site to avoid call overhead.',
+'strings.Builder':'An efficient string builder that appends into an internal buffer and produces the string once at the end.',
+'netpoll':'The Go runtime’s network poller, built on epoll and similar, which wakes goroutines when network I/O is ready.',
+'中间件':'Middleware: shared logic wrapped around handlers, such as logging, auth or panic recovery; in Gin it is chained with c.Next().',
 };
 export const glossaryAliases:Record<string,string>={'transaction':'事务','atomic operation':'原子操作','data race':'数据竞争','deadlock':'死锁','memory leak':'内存泄漏','write barrier':'写屏障','escape analysis':'逃逸分析','heap':'堆','stack':'栈','reflection':'反射','generics':'泛型','clustered index':'聚集索引','secondary index':'辅助索引','covering index':'覆盖索引','leftmost prefix':'最左前缀','phantom read':'幻读','gap lock':'间隙锁','cache avalanche':'缓存雪崩','Bloom filter':'布隆过滤器','microservices':'微服务','token bucket':'令牌桶','idempotency':'幂等','rate limiting':'限流','circuit breaker':'熔断','message queue':'消息队列','binary search':'二分查找','time complexity':'时间复杂度','space complexity':'空间复杂度'};
 export function englishDefinition(key:string){return glossaryEnglish[glossaryAliases[key]??key]}

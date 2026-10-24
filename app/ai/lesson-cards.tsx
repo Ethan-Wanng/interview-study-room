@@ -3,7 +3,7 @@ import {useRef,useState} from 'react';
 import {ArrowLeft,ArrowRight} from 'lucide-react';
 import {useI18n} from '../components/i18n';
 import KeywordText from '../components/keyword-text';
-import type {AiLesson} from '@/content/ai-journey';
+import type {AiLesson} from '@/content/journey';
 
 // 关卡学习卡片：一次只看一张，左右切换（按钮、圆点、方向键或滑动），最后一张之后开始答题。
 export default function LessonCards({lessons,quizCount,need,onStart}:{lessons:AiLesson[];quizCount:number;need:number;onStart:()=>void}){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;

@@ -4,7 +4,7 @@ import {ArrowRight,Check,Eye,RotateCcw,X} from 'lucide-react';
 import {useI18n} from '../components/i18n';
 import KeywordText,{findTerms,termDefinition} from '../components/keyword-text';
 import {InterviewItem} from './interview-reading';
-import {aiQuizTypes,fillMatches,type AiQuiz} from '@/content/ai-journey';
+import {aiQuizTypes,fillMatches,type AiQuiz} from '@/content/journey';
 
 export type Result={correct:boolean;given:string};
 export type Item={id:string;level:string;quiz:AiQuiz;order:number[]};

@@ -7,6 +7,7 @@ import {Select,SelectContent,SelectItem,SelectTrigger,SelectValue} from '@/compo
 import {RadioGroup,RadioGroupItem} from '@/components/ui/radio-group';
 import {Tabs,TabsList,TabsTrigger} from '@/components/ui/tabs';
 import {Progress} from '@/components/ui/progress';
+import SiteNav from '../components/site-nav';
 import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription} from '@/components/ui/dialog';
 import {useI18n,LanguageControl} from '../components/i18n';
 import ThemeControl from '../components/theme-control';
@@ -36,8 +37,8 @@ export default function PracticeClient({username}:{username:string}){const {loca
  async function start(mode:Mode){const d=await act({action:'start',mode,track,spaceId:space,minutes:mode==='random'?(data?.goal??30):Number(minutes)});if(d){setReview(null);setSelected(0);acc.current=0;setRunning(true)}}
  async function submit(value=draft){if(!run)return;const d=await act({action:'answer',index,value});if(d){setDrafts(v=>({...v,[key]:value}));if(run.mode==='exam'&&index<run.items.length-1)setSelected(index+1)}}
  const answered=run?.items.filter(i=>i.response.submitted).length??0,objective=run?.items.filter(i=>i.question.type==='choice'||i.question.type==='fill')??[],correct=objective.filter(i=>i.response.submitted&&i.correct===true).length;
- return <div className="practice-shell"><header className="practice-header"><a href="/" className="practice-brand"><BookOpen size={23}/><span>{t("面试自习室")}<small>{t("训练中心")}</small></span></a><div className="top-actions"><LanguageControl/><ThemeControl/><AccountMenu username={username}/></div></header><main className="practice-main">{!username&&<p className="visitor-banner">{locale==='en'?'Guest mode · sign in with GitHub or Google to keep this progress':'游客模式 · 用 GitHub 或 Google 登录可保留当前进度'}</p>}
- {run?.planTitle&&<p className="practice-note">{run.planTitle}</p>}<div className="practice-crumb"><a href="/" className="button secondary"><ArrowLeft size={16}/>{locale==='en'?'Back to home':'返回主页'}</a>{run&&<span>/ {t(names[run.mode])}</span>}</div>
+ return <div className="practice-shell"><header className="practice-header"><a href="/interview" className="practice-brand"><BookOpen size={23}/><span>{t("面试自习室")}<small>{t("训练中心")}</small></span></a><SiteNav active="interview"/><div className="top-actions"><LanguageControl/><ThemeControl/><AccountMenu username={username}/></div></header><main className="practice-main">{!username&&<p className="visitor-banner">{locale==='en'?'Guest mode · sign in with GitHub or Google to keep this progress':'游客模式 · 用 GitHub 或 Google 登录可保留当前进度'}</p>}
+ {run?.planTitle&&<p className="practice-note">{run.planTitle}</p>}<div className="practice-crumb"><a href="/interview" className="button secondary"><ArrowLeft size={16}/>{locale==='en'?'Back to Interview':'返回面试'}</a>{run&&<span>/ {t(names[run.mode])}</span>}</div>
  {error&&<div className="error" role="alert">{t(error)}<button onClick={()=>void load()}>{t("重新载入")}</button></div>}
  {!data&&!error&&<section className="practice-panel" role="status">{t("正在载入你的训练记录…")}</section>}
  {data&&!run&&<>
