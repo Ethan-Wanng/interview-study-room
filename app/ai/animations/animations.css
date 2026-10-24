@@ -100,3 +100,21 @@
 .an-controls{align-items:center}
 .an-out{animation:an-out .5s ease both;pointer-events:none}.an-xin{animation:an-xin .5s ease both}
 @keyframes an-out{to{opacity:0}}@keyframes an-xin{from{opacity:0}to{opacity:1}}
+/* 故事板动画（面试题动画） */
+.st-actor{transition:transform 1s cubic-bezier(.3,.7,.2,1),opacity .5s ease}
+.st-actor.st-gone{opacity:0}
+.st-cast{transition:opacity .5s ease}.st-cast.dim{opacity:.15}
+.st-av{fill:var(--surface);stroke:var(--line);stroke-width:2}
+.st-av.primary{fill:color-mix(in srgb,var(--primary) 18%,var(--surface));stroke:var(--primary)}
+.st-av.ok{fill:color-mix(in srgb,var(--notice) 18%,var(--surface));stroke:var(--notice)}
+.st-av.bad{fill:color-mix(in srgb,var(--alert-ink) 16%,var(--surface));stroke:var(--alert-ink)}
+.st-av.warm{fill:color-mix(in srgb,#f0a63a 22%,var(--surface));stroke:#e09a35}
+.st-av.quiet{fill:var(--surface-soft);stroke:var(--line);opacity:.7}
+.st-av.focus{filter:url(#an-glow);animation:an-breathe 1.6s ease-in-out infinite}
+.st-emoji{font-family:"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif}
+.an-t.strong-l{font-weight:700}
+.st-bubble{fill:var(--surface);stroke:var(--primary);stroke-width:1.5}
+.st-bubble.ok{stroke:var(--notice)}.st-bubble.bad{stroke:var(--alert-ink)}.st-bubble.warm{stroke:#e09a35}
+.st-note{fill:var(--primary);font-size:15px;font-weight:700}
+.an-dialog{max-width:min(820px,96vw)!important;width:96vw}
+.iv-anim-button{display:inline-flex;align-items:center;gap:6px;margin:6px 0 10px;padding:7px 14px;border:1px solid var(--primary);border-radius:99px;background:color-mix(in srgb,var(--primary) 10%,var(--surface));color:var(--primary);font-size:14px;font-weight:600;cursor:pointer}.iv-anim-button:hover{background:color-mix(in srgb,var(--primary) 18%,var(--surface))}

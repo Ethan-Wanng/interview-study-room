@@ -30,9 +30,10 @@ export default function AnimationPlayer({animation}:{animation:Animation}){const
  const seek=(e:React.MouseEvent)=>{const r=bar.current!.getBoundingClientRect();dispatch({type:'seek',t:(e.clientX-r.left)/r.width*total})};
  const clock=(ms:number)=>`${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')}`;
  return <div className="an-player" ref={stage} tabIndex={0} aria-label={L('动画播放器：空格暂停或继续，左右方向键快退快进','Animation player: Space to pause or resume, arrow keys to seek')}>
-  <div className={'an-stage'+(s.playing?'':' paused')}><svg ref={svg} viewBox="0 0 640 360" role="img" aria-label={animation.title} key={s.round}>
-   {fading&&<g key={'prev'+s.prev} className="an-out"><Visual step={s.prev}/></g>}
-   <g key={'cur'+step} className={fading?'an-xin':''}><Visual step={step}/></g>
+  <div className={'an-stage'+(!s.playing&&!done?' paused':'')}><svg ref={svg} viewBox="0 0 640 360" role="img" aria-label={animation.title} key={s.round}>
+   {animation.continuous?<Visual step={step}/>:<>
+    {fading&&<g key={'prev'+s.prev} className="an-out"><Visual step={s.prev}/></g>}
+    <g key={'cur'+step} className={fading?'an-xin':''}><Visual step={step}/></g></>}
   </svg></div>
   <div className="an-caption" key={s.round+'-'+step}><p>{scenes[step].caption}</p></div>
   <div className="an-timeline" ref={bar} onClick={seek} role="slider" aria-label={L('播放进度','Progress')} aria-valuemin={0} aria-valuemax={Math.round(total/1000)} aria-valuenow={Math.round(s.t/1000)}><i style={{width:s.t/total*100+'%'}}/></div>
