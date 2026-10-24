@@ -9,7 +9,8 @@ import type {Animation} from './animations/types';
 // “看动画讲解”按钮：点开时才加载面试题动画脚本，在弹窗里播放。
 export default function InterviewAnimationButton({id,title}:{id:string;title:string}){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
  const [open,setOpen]=useState(false),[anim,setAnim]=useState<Animation|null|undefined>(undefined);
- const show=()=>{setOpen(true);if(anim===undefined)import('./animations/stories').then(m=>setAnim(m.interviewAnimationFor(id))).catch(()=>setAnim(null))};
+ const load=()=>id.startsWith('ai-q-')?import('./animations/stories').then(m=>m.interviewAnimationFor(id)):import('./animations/stories/go').then(m=>m.goAnimationFor(id));
+ const show=()=>{setOpen(true);if(anim===undefined)load().then(setAnim).catch(()=>setAnim(null))};
  return <>
   <button type="button" className="iv-anim-button" onClick={show}><Clapperboard size={16}/>{L('看动画讲解','Watch the animation')}</button>
   <Dialog open={open} onOpenChange={setOpen}><DialogContent className="an-dialog">
