@@ -205,6 +205,13 @@ export const glossaryEnglish:Record<string,string>={
 'strings.Builder':'An efficient string builder that appends into an internal buffer and produces the string once at the end.',
 'netpoll':'The Go runtime’s network poller, built on epoll and similar, which wakes goroutines when network I/O is ready.',
 '中间件':'Middleware: shared logic wrapped around handlers, such as logging, auth or panic recovery; in Gin it is chained with c.Next().',
+'GQA':'Grouped-query attention: query heads are split into groups that each share one set of keys and values, shrinking the KV cache while staying close to multi-head attention quality.',
+'MQA':'Multi-query attention: all query heads share a single set of keys and values, giving the smallest KV cache at some cost to expressiveness.',
+'FlashAttention':'An exact, IO-aware attention implementation that computes in tiles in on-chip SRAM with an online softmax, never writing the full attention matrix to GPU memory.',
+'RLVR':'Reinforcement learning with verifiable rewards: training with rewards from programmatic checks, such as a correct final answer or passing unit tests.',
+'GRPO':'Group Relative Policy Optimization: samples a group of answers per prompt and uses each answer’s reward relative to the group as its advantage, removing PPO’s value model.',
+'工具投毒':'Tool poisoning: hiding malicious instructions in a tool’s name or description to make the model overstep permissions or leak data; a form of indirect prompt injection.',
+'模型路由':'Model routing: choosing a suitable model for each request based on difficulty or type, to cut cost and latency while keeping quality.',
 };
 export const glossaryAliases:Record<string,string>={'transaction':'事务','atomic operation':'原子操作','data race':'数据竞争','deadlock':'死锁','memory leak':'内存泄漏','write barrier':'写屏障','escape analysis':'逃逸分析','heap':'堆','stack':'栈','reflection':'反射','generics':'泛型','clustered index':'聚集索引','secondary index':'辅助索引','covering index':'覆盖索引','leftmost prefix':'最左前缀','phantom read':'幻读','gap lock':'间隙锁','cache avalanche':'缓存雪崩','Bloom filter':'布隆过滤器','microservices':'微服务','token bucket':'令牌桶','idempotency':'幂等','rate limiting':'限流','circuit breaker':'熔断','message queue':'消息队列','binary search':'二分查找','time complexity':'时间复杂度','space complexity':'空间复杂度'};
 export function englishDefinition(key:string){return glossaryEnglish[glossaryAliases[key]??key]}

@@ -207,5 +207,12 @@ export const glossary:Record<string,string>={
 'strings.Builder':'高效构造字符串的类型：在内部缓冲区里追加内容，最后一次性生成字符串。',
 'netpoll':'Go 运行时的网络轮询器，基于 epoll 等机制在网络数据就绪时唤醒等待的 goroutine。',
 '中间件':'包在业务处理前后的通用逻辑，比如日志、鉴权、恢复 panic；Gin 中通过 c.Next() 串成一条链。',
+'GQA':'分组查询注意力：把 Query 头分组，每组共享一组 Key、Value，在效果接近多头注意力的同时显著减小 KV 缓存。',
+'MQA':'多查询注意力：所有 Query 头共享同一组 Key、Value，KV 缓存最小，但表达能力可能下降。',
+'FlashAttention':'一种精确注意力的高效实现：分块在 GPU 片上缓存中计算并用在线 softmax 合并，避免把完整的注意力矩阵写入显存。',
+'RLVR':'可验证奖励的强化学习：用程序可检查的结果（答案是否正确、测试是否通过）作为奖励来训练模型。',
+'GRPO':'组相对策略优化：对同一问题采样一组回答，用组内相对奖励估计优势，省去 PPO 中的价值模型。',
+'工具投毒':'在工具名称或描述中植入恶意指令，诱导模型执行越权操作或泄露数据，是一种间接提示注入。',
+'模型路由':'根据请求的难度、类型等特征选择合适的模型处理，在保证质量的同时降低成本和延迟。',
 };
 export const glossarySources=[{name:'Go 模块参考',url:'https://go.dev/ref/mod'},{name:'Go 垃圾回收指南',url:'https://go.dev/doc/gc-guide'},{name:'InnoDB 多版本机制',url:'https://dev.mysql.com/doc/refman/8.4/en/innodb-multi-versioning.html'},{name:'Redis 淘汰策略',url:'https://redis.io/docs/latest/develop/reference/eviction/'}];
