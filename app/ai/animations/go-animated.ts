@@ -1,5 +1,5 @@
-// 已经做好动画的 Go 面试题 id（只是一份轻量名单，动画脚本本身按需加载）。
-// 当前覆盖：Runtime、底层原理、并发编程三个章节。
+// 已经做好动画的「面试」题 id（只是一份轻量名单，动画脚本本身按学科分包、按需加载）。
+// Go：Runtime、底层原理、并发编程三个章节。
 export const goAnimated=new Set([
  // Runtime
  'q-3fcd2ed322ebe27c','q-333f00e6d884d3f8','q-defad805e1383e94','q-47c68700a4e49401','q-b1c743761d552ac8','q-3ff9ea5bb93469b8','q-d41a25b004023e30',
@@ -14,4 +14,16 @@ export const goAnimated=new Set([
  'q-72b0b65f69db06ce','q-2eef6284fec88f56','q-eee62e3325e927d9','q-e55940cf9777073a','q-7aea80bce665a043','q-a4de343a97be6640','q-c7b9c710162ce3e3',
  'q-e462fc9949aeed83','q-5d35537eb1d002b0','q-663d42e7c0e290fb','q-f6132d872e9784ca','q-c9ec292e716d6fa3','q-81c523006197611b','q-05b541b03bf3f929',
 ]);
-export const hasInterviewAnimation=(id:string)=>id.startsWith('ai-q-')||goAnimated.has(id);
+// 数据库与缓存：全部章节（MySQL、Redis、Elasticsearch）。
+export const dbAnimated=new Set([
+ 'q-29a390724db3a232','q-b724a77c6e49ca6e','q-f53de83dacee392c','q-c7990f6d0727e5c2','q-51bd3b77aa3fb0b1','q-c67968a5590c5998','q-f9273f73300969a5',
+ 'q-fb57f5db74209f3d','q-688f9f1b3801c7e8','q-15fd859316b9b092','q-f1cc3f9a2d2ad8cc','q-cd952018025fce71','q-f6c633e90a335b42','q-bccf2c6308af43a2',
+ 'q-d4f5f1dfd78847c4','q-b6915aa2e0ed5bfb','q-748dcff591550a41','q-fcb3818197d74840','q-4e7895e6f2331baa','q-eeb2b187b632bc0c','q-38fbf93f4a3999f5',
+ 'q-6eddf08403456b92','q-30e09e7fac732f1d','q-f040a7419f630ff3','q-3338596b521f2957','q-e5b8e628fbdb3be0','q-69f69b18e3ca037a','q-5380e13be164d77c',
+ 'q-f0bec2c563e570d6','q-eb490c6677302d5f','q-673bae355c0f16fd','q-efbd531288490262','q-baae548966245f03','q-5f578456bdbb0143','q-93e8dfebc307c185',
+ 'q-117d2cac6f786ddb','q-f6cf502061f92bbc','q-50f13c1c6dc21a1d','q-583f8519476cc645','q-f2a89c6060d800c7','q-fe61f34b684b17a6','q-dc8f488334ac56de',
+ 'q-34abf51f2155f612','q-ce12f5e3bd470427','q-e852cae670f60f1e','q-ef1273fe7017c2a6','q-df91f29d9c73e36c','q-255ea12bba3109d1',
+]);
+// 一道题的动画在哪个分包里：ai / go / db；没有动画返回 null。
+export const animationGroup=(id:string):'ai'|'go'|'db'|null=>id.startsWith('ai-q-')?'ai':goAnimated.has(id)?'go':dbAnimated.has(id)?'db':null;
+export const hasInterviewAnimation=(id:string)=>animationGroup(id)!==null;

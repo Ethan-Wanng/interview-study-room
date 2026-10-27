@@ -214,5 +214,11 @@ export const glossary:Record<string,string>={
 'GRPO':'组相对策略优化：对同一问题采样一组回答，用组内相对奖励估计优势，省去 PPO 中的价值模型。',
 '工具投毒':'在工具名称或描述中植入恶意指令，诱导模型执行越权操作或泄露数据，是一种间接提示注入。',
 '模型路由':'根据请求的难度、类型等特征选择合适的模型处理，在保证质量的同时降低成本和延迟。',
+'类型参数':'泛型函数或类型在方括号里声明的占位类型，比如 func Max[T cmp.Ordered]，调用时由编译器推断或显式指定。',
+'类型约束':'限制类型参数能是哪些类型、能做哪些操作的接口，比如 any、comparable、cmp.Ordered 或自定义的 ~int | ~float64。',
+'方法集':'一个类型拥有的方法集合：T 只包含值接收者方法，*T 还包含指针接收者方法；它决定类型是否满足某个接口。',
+'表格驱动测试':'把多组输入和期望输出写成切片，循环用 t.Run 逐个运行的测试写法，新增用例只需加一行。',
+'模糊测试':'由测试框架自动生成和变异大量输入来寻找 bug 的测试，Go 1.18 起用 FuzzXxx(f *testing.F) 编写。',
+'io.Reader':'Go 中最基础的读取接口，只有一个 Read 方法；文件、网络连接、请求体、bytes.Buffer 等都实现了它。',
 };
 export const glossarySources=[{name:'Go 模块参考',url:'https://go.dev/ref/mod'},{name:'Go 垃圾回收指南',url:'https://go.dev/doc/gc-guide'},{name:'InnoDB 多版本机制',url:'https://dev.mysql.com/doc/refman/8.4/en/innodb-multi-versioning.html'},{name:'Redis 淘汰策略',url:'https://redis.io/docs/latest/develop/reference/eviction/'}];

@@ -79,5 +79,10 @@ export function storyVisual(beats:Beat[]){return function Visual({step}:{step:nu
   {b.memo&&<Memo key={'m'+step} lines={b.memo}/>}
  </g>}}
 
+// 动画课堂用的故事动画（关联某个学习关卡）。
+export type LessonStory={id:string;level:string;kind:'basic'|'advanced';icon:string;title:string;summary:string;beats:Beat[]};
+export function storyAnimation(o:LessonStory):Animation{return {id:o.id,level:o.level,kind:o.kind,icon:o.icon,title:o.title,summary:o.summary,continuous:true,
+ scenes:o.beats.map(b=>({caption:b.say,ms:beatMs(b)})),Visual:storyVisual(o.beats)}}
+
 export function fromStory(interview:string,level:string,s:Story):Animation{return {id:'iv-'+interview,interview,level,kind:'interview',continuous:true,icon:'🎬',title:s.title,summary:s.beats[0].say,
  scenes:s.beats.map(b=>({caption:b.say,ms:beatMs(b)})),Visual:storyVisual(s.beats)}}

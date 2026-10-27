@@ -1,0 +1,70 @@
+import {A,type Story} from '../story';
+
+// 数据库面试题动画（四）：事务、锁、执行计划与 SQL 优化。
+export const dbMysqlD:Record<string,Story>={
+ 'q-4e7895e6f2331baa':{title:'四种隔离级别：能看到别人多少改动',beats:[
+  {say:'小明的事务在读账户余额，小红的事务同时在改它。隔离级别决定小明能看到小红多少改动。',add:[A('a','🧑','小明（读）',110,120,{tone:'primary'}),A('b','👩','小红（改余额）',530,120,{tone:'warm'}),A('acc','💰','余额 100',320,120,{kind:'item'})],send:[{from:'b',to:'acc',text:'改成 50（未提交）',tone:'warm'}]},
+  {say:'读未提交 RU：连小红没提交的 50 都能看到，万一她回滚，小明读到的就是“脏数据”（脏读）。',add:[A('ru','🙈','RU：会脏读',110,290,{kind:'tag',tone:'bad'})],send:[{from:'acc',to:'a',text:'50？',tone:'bad'}]},
+  {say:'读已提交 RC：只看已提交的。但小明前后读两次，中间小红提交了，两次结果不一样（不可重复读）。',add:[A('rc','👀','RC：每条语句新快照',320,290,{kind:'tag',tone:'warm'})]},
+  {say:'可重复读 RR（InnoDB 默认）：小明第一次读时拍一张快照，整个事务里普通查询都看这张快照，前后一致。',add:[A('rr','📸','RR：同一事务同一快照',530,290,{kind:'tag',tone:'ok'})],tone:{a:'ok'},bubble:{who:'a',text:'我一直看到 100'}},
+  {say:'可串行化：效果像一个个排队执行，最安全，但等待和冲突更多。注意：加锁读、UPDATE 用的是“当前读”，读最新已提交数据。',add:[A('se','🚶','串行化：最严格',320,30,{kind:'tag'})]},
+  {say:'记住四级。',memo:['RU 脏读，RC 不可重复读','RR 快照一致，串行化最严']},
+ ]},
+ 'q-eeb2b187b632bc0c':{title:'MySQL 的锁：一张分层地图',beats:[
+  {say:'先分层：Server 层有元数据锁 MDL，改表结构和查询会互相等待。',add:[A('mdl','🏢','MDL 元数据锁',320,50,{kind:'item'})]},
+  {say:'InnoDB 有共享锁 S（大家都能读）和排他锁 X（我改时别人别碰），还有表级的意向锁，用来快速判断表里有没有行被锁。',add:[A('s','🤝','S 共享锁',150,150,{kind:'tag',tone:'ok'}),A('x','✋','X 排他锁',320,150,{kind:'tag',tone:'bad'}),A('ix','🏷️','意向锁',490,150,{kind:'tag'})]},
+  {say:'行级的锁：记录锁锁住某条索引记录；间隙锁锁住两条记录之间的空隙，阻止往里插入；临键锁 = 记录锁 + 它前面的间隙。',add:[A('rec','🔒','记录锁',150,250,{kind:'tag'}),A('gap','🕳️','间隙锁',320,250,{kind:'tag',tone:'warm'}),A('nk','🔗','临键锁',490,250,{kind:'tag'})]},
+  {say:'RR 下的范围加锁读一般用临键锁；用完整的唯一键等值命中一条已有记录时，通常只加记录锁。',focus:['nk','rec']},
+  {say:'普通的 SELECT 是快照读，一般不加这些行锁。',add:[A('snap','📸','快照读不加行锁',320,320,{kind:'tag',tone:'ok'})]},
+  {say:'遇到死锁：缩短事务、统一访问顺序、建好索引，被回滚的事务做有限次重试。',memo:['S/X、意向锁、MDL','记录锁、间隙锁、临键锁']},
+ ]},
+ 'q-38fbf93f4a3999f5':{title:'UPDATE 条件没有索引，会锁全表吗',beats:[
+  {say:'UPDATE orders SET status=1 WHERE remark=\'x\'，但 remark 上没有索引。',add:[A('u','✏️','UPDATE … WHERE remark=x',320,60,{kind:'item',tone:'warm'})]},
+  {say:'InnoDB 是按“实际访问到的索引记录”加锁的。没有可用索引，只能扫描整个聚集索引。',add:[A('r1','🔒','行1',120,190,{kind:'tag'}),A('r2','🔒','行2',240,190,{kind:'tag'}),A('r3','🔒','行3',360,190,{kind:'tag'}),A('r4','🔒','行4',480,190,{kind:'tag'})],send:[{from:'u',to:'r1'},{from:'u',to:'r4'}]},
+  {say:'在 RR 下，扫过的记录和间隙都会被锁住，效果接近锁了整张表，别人的插入、更新都在等。',tone:{r1:'bad',r2:'bad',r3:'bad',r4:'bad'},add:[A('other','👩','其他事务',540,300,{tone:'quiet'})],bubble:{who:'other',text:'怎么一直等？'}},
+  {say:'但这不是“行锁升级成表锁”，本质还是很多行锁。RC 下不匹配的记录通常会提前释放锁，影响小一些。',add:[A('nt','💡','不是锁升级',200,300,{kind:'tag'})]},
+  {say:'解决：给过滤条件建合适的索引，控制每次更新的行数和事务时长；用执行计划和 data_locks 看实际加了哪些锁。',tone:{r1:'base',r2:'base',r3:'base',r4:'base',other:'ok'}},
+  {say:'记住结论。',memo:['没索引 → 扫全表加锁','效果像锁表，但不是锁升级']},
+ ]},
+ 'q-6eddf08403456b92':{title:'幻读：凭空多出来的一行',beats:[
+  {say:'小明的事务查“年龄大于 30 的员工”，得到 3 个人。',add:[A('a','🧑','小明的事务',110,110,{tone:'primary'}),A('t','👥','age > 30：3 人',340,110,{kind:'item'})],send:[{from:'t',to:'a',text:'3 人'}]},
+  {say:'这时小红插入了一个 35 岁的新员工，并提交了。',add:[A('b','👩','小红',560,110,{tone:'warm'})],send:[{from:'b',to:'t',text:'插入 35 岁',tone:'warm'}],sub:{t:'现在其实有 4 人'}},
+  {say:'小明再按同样条件查一次，看到了 4 个人——多出来的那一行就是“幻影”。RC 隔离级别下就会这样。',send:[{from:'t',to:'a',text:'4 人？',tone:'bad'}],tone:{a:'bad'}},
+  {say:'InnoDB 的 RR：普通 SELECT 读的是快照，仍是 3 人；SELECT … FOR UPDATE 这种加锁读，会用临键锁把这个范围锁住，小红插不进来。',add:[A('nk','🔗','临键锁挡住插入',340,270,{kind:'tag',tone:'ok'})],tone:{a:'ok'}},
+  {say:'但混用要小心：快照读看不到新行，可紧接着的 UPDATE 用当前读，可能把它也改了，出现“刚才查不到，更新后又看见”。',bubble:{who:'a',text:'刚才明明没有…',tone:'warm'}},
+  {say:'讨论幻读一定要说清：哪个隔离级别、普通读还是加锁读、是否在同一事务。',memo:['同条件再查，行数变了','RR：快照读 + 临键锁']},
+ ]},
+ 'q-30e09e7fac732f1d':{title:'EXPLAIN：看懂执行计划',beats:[
+  {say:'一条 SQL 很慢。先在前面加 EXPLAIN，看看优化器打算怎么执行它。',add:[A('sql','🔍','EXPLAIN SELECT …',320,50,{kind:'item',tone:'primary'})]},
+  {say:'type：访问方式。从好到差大致是 const、ref、range、index（全索引扫描）、ALL（全表扫描）。',add:[A('type','📶','type：ref / range / ALL',150,150,{kind:'tag',tone:'warm'})]},
+  {say:'possible_keys 是可能用的索引，key 是实际选的，key_len 看用了联合索引的几列。',add:[A('key','🔑','key / key_len',470,150,{kind:'tag'})]},
+  {say:'rows 和 filtered 是估算要扫多少行、过滤后剩多少比例。',add:[A('rows','🔢','rows × filtered',150,250,{kind:'tag'})]},
+  {say:'Extra 很关键：Using index（覆盖索引）、Using index condition（索引下推）、Using filesort（额外排序，不一定写磁盘）、Using temporary（临时表）。',add:[A('ex','📝','Extra',470,250,{kind:'tag',tone:'primary'})]},
+  {say:'MySQL 8.0.18 起有 EXPLAIN ANALYZE，会真的执行并给出实际行数和耗时。对比估算和实际的差距，比只看“有没有走索引”更有用。',add:[A('an','⏱️','EXPLAIN ANALYZE：真实执行',320,330,{kind:'tag',tone:'ok'})]},
+  {say:'记住看哪几列。',memo:['type、key、rows','Extra 里的提示']},
+ ]},
+ 'q-f040a7419f630ff3':{title:'千万级表的深度分页',beats:[
+  {say:'订单列表翻到第 50 万页：LIMIT 10000000, 20。',add:[A('q','📄','LIMIT 10000000, 20',320,60,{kind:'item',tone:'warm'})]},
+  {say:'数据库得先找出前 1000 万条，再扔掉，只返回最后 20 条，越往后越慢。',add:[A('waste','🗑️','扫描并丢弃 1000 万条',320,170,{kind:'tag',tone:'bad'})],send:[{from:'q',to:'waste',tone:'bad'}]},
+  {say:'办法一 游标翻页：记住上一页最后一条的 id，下一页用 WHERE id > 上次的 id ORDER BY id LIMIT 20，直接从那里开始。',drop:['waste'],add:[A('cur','👉','WHERE id > ? LIMIT 20',170,280,{kind:'tag',tone:'ok'})]},
+  {say:'按时间排序时，加上唯一的 id 作为第二排序键，保证顺序稳定、不重不漏。',sub:{cur:'ORDER BY created_at, id'}},
+  {say:'办法二 必须跳到任意页：先用覆盖索引只查出目标页的主键，再回表取整行，减少回表；但扫描深 offset 的成本仍在。',add:[A('sub','🔑','先查主键，再回表',480,280,{kind:'tag',tone:'warm'})]},
+  {say:'导出数据用分批游标；产品上也别让用户无限往后翻。',memo:['深 offset = 扫描再丢弃','连续翻页用游标']},
+ ]},
+ 'q-3338596b521f2957':{title:'SQL 优化的一套流程',beats:[
+  {say:'第一步：找到真正的问题。用慢查询日志和链路追踪，找出又慢又频繁的 SQL。',add:[A('slow','🐢','慢查询日志',120,70,{kind:'item',tone:'warm'})]},
+  {say:'第二步：看清它慢在哪：扫描行数、回表、排序、锁等待，还是返回了太多数据。',add:[A('ex','🔍','EXPLAIN ANALYZE',320,150,{kind:'item',tone:'primary'})],send:[{from:'slow',to:'ex'}]},
+  {say:'第三步：对症下药。只取需要的列；按过滤和排序建联合索引；改写套了函数的条件；消除 N+1 查询；批量操作、缩短事务。',add:[A('fix','🛠️','索引 · 改写 · 批量 · 短事务',470,240,{kind:'item',tone:'ok'})],send:[{from:'ex',to:'fix'}]},
+  {say:'索引不是越多越好：写入变慢、占空间，重复的索引要清理。',add:[A('idx','⚖️','索引有写入成本',150,250,{kind:'tag',tone:'warm'})]},
+  {say:'第四步：用接近真实的数据验证，对比延迟、吞吐和扫描量，再看主从延迟和锁冲突。',add:[A('ver','📊','真实数据验证',470,325,{kind:'tag',tone:'ok'})]},
+  {say:'缓存、分库分表放在单库优化和容量评估之后再考虑。',memo:['先定位，再分析','对症优化，用数据验证']},
+ ]},
+ 'q-e5b8e628fbdb3be0':{title:'面试必备 SQL：几种常考写法',beats:[
+  {say:'假设有订单表 orders(user_id, amount, status, created_at)。面试常让你现场写几条 SQL。',add:[A('t','🗂️','orders 表',320,60,{kind:'item',tone:'primary'})]},
+  {say:'分组 + 过滤：每个用户已支付总额超过 1000。WHERE 过滤行，HAVING 过滤分组结果。',add:[A('g','🧮','GROUP BY … HAVING SUM > 1000',320,160,{kind:'tag',tone:'ok'})]},
+  {say:'窗口函数：每个用户最新的两笔订单，用 ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY created_at DESC)。',add:[A('w','🪟','ROW_NUMBER() OVER (…)',320,240,{kind:'tag',tone:'primary'})]},
+  {say:'排名的区别：ROW_NUMBER 不并列；RANK 并列后跳号（1,1,3）；DENSE_RANK 并列不跳号（1,1,2）。',add:[A('r','🏅','RANK 1,1,3 · DENSE 1,1,2',320,320,{kind:'tag'})]},
+  {say:'易错点：LEFT JOIN 后把右表条件写进 WHERE，会把外连接变成内连接；金额用 DECIMAL，别用浮点数比较相等。',bubble:{who:'t',text:'右表条件放 ON 里'}},
+  {say:'记住几类必会写法。',memo:['JOIN、GROUP BY / HAVING','窗口函数和排名']},
+ ]},
+};

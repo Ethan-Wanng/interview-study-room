@@ -1,11 +1,11 @@
-// Go 学习空间：12 个关卡，每关先学习再答题。关卡按难度分为入门、进阶、高阶、专家四档。
+// Go 学习空间：15 个关卡，每关先学习再答题。关卡按难度分为入门、进阶、高阶、专家四档。
 // 每道题都有固定 id（错题本按 id 记录），新增题目请使用新的 id，不要修改或复用已有 id。
 // interview 字段关联 content/questions.json 里的 Go 面试题 id。
 import type {AiLevel,Rank,Tier} from './journey';
 
 export const goPassRate=0.65;
-export const goTiers:Tier[]=[{name:'入门',nameEn:'Beginner',from:0,to:3},{name:'进阶',nameEn:'Intermediate',from:4,to:7},{name:'高阶',nameEn:'Advanced',from:8,to:9},{name:'专家',nameEn:'Expert',from:10,to:11}];
-export const goRanks:Rank[]=[{min:0,name:'Gopher 新手'},{min:2,name:'入门'},{min:4,name:'熟手'},{min:7,name:'高手'},{min:10,name:'专家'},{min:12,name:'大神'}];
+export const goTiers:Tier[]=[{name:'入门',nameEn:'Beginner',from:0,to:4},{name:'进阶',nameEn:'Intermediate',from:5,to:9},{name:'高阶',nameEn:'Advanced',from:10,to:11},{name:'专家',nameEn:'Expert',from:12,to:14}];
+export const goRanks:Rank[]=[{min:0,name:'Gopher 新手'},{min:3,name:'入门'},{min:5,name:'熟手'},{min:8,name:'高手'},{min:12,name:'专家'},{min:15,name:'大神'}];
 
 export const goLevels:AiLevel[]=[
  {id:'go-start',title:'起步：模块、包与初始化',summary:'写出第一个程序，管好依赖，弄懂包和 init',lessons:[
@@ -23,6 +23,10 @@ export const goLevels:AiLevel[]=[
   {id:'go-start-7',q:'main 包导入了包 A，下面哪个执行顺序是正确的？',options:['A 的包级变量 → A 的 init → main 的包级变量 → main 的 init → main.main','main 的 init → A 的 init → main.main','A 的 init → A 的包级变量 → main.main','main.main → A 的 init'],answer:0,explain:'先初始化依赖的包；每个包先初始化包级变量再执行 init；最后才进入 main.main。',interview:'q-ebf42a72d069f3de'},
   {id:'go-start-8',type:'judge',q:'可以在代码里直接写 init() 手动再调用一次 init 函数。',answer:false,explain:'init 不能被引用或调用，写 init() 会编译报错。它只在包初始化时由运行时自动执行一次。',interview:'q-ebf42a72d069f3de'},
   {id:'go-start-9',type:'short',q:'Go 程序如何获取“项目根目录”？部署后要注意什么？',reference:'Go 没有统一的“项目根目录” API。os.Getwd() 拿到的是运行时工作目录，会随启动方式变化；开发工具可以从某个目录向上查找 go.mod，或者用 go env GOMOD。部署后的二进制不一定带着源码和 go.mod，所以配置和资源目录应通过参数、环境变量、配置文件或 embed 明确提供。',points:['没有统一 API','os.Getwd 是工作目录','向上找 go.mod','部署后用参数/环境变量/embed'],explain:'关键是区分“工作目录”“模块根”“可执行文件所在目录”，它们不一定相同。',interview:'q-f79f4e7ba8845c95'},
+  {id:'go-start-10',q:'想在代码里用一个第三方库的指定版本，比如 v1.9.0，应该执行？',options:['go get example.com/lib@v1.9.0','go mod download','go install','go build -v'],answer:0,explain:'go get 用来添加、升级或降级依赖并修改 go.mod；安装命令行工具则用 go install 包路径@版本。',interview:'q-160bd2548d521bc9'},
+  {id:'go-start-11',type:'judge',q:'名字首字母小写的函数，只能在同一个包里使用。',answer:true,explain:'Go 用首字母大小写控制可见性：大写导出给其他包，小写只在包内可见。'},
+  {id:'go-start-12',q:'一个包里定义了两个 init 函数，会怎样？',options:['编译报错','只执行第一个','按顺序都会执行','随机执行一个'],answer:2,explain:'一个包可以有多个 init，甚至同一个文件里也可以，它们按出现顺序依次执行。',interview:'q-ebf42a72d069f3de'},
+  {id:'go-start-13',type:'fill',q:'编译出可执行文件但不运行，用命令 go ____。',accepted:['build','go build'],explain:'go build 只编译链接；go run 编译后直接运行；go install 编译并安装到 GOBIN。'},
  ]},
  {id:'go-values',title:'基础类型与值',summary:'字符串、数值、指针、nil 和传参方式',lessons:[
   {title:'字符串的两种写法',body:'双引号是解释型字符串，会处理 \\n、\\t 等转义；反引号是原始字符串，不处理转义，可以直接写多行，常用来写 JSON、SQL 和正则表达式。'},
@@ -41,6 +45,10 @@ export const goLevels:AiLevel[]=[
   {id:'go-values-8',q:'打印结构体时，想同时看到字段名，最常用哪个格式？',options:['%v','%+v','%#v','%s'],answer:1,explain:'%+v 会输出字段名；%#v 输出 Go 语法表示（带类型名）；%v 只输出值。',interview:'q-0de2e4eb5c9fe77e'},
   {id:'go-values-9',q:'函数需要修改调用方传入的结构体字段，参数应该怎么写？',options:['传结构体值','传结构体指针','两种都可以','只能用全局变量'],answer:1,explain:'Go 只有值传递，传值时函数拿到的是副本；传指针复制的是地址，才能修改原对象。',interview:'q-bf5fd01563f1e2b5'},
   {id:'go-values-10',type:'fill',q:'把字符串 "42" 转成 int，常用 strconv 包里的函数 ____。',accepted:['strconv.Atoi','Atoi','strconv.ParseInt','ParseInt'],explain:'strconv.Atoi 把十进制字符串转成 int，需要检查返回的 error；也可以用 ParseInt 指定进制和位数。',interview:'q-b669b1002a6c863d'},
+  {id:'go-values-11',q:'float64 的 3.9 转成 int，int(3.9) 的结果是？',options:['4','3','编译报错','panic'],answer:1,explain:'浮点转整数向零截断，3.9 变成 3，-3.9 变成 -3；需要四舍五入请用 math.Round。',interview:'q-b669b1002a6c863d'},
+  {id:'go-values-12',type:'judge',q:'var a int32 = 1; var b int64 = 2; a + b 可以直接相加。',answer:false,explain:'Go 不做隐式类型转换，不同类型要先显式转换，比如 int64(a) + b。'},
+  {id:'go-values-13',q:'下面哪个是合法的组合字面量？',options:['[]int{1, 2, 3}','map[string]int{"a"}','User{Name: "Tom", 18}','[2]int{1, 2, 3}'],answer:0,explain:'map 字面量要写成 key: value；结构体不能混用带字段名和不带字段名的写法；数组元素不能超过长度。',interview:'q-75d8ba64324f7d70'},
+  {id:'go-values-14',type:'judge',q:'unsafe.Sizeof(s) 对一个 string 返回的是字符串内容的总字节数。',answer:false,explain:'Sizeof 只算值本身的大小（string 描述信息通常是 16 字节），不包括它引用的数据。',interview:'q-faaef786b979e214'},
  ]},
  {id:'go-collections',title:'数组、切片与 map',summary:'最常用的三种容器，以及 new 和 make',lessons:[
   {title:'数组和切片',body:'数组长度固定，长度是类型的一部分（[3]int 和 [4]int 是不同类型），赋值和传参会复制整个数组。切片是底层数组上的“窗口”，记录指针、长度 len 和容量 cap，可以用 append 增长。日常开发几乎都用切片。',code:'arr := [3]int{1, 2, 3}  // 数组\ns := []int{1, 2, 3}     // 切片\ns = append(s, 4)        // 一定要接收返回值'},
@@ -59,6 +67,10 @@ export const goLevels:AiLevel[]=[
   {id:'go-collections-8',q:'下面代码运行后 nums 是多少？',code:'nums := []int{1, 2, 3}\nfor _, v := range nums {\n    v *= 10\n}\nfmt.Println(nums)',options:['[10 20 30]','[1 2 3]','编译报错','[0 0 0]'],answer:1,explain:'v 是元素的副本，修改它不影响切片。要修改请用 nums[i] *= 10。',interview:'q-bf9c8ac5d385e3ff'},
   {id:'go-collections-9',q:'for i, r := range "你好" 中，第二次循环的 i 是多少？',options:['1','2','3','6'],answer:2,explain:'range 字符串时 i 是字节偏移，r 是 rune。“你”在 UTF-8 里占 3 个字节，所以第二个字符从 3 开始。',interview:'q-bf9c8ac5d385e3ff'},
   {id:'go-collections-10',type:'short',q:'数组和切片有哪些区别？',reference:'数组长度固定，长度是类型的一部分，是值类型，赋值和传参会复制整个数组；切片是底层数组的视图，包含指针、len、cap，可以通过 append 增长，多个切片可能共享同一个底层数组。数组在元素可比较时可以用 == 比较，切片只能和 nil 比较。',points:['数组长度固定、属于类型','数组赋值复制整个数组','切片含指针 len cap','切片可能共享底层数组'],explain:'说清“长度是否固定”“复制什么”“是否共享”三点就够了。',interview:'q-a7e0804442cd1cb5'},
+  {id:'go-collections-11',q:'下面代码输出什么？',code:'s := []int{1, 2, 3}\nfor i := range s {\n    s[i] *= 10\n}\nfmt.Println(s)',options:['[1 2 3]','[10 20 30]','编译报错','[0 0 0]'],answer:1,explain:'通过下标修改的是切片元素本身，所以结果改变了；用 range 的 value 副本才改不到。',interview:'q-bf9c8ac5d385e3ff'},
+  {id:'go-collections-12',type:'judge',q:'读取 map 中不存在的 key 会 panic。',answer:false,explain:'读取不存在的 key 返回值类型的零值，不会 panic；用 v, ok := m[k] 可以区分“不存在”和“值为零”。'},
+  {id:'go-collections-13',q:'对 nil 切片执行 append 会怎样？',options:['panic','编译报错','正常追加，返回新切片','什么也不做'],answer:2,explain:'nil 切片的 len 和 cap 都是 0，可以直接 append，Go 会分配新的底层数组。',interview:'q-22d6527e99891cd6'},
+  {id:'go-collections-14',type:'fill',q:'删除 map 中的一个 key，使用内置函数 ____(m, k)。',accepted:['delete'],explain:'delete 删除不存在的 key 也不会报错；Go 1.21 起 clear(m) 可以清空整个 map。'},
  ]},
  {id:'go-funcs',title:'函数、接口与错误处理',summary:'可变参数、接口、比较、组合和 error',lessons:[
   {title:'函数与可变参数',body:'函数可以返回多个值，常见写法是 (结果, error)。参数写成 nums ...int 就是可变参数，在函数里它就是一个 []int；已有切片可以用 s... 展开传入。可变参数只能有一个，而且必须放最后。',code:'func sum(xs ...int) int {\n    total := 0\n    for _, x := range xs { total += x }\n    return total\n}\nsum(1, 2, 3)\nnums := []int{1, 2}\nsum(nums...)'},
@@ -78,6 +90,27 @@ export const goLevels:AiLevel[]=[
   {id:'go-funcs-9',q:'判断 obj 是否有 Close() error 方法，最推荐的做法是？',options:['定义小接口 Closer，再做类型断言','把 obj 转成字符串搜索 "Close"','直接调用，panic 了就说明没有','用 unsafe 读方法表'],answer:0,explain:'已知方法签名时，小接口 + 类型断言最清晰安全；只有按字符串名查找时才用反射，并且要先判断 Value 是否有效。',interview:'q-949f3e5850735e7e'},
   {id:'go-funcs-10',q:'两个 time.Time 想判断是否是同一时刻，推荐？',options:['t1 == t2','reflect.DeepEqual(t1, t2)','t1.Equal(t2)','比较 t1.String()'],answer:2,explain:'Time 里还带有时区和单调时钟信息，用 == 可能误判。判断“相同”要先想清楚业务含义，时间用领域方法 Equal。',interview:'q-e6ed7b3ed9129f29'},
   {id:'go-funcs-11',type:'judge',q:'结构体嵌入时可以写 *T，但 T 不能是接口类型。',answer:true,explain:'嵌入字段可以写 T 或 *T；T 不能是指针类型或类型参数，写成 *T 时 T 还不能是接口。',interview:'q-bc32ce223ccbe2b0'},
+  {id:'go-funcs-12',q:'函数可以返回多个值，下面哪种是 Go 中最常见的形式？',options:['(int, string, bool, error) 全都要','(结果, error)','只能返回一个值','(error, 结果)'],answer:1,explain:'惯例是把 error 放在最后一个返回值，调用方先检查 err != nil。'},
+  {id:'go-funcs-13',type:'judge',q:'把一个值为 nil 的 *MyError 指针作为 error 返回，调用方的 err != nil 判断结果为 false。',answer:false,explain:'接口里装了类型 *MyError，即使指针是 nil，接口也不等于 nil。没有错误时应直接 return nil。',interview:'q-7b293576983caa64'},
+  {id:'go-funcs-14',q:'外层结构体嵌入了 Engine，Engine 有方法 Start()。外层变量 car 怎么调用？',options:['car.Engine.Start() 或 car.Start()','只能 car.Engine.Start()','只能 car.Start()','不能调用'],answer:0,explain:'嵌入会把内层的方法“提升”到外层，两种写法都可以；同名时外层方法优先。',interview:'q-a9fb4bcaaaf0844c'},
+  {id:'go-funcs-15',type:'fill',q:'Go 中表示“任意类型”的空接口，Go 1.18 起可以写作 ____。',accepted:['any','interface{}'],explain:'any 是 interface{} 的别名。使用时需要类型断言或类型 switch 才能取回具体类型。'},
+ ]},
+ {id:'go-stdlib',title:'标准库常用包',summary:'strings、strconv、time、io、bufio 和 encoding/json',lessons:[
+  {title:'strings 与 strconv',body:'strings 包处理文本：Contains 判断包含、Split 切分、Join 拼接、TrimSpace 去掉首尾空白、ReplaceAll 替换、HasPrefix 判断前缀。strconv 负责字符串和基本类型互转：Atoi / Itoa 处理十进制整数，ParseFloat、ParseBool、FormatInt 处理其他类型，转换失败会返回 error。',code:'parts := strings.Split("a,b,c", ",") // [a b c]\nn, err := strconv.Atoi("42")\nif err != nil { return err }\ns := strconv.Itoa(n + 1) // "43"'},
+  {title:'time：时间与时长',body:'time.Now() 取当前时间，t.Add(2*time.Hour) 计算时间点，t2.Sub(t1) 得到时长，time.Since(start) 常用来计时。格式化不用 yyyy-MM-dd，而是用一个固定的参考时间 2006-01-02 15:04:05 当模板。time.Duration 的单位是纳秒。',code:'start := time.Now()\ndoWork()\nfmt.Println("耗时", time.Since(start))\nt, err := time.Parse("2006-01-02", "2025-03-08")'},
+  {title:'io 与 bufio',body:'io.Reader 和 io.Writer 是 Go 里最重要的两个接口：文件、网络连接、HTTP 请求体、bytes.Buffer 都实现了它们，所以可以像积木一样组合。io.Copy 把 Reader 的内容搬到 Writer。读大文件时用 bufio.Scanner 一行一行读，不要一次性读进内存。打开的文件记得 defer Close。',code:'f, err := os.Open("access.log")\nif err != nil { return err }\ndefer f.Close()\nsc := bufio.NewScanner(f)\nfor sc.Scan() {\n    fmt.Println(sc.Text())\n}\nreturn sc.Err()'},
+  {title:'encoding/json',body:'json.Marshal 把结构体转成 JSON，json.Unmarshal 反过来。只有导出（首字母大写）的字段才会被处理；用结构体标签 `json:"name"` 指定字段名，`json:",omitempty"` 表示空值时省略，`json:"-"` 表示忽略。解码到 any 时数字默认是 float64。',code:'type User struct {\n    Name  string `json:"name"`\n    Email string `json:"email,omitempty"`\n    pass  string // 小写，不会被编码\n}\nb, _ := json.Marshal(User{Name: "Tom"})\n// {"name":"Tom"}'},
+ ],quiz:[
+  {id:'go-stdlib-1',q:'strings.Join([]string{"a","b","c"}, "-") 的结果是？',options:['"abc"','"a-b-c"','"-a-b-c"','["a" "b" "c"]'],answer:1,explain:'Join 用分隔符把切片里的字符串连起来；反过来按分隔符切开用 strings.Split。'},
+  {id:'go-stdlib-2',type:'judge',q:'strconv.Atoi("12a") 会返回一个 error，而不是 panic。',answer:true,explain:'strconv 的解析函数在格式不对时返回 error，调用方需要检查。'},
+  {id:'go-stdlib-3',q:'Go 中把时间格式化成“2025-03-08”这种样子，格式字符串应该写成？',options:['"yyyy-MM-dd"','"2006-01-02"','"%Y-%m-%d"','"YYYY-MM-DD"'],answer:1,explain:'Go 用固定的参考时间 Mon Jan 2 15:04:05 MST 2006 当模板，年写 2006、月写 01、日写 02。'},
+  {id:'go-stdlib-4',type:'fill',q:'统计一段代码的耗时：start := time.Now(); ...; 耗时 = time.____(start)。',accepted:['Since','time.Since'],explain:'time.Since(start) 等价于 time.Now().Sub(start)，返回 time.Duration。'},
+  {id:'go-stdlib-5',type:'multi',q:'下面哪些类型实现了 io.Reader？（多选）',options:['*os.File','*bytes.Buffer','*strings.Reader','int'],answers:[0,1,2],explain:'文件、bytes.Buffer、strings.Reader、网络连接、HTTP 请求体都实现了 Read 方法，所以都是 io.Reader，可以互相组合。'},
+  {id:'go-stdlib-6',q:'读取一个 10GB 的日志文件并逐行处理，推荐？',options:['os.ReadFile 一次读完再 Split','bufio.Scanner 逐行读','把文件转成 string 再处理','开 10 万个 goroutine 同时读'],answer:1,explain:'Scanner 逐行读，内存占用很小；一次性读完会占用 10GB 内存。超长行要调整 Scanner 的缓冲区上限。'},
+  {id:'go-stdlib-7',q:'下面结构体 json.Marshal 后会输出哪些字段？',code:'type User struct {\n    Name  string `json:"name"`\n    Email string `json:"email,omitempty"`\n    age   int\n}\njson.Marshal(User{Name: "Tom", age: 18})',options:['name、email、age','只有 name','name 和 age','name 和 email'],answer:1,explain:'age 是小写未导出字段，不会被编码；Email 为空且带 omitempty，被省略。结果是 {"name":"Tom"}。'},
+  {id:'go-stdlib-8',type:'judge',q:'用 json.Unmarshal 解码到 map[string]any 时，JSON 里的数字默认会变成 int。',answer:false,explain:'默认会变成 float64；需要保留精确数字可以用 json.Decoder 的 UseNumber。'},
+  {id:'go-stdlib-9',type:'fill',q:'让某个结构体字段在 JSON 编码时被完全忽略，标签写成 `json:"____"`。',accepted:['-'],explain:'json:"-" 表示忽略该字段；json:"name,omitempty" 表示值为空时省略。'},
+  {id:'go-stdlib-10',type:'code',q:'写一个函数 CountLines(path string) (int, error)，统计文件的行数，记得关闭文件、检查错误。',reference:'func CountLines(path string) (int, error) {\n    f, err := os.Open(path)\n    if err != nil {\n        return 0, err\n    }\n    defer f.Close()\n    n := 0\n    sc := bufio.NewScanner(f)\n    for sc.Scan() {\n        n++\n    }\n    return n, sc.Err()\n}',points:['os.Open 并检查错误','defer f.Close()','bufio.Scanner 逐行计数','最后返回 sc.Err()'],explain:'容易漏掉的是最后的 sc.Err()：扫描过程中出错，Scan 会返回 false，要通过 Err 拿到原因。'},
  ]},
  {id:'go-flow',title:'流程控制：switch、defer 与 panic',summary:'switch 的细节，defer 的顺序和坑，panic 与 recover',lessons:[
   {title:'switch 不用写 break',body:'Go 的 switch 命中一个 case 后自动结束，不会“掉”到下一个。一个 case 可以写多个值；不写表达式的 switch 相当于 switch true，可以写成一串条件判断。真想继续执行下一个分支，要显式写 fallthrough，而且它不会重新判断条件。类型 switch 用 x.(type) 判断接口里装的是什么类型。',code:'switch v := x.(type) {\ncase nil:\n    fmt.Println("空接口")\ncase int:\n    fmt.Println(v + 1)\ndefault:\n    fmt.Printf("%T\\n", v)\n}'},
@@ -95,6 +128,28 @@ export const goLevels:AiLevel[]=[
   {id:'go-flow-8',type:'judge',q:'在主 goroutine 里 defer recover()，可以接住子 goroutine 里发生的 panic。',answer:false,explain:'recover 只对当前 goroutine 有效。子 goroutine 未恢复的 panic 会让整个程序崩溃，所以子 goroutine 要自己 recover。',interview:'q-3ca3e2c2a65b7c3a'},
   {id:'go-flow-9',type:'judge',q:'recover 成功后，程序会回到 panic 发生的那一行继续往下执行。',answer:false,explain:'恢复后，包含该 defer 的函数直接返回，不会回到 panic 的位置。',interview:'q-3ca3e2c2a65b7c3a'},
   {id:'go-flow-10',type:'short',q:'defer 有哪些常见的坑？',reference:'一是参数提前求值：defer 注册时就计算参数，比如 defer log.Print(time.Since(start)) 会立刻算耗时，应放进闭包；二是闭包读取的是退出时的变量值；三是在大循环里 defer，资源要等函数结束才释放；四是忽略 Close 返回的错误；还要先检查 Open 的错误再 defer Close；os.Exit 不会执行 defer。',points:['参数注册时求值','闭包读退出时的值','循环里 defer 资源累积','先判错再 defer Close'],explain:'能举出两三个并说明正确写法即可。',interview:'q-fd43307d59e4125a'},
+  {id:'go-flow-11',q:'switch 不写表达式时，相当于？',options:['switch 0','switch true，可以在 case 里写条件','编译报错','switch nil'],answer:1,explain:'无表达式的 switch 等价于 switch true，常用来代替一长串 if-else。',interview:'q-1117fbfafaf16819'},
+  {id:'go-flow-12',q:'下面代码中 recover 能接住 panic 吗？',code:'func safe() {\n    defer helper()\n    panic("boom")\n}\nfunc helper() {\n    func() { recover() }()\n}',options:['能','不能，recover 必须在 defer 的函数里直接调用','编译报错','会接住两次'],answer:1,explain:'recover 只有在被 defer 的那个函数里直接调用才有效；再套一层函数调用就失效了。',interview:'q-3ca3e2c2a65b7c3a'},
+  {id:'go-flow-13',type:'judge',q:'在循环里拿锁后写 defer mu.Unlock()，锁会在本轮循环结束时释放。',answer:false,explain:'defer 绑定的是函数，不是循环；锁要等整个函数返回才释放。循环里应直接 Unlock，或把循环体放进单独函数。',interview:'q-fd43307d59e4125a'},
+  {id:'go-flow-14',type:'fill',q:'要在函数退出时打印准确的总耗时，应写成 defer func(){ log.Print(time.____(start)) }()，放在闭包里才不会提前求值。',accepted:['Since','time.Since'],explain:'直接写 defer log.Print(time.Since(start)) 会在注册时就算好耗时（几乎为 0）。',interview:'q-fd43307d59e4125a'},
+ ]},
+ {id:'go-generics',title:'泛型与反射',summary:'类型参数、约束、方法集，以及什么时候用反射',lessons:[
+  {title:'为什么需要泛型',body:'没有泛型时，“求最大值”要给 int、float64、string 各写一份，或者用 any 再做类型断言，既啰嗦又不安全。Go 1.18 起支持泛型：在函数名后用方括号声明类型参数，一份代码适用于多种类型，类型检查仍在编译期完成。',code:'func Max[T cmp.Ordered](a, b T) T {\n    if a > b { return a }\n    return b\n}\nMax(3, 5)       // T 推断为 int\nMax("go", "ai") // T 推断为 string'},
+  {title:'约束：规定 T 能做什么',body:'约束本身是一个接口。any 表示任意类型；comparable 表示能用 == 比较（可以当 map 的 key）；cmp.Ordered 表示能比较大小。也可以自己写类型集合，~int 表示“底层类型是 int 的类型也算”，比如 type Age int。',code:'type Number interface {\n    ~int | ~int64 | ~float64\n}\nfunc Sum[T Number](xs []T) T {\n    var total T\n    for _, x := range xs { total += x }\n    return total\n}'},
+  {title:'泛型类型与标准库',body:'结构体也可以带类型参数，比如 type Stack[T any] struct{ items []T }。标准库已经提供了很多泛型工具：slices.Contains、slices.Sort、slices.Index、maps.Keys 等，日常不必自己重写。注意：方法不能有自己额外的类型参数。'},
+  {title:'反射：运行时看类型',body:'reflect 包能在运行时查看一个值的类型、字段和标签，encoding/json 就是用反射读取结构体标签的。反射很灵活，但更慢、可读性差，类型错误要到运行时才暴露。能用泛型或接口解决的问题，优先不用反射。',code:'t := reflect.TypeOf(User{})\nf, _ := t.FieldByName("Name")\nfmt.Println(f.Tag.Get("json")) // name'},
+  {title:'方法集：值接收者和指针接收者',body:'方法的接收者可以是值 (u User) 也可以是指针 (u *User)。类型 T 的方法集只包含值接收者的方法；*T 的方法集包含两种。所以如果接口方法是用指针接收者实现的，只有 *T 满足这个接口，T 不满足。需要修改对象，或者对象很大时，用指针接收者。'},
+ ],quiz:[
+  {id:'go-generics-1',q:'Go 从哪个版本开始支持泛型？',options:['1.13','1.16','1.18','1.21'],answer:2,explain:'Go 1.18 引入类型参数；1.21 起标准库又增加了 slices、maps、cmp 等泛型工具包。'},
+  {id:'go-generics-2',q:'func Max[T cmp.Ordered](a, b T) T 中，cmp.Ordered 的作用是？',options:['让 T 只能是 int','约束 T 必须支持 < > 等大小比较','把参数转成字符串','运行时检查类型'],answer:1,explain:'约束规定类型参数能做哪些操作。cmp.Ordered 包含整数、浮点数和字符串等可以比较大小的类型。'},
+  {id:'go-generics-3',type:'judge',q:'想把类型参数 K 用作 map 的 key，约束至少要是 comparable。',answer:true,explain:'map 的 key 必须可比较，所以写成 func F[K comparable, V any](m map[K]V)。'},
+  {id:'go-generics-4',q:'约束 interface{ ~int } 中的 ~ 表示什么？',options:['取反','底层类型是 int 的类型也满足，比如 type Age int','近似值','指针类型'],answer:1,explain:'不加 ~ 只匹配 int 本身；加了 ~，所有底层类型是 int 的自定义类型都满足。'},
+  {id:'go-generics-5',type:'fill',q:'判断切片里是否包含某个元素，Go 1.21 起可以直接用 slices.____(s, v)。',accepted:['Contains','slices.Contains'],explain:'slices 包提供了 Contains、Index、Sort、Equal 等泛型函数，元素类型需满足相应约束。'},
+  {id:'go-generics-6',type:'judge',q:'泛型函数的类型错误要到程序运行时才会被发现。',answer:false,explain:'泛型的类型检查在编译期完成；反射和 any 加类型断言才会把问题推迟到运行时。'},
+  {id:'go-generics-7',type:'multi',q:'关于反射，哪些说法正确？（多选）',options:['encoding/json 用反射读取结构体字段和标签','反射比直接调用更快','反射的类型错误常在运行时才暴露','能用泛型或接口解决时，优先不用反射'],answers:[0,2,3],explain:'反射灵活但有性能开销，可读性也差，属于“最后的手段”。'},
+  {id:'go-generics-8',q:'type Counter struct{n int}; func (c *Counter) Inc() { c.n++ }。接口 I 要求 Inc()，下面哪个能赋值给 I？',options:['Counter{}','&Counter{}','两个都可以','两个都不行'],answer:1,explain:'Inc 是指针接收者方法，只在 *Counter 的方法集里，所以只有 &Counter{} 满足接口 I。'},
+  {id:'go-generics-9',q:'需要在方法里修改结构体字段时，接收者应该写成？',options:['值接收者 (c Counter)','指针接收者 (c *Counter)','都可以','不能修改'],answer:1,explain:'值接收者拿到的是副本，修改不影响原对象；指针接收者才能改到原对象。'},
+  {id:'go-generics-10',type:'code',q:'用泛型写一个 Filter 函数：输入一个切片和判断函数，返回满足条件的元素。',reference:'func Filter[T any](xs []T, keep func(T) bool) []T {\n    out := make([]T, 0, len(xs))\n    for _, x := range xs {\n        if keep(x) {\n            out = append(out, x)\n        }\n    }\n    return out\n}\n// evens := Filter([]int{1, 2, 3, 4}, func(n int) bool { return n%2 == 0 })',points:['类型参数 [T any]','参数 func(T) bool','预分配容量后 append','返回新切片'],explain:'这里对 T 没有任何操作要求，所以约束用 any 即可。'},
  ]},
  {id:'go-channel',title:'channel、select 与 context',summary:'goroutine 之间怎么传数据、等多个事件、传递取消',lessons:[
   {title:'goroutine 与 channel',body:'go f() 会启动一个 goroutine 并发执行 f。goroutine 之间推荐用 channel 传数据：ch <- v 发送，v := <-ch 接收。无缓冲 channel 发送和接收必须“碰头”才能完成，适合同步交接；有缓冲 channel 可以先暂存最多 cap 个元素，满了发送才阻塞，空了接收才阻塞。',code:'ch := make(chan int, 3) // 缓冲 3\ngo func() { ch <- 42 }()\nfmt.Println(<-ch)'},
@@ -114,6 +169,10 @@ export const goLevels:AiLevel[]=[
   {id:'go-channel-9',type:'judge',q:'调用 cancel() 后，正在运行的 goroutine 会被立即强制终止。',answer:false,explain:'取消是协作式的：只是发出通知，goroutine 要自己检查 ctx.Done() 并退出；cancel 也不会等待它们结束。',interview:'q-24b68e3ea02c8051'},
   {id:'go-channel-10',type:'fill',q:'函数参数需要 context 但暂时不知道用哪个时，应该传 context.____()。',accepted:['TODO','context.TODO','TODO()','context.TODO()'],explain:'不要传 nil；不确定时用 context.TODO()，程序入口等顶层用 context.Background()。',interview:'q-24b68e3ea02c8051'},
   {id:'go-channel-11',type:'short',q:'向 channel 发送一个值时，运行时内部大致怎么处理？',reference:'先加锁。如果有接收者在等待队列里，就直接把值交给它并唤醒；否则如果有缓冲且没满，就写入环形缓冲区；都不满足时，把当前 goroutine 放进发送等待队列并挂起，等有接收者时再被唤醒。向已关闭的 channel 发送会 panic。',points:['有接收者等待就直接交付','缓冲未满写入缓冲区','否则进入发送等待队列挂起','已关闭会 panic'],explain:'三种情况按顺序说出来就是满分答案。',interview:'q-2df1131ab7d03ee5'},
+  {id:'go-channel-12',q:'for v := range ch 什么时候结束？',options:['读到零值时','channel 被关闭且缓冲区取完时','永远不结束','读到第一个值后'],answer:1,explain:'range 会一直接收，直到 channel 关闭并且缓冲里的数据都取完。没人关闭就会一直阻塞。',interview:'q-4b394dccaecf89e0'},
+  {id:'go-channel-13',type:'judge',q:'select 带 default 分支时，如果其他分支都没就绪，会立即执行 default 而不阻塞。',answer:true,explain:'default 让 select 变成非阻塞的；但在死循环里这样写会忙等占满 CPU。',interview:'q-b69ba4003ff7b624'},
+  {id:'go-channel-14',q:'只读 channel 的类型写法是？',options:['chan<- int','<-chan int','chan int','readonly chan int'],answer:1,explain:'<-chan int 只能接收，chan<- int 只能发送；把它们用在函数参数上，可以在编译期防止误用。'},
+  {id:'go-channel-15',type:'judge',q:'context.WithValue 适合用来传递数据库连接、配置这类依赖。',answer:false,explain:'Value 只放请求级的元数据（比如请求 ID、用户身份），依赖应通过参数或结构体字段显式传入；key 要用自定义类型。',interview:'q-24b68e3ea02c8051'},
  ]},
  {id:'go-memory',title:'底层：字符串、切片与内存布局',summary:'string 和 slice 在内存里长什么样，扩容和拷贝的代价',lessons:[
   {title:'string：地址 + 长度',body:'string 在常见实现里只有两样东西：指向字节数据的地址和字节长度，内容只读。复制字符串只复制这两样，很便宜；子串可能和原字符串共享存储。len(s) 是字节数，“你好”的 len 是 6。'},
@@ -133,6 +192,10 @@ export const goLevels:AiLevel[]=[
   {id:'go-memory-9',type:'judge',q:'切片扩容后，其他还指向旧数组的切片也会自动指向新数组。',answer:false,explain:'扩容返回的是新切片；之前共享旧数组的切片仍然指向旧数组，从此“分家”。',interview:'q-52752c7219520e33'},
   {id:'go-memory-10',q:'在常见 64 位平台上，struct{ X byte; Y int64; Z byte } 的大小是？',options:['10','16','24','32'],answer:2,explain:'Y 要 8 字节对齐，X 后面补 7 字节；整体要对齐到 8 的倍数，Z 后面再补 7，共 24。调成 {Y int64; X, Z byte} 就是 16。',interview:'q-1ce6cbb60fc0bad0'},
   {id:'go-memory-11',q:'time.Duration(3) 表示多长时间？',options:['3 秒','3 毫秒','3 纳秒','3 分钟'],answer:2,explain:'Duration 底层是 int64，单位纳秒。3 秒要写 3 * time.Second，变量秒数写 time.Duration(n) * time.Second。',interview:'q-7c836d025b71239b'},
+  {id:'go-memory-12',q:'utf8.RuneCountInString("你好go") 的结果是？',options:['4','6','8','2'],answer:0,explain:'它数的是字符（rune）个数：你、好、g、o 共 4 个；len 则是字节数 8。',interview:'q-79fc8e4df94b1c8e'},
+  {id:'go-memory-13',q:'下面代码运行后 a 是多少？',code:'a := []int{1, 2, 3, 4}\nb := a[:2]\nb = append(b, 99)\nfmt.Println(a)',options:['[1 2 3 4]','[1 2 99 4]','[1 2 99]','panic'],answer:1,explain:'b 的容量是 4，append 没有扩容，直接写进了共享数组的第 3 个位置，覆盖了 a[2]。用 a[:2:2] 限制容量可以避免。',interview:'q-bad4e305aeacacde'},
+  {id:'go-memory-14',type:'judge',q:'Go 1.18 起可以用 strings.Clone 复制一段子串，避免它拽住整个大字符串。',answer:true,explain:'Clone 会分配独立的存储；只对需要长期保存的小段使用，不要所有子串都复制。',interview:'q-cdae0785b6563bf0'},
+  {id:'go-memory-15',type:'fill',q:'查看结构体某个字段相对起始位置的偏移量，用 unsafe.____。',accepted:['Offsetof','unsafe.Offsetof'],explain:'Sizeof 看大小，Alignof 看对齐，Offsetof 看偏移，结果都和目标平台有关。',interview:'q-1ce6cbb60fc0bad0'},
  ]},
  {id:'go-sync',title:'底层：map 与同步原语',summary:'map 的实现和使用规则，Mutex、RWMutex、WaitGroup 与 sync.Map',lessons:[
   {title:'map 的实现要看版本',body:'map 是哈希表：用 key 的哈希值决定放在哪里。Go 1.23 及以前是“桶 + 溢出桶”，每个桶放 8 对键值；Go 1.24 起默认换成 Swiss Table，按组存放，用控制字节一次比较多个槽位。变的是实现，不变的是规则：key 要可比较、遍历无序、并发读写要同步。'},
@@ -152,6 +215,10 @@ export const goLevels:AiLevel[]=[
   {id:'go-sync-10',q:'使用 WaitGroup 时，wg.Add(1) 应该写在哪里？',options:['goroutine 里面第一行','启动 goroutine 之前','wg.Wait() 之后','哪里都行'],answer:1,explain:'Add 必须先于 Wait 生效，所以要在 go 语句之前调用；写在 goroutine 里，Wait 可能提前返回。',interview:'q-f9fb9ff3b253228d'},
   {id:'go-sync-11',q:'用 sync.Map 实现“不存在才写入”，应该用？',options:['先 Load，没有再 Store','LoadOrStore','Range','Delete 再 Store'],answer:1,explain:'Load 再 Store 两步之间可能被别人插入，不是原子的；LoadOrStore 一步完成。',interview:'q-70a9b74ab21752dd'},
   {id:'go-sync-12',type:'short',q:'map 为什么可能出现“内存泄漏”？怎么治理？',reference:'map 本身不会泄漏，常见原因是长期存在的 map 只增不删、缓存没有淘汰；大量 delete 后底层容量仍保留；值里引用了大对象、指针或子串，连带保留更多内存。治理方法：明确生命周期和容量上限，做淘汰、过期清理或定期重建，用 heap profile 查看实际引用链。',points:['只进不出、没有淘汰','删除后容量不缩','值引用大对象','设上限，淘汰或重建'],explain:'先说原因再说办法；注意不要把“RSS 没降”直接等同于泄漏。',interview:'q-b5082c04a1ba8f9f'},
+  {id:'go-sync-13',q:'nil map 和空 map 都能做的操作是？',options:['m["a"] = 1','读取 m["a"] 和 len(m)','两者都不能做任何操作','只有 nil map 能读'],answer:1,explain:'两者读取都得到零值、len 都是 0、range 和 delete 都安全；只有写入时 nil map 会 panic。',interview:'q-0d755e9ed1b2889c'},
+  {id:'go-sync-14',type:'judge',q:'sync.Map 的 Range 遍历得到的是调用那一刻的一致性快照。',answer:false,explain:'Range 不是快照，遍历期间其他 goroutine 的增删可能被看到也可能看不到。',interview:'q-70a9b74ab21752dd'},
+  {id:'go-sync-15',q:'Go 1.25 新增的 wg.Go(f) 做了什么？',options:['自动 Add(1) 并在新 goroutine 里运行 f，结束时 Done','收集 f 返回的错误','限制并发数','强制取消 f'],answer:0,explain:'wg.Go 简化了 Add/Done 的写法，但 f 不能 panic，也不负责收集错误；需要错误和取消用 errgroup。',interview:'q-f9fb9ff3b253228d'},
+  {id:'go-sync-16',type:'fill',q:'需要按固定顺序遍历 map，先把 key 收集到切片里，再用 slices.____ 排序。',accepted:['Sort','slices.Sort'],explain:'map 遍历无序；收集 key、排序后再按顺序读取 map。',interview:'q-f637e69141a11784'},
  ]},
  {id:'go-runtime',title:'Runtime：编译、启动与 GMP 调度',summary:'程序怎么跑起来，成千上万个 goroutine 怎么被调度',lessons:[
   {title:'从源码到运行',body:'go build 先确定依赖和要编译的文件，编译器解析源码、检查类型、做内联和逃逸分析，转成 SSA 优化后生成机器码，最后链接成可执行文件。程序启动时先由 runtime 准备线程、栈、内存分配器和调度器，再初始化各个包，最后进入 main.main。main 返回整个进程就结束，不会等其他 goroutine。'},
@@ -171,6 +238,10 @@ export const goLevels:AiLevel[]=[
   {id:'go-runtime-9',q:'想在 select 里设置“1 秒超时”，应该用？',options:['time.Sleep(time.Second)','case <-time.After(time.Second):','runtime.Gosched()','time.Duration(1)'],answer:1,explain:'time.After 返回一个 channel，到时会收到值，可以和其他 case 竞争；Sleep 只会让当前 goroutine 睡着。',interview:'q-ee5d553586716d4b'},
   {id:'go-runtime-10',type:'judge',q:'一个 goroutine 里没有被 recover 的 panic，只会结束这个 goroutine，不影响整个程序。',answer:false,explain:'goroutine 没有崩溃隔离，未恢复的 panic 会让整个 Go 进程退出。',interview:'q-83f6a75a931c18df'},
   {id:'go-runtime-11',type:'short',q:'简述 GMP 的调度流程。',reference:'M 绑定一个 P 后寻找可运行的 G：通常优先取 runnext 和 P 的本地队列，并定期检查全局队列保证公平；本地没有时检查网络轮询、定时器，并尝试从其他 P 窃取一半任务。G 阻塞、退出或被抢占后，M 再继续找下一个；完全没有工作时 M 和 P 进入休眠。新 G 一般进入当前 P 的本地队列，满了转移一批到全局队列。',points:['M 绑定 P 才能执行 G','本地队列优先，定期看全局','网络轮询与工作窃取','阻塞/退出/抢占后继续找'],explain:'按“从哪里取 G”这条线讲清楚即可，真实分支更多。',interview:'q-a2ed53373aac9bdd'},
+  {id:'go-runtime-12',q:'Go 1.14 引入的异步抢占解决了什么问题？',options:['goroutine 太多','没有函数调用的死循环会一直霸占线程，其他 goroutine 得不到执行','内存泄漏','GC 太慢'],answer:1,explain:'以前只在函数调用等安全点检查抢占，纯计算循环可能长时间不让出；异步抢占用信号打断它。',interview:'q-320610842e622d30'},
+  {id:'go-runtime-13',type:'judge',q:'runtime.Gosched() 会让当前 goroutine 睡眠一段时间。',answer:false,explain:'Gosched 只是主动让出 CPU，当前 G 仍是可运行状态，回去排队；Sleep 才是等待定时器。',interview:'q-320610842e622d30'},
+  {id:'go-runtime-14',q:'goroutine 的初始栈大概有多大？',options:['几 KB，可以按需增长','固定 8MB','1GB','和线程一样大且不能变'],answer:0,explain:'goroutine 初始栈只有几 KB，不够时由 runtime 扩容，这是它比线程轻的原因之一。',interview:'q-83f6a75a931c18df'},
+  {id:'go-runtime-15',type:'fill',q:'查看编译过程中实际调用了哪些工具，可以给 go build 加参数 ____。',accepted:['-x','x'],explain:'-x 打印执行的命令；-work 保留临时构建目录。',interview:'q-3fcd2ed322ebe27c'},
  ]},
  {id:'go-gc',title:'内存管理与 GC',summary:'对象放栈还是堆，GC 怎么工作、何时触发，怎么分析',lessons:[
   {title:'栈和堆：逃逸分析',body:'编译器会判断变量能不能放在函数栈上：如果它的引用可能活得比函数更久（比如被返回、被全局变量或 goroutine 引用），就可能“逃逸”到堆上，由 GC 管理。返回局部变量的指针在 Go 里是合法的。用 go build -gcflags=-m 查看逃逸结果，再用 benchmark 的分配次数验证。',code:'func newUser() *User {\n    u := User{Name: "Tom"}\n    return &u // u 逃逸到堆上，这是合法的\n}'},
@@ -189,6 +260,10 @@ export const goLevels:AiLevel[]=[
   {id:'go-gc-8',type:'judge',q:'GOMEMLIMIT 是硬上限，超过就会立刻 OOM 退出。',answer:false,explain:'GOMEMLIMIT 是软限制，约束 runtime 管理的内存，接近时 GC 会更积极；它不等于进程 RSS 或容器硬上限。',interview:'q-3ff9ea5bb93469b8'},
   {id:'go-gc-9',type:'multi',q:'哪些情况容易造成 Go 程序的内存泄漏？（多选）',options:['全局缓存只加不删','goroutine 阻塞永远不退出','从大字符串截取小子串长期保存','函数里的局部变量'],answers:[0,1,2],explain:'这些都是“业务不用了但仍被引用”。普通局部变量在函数结束后不再被引用，可以回收。',interview:'q-d41a25b004023e30'},
   {id:'go-gc-10',q:'想看每一轮 GC 的耗时和堆大小变化，最直接的方法是？',options:['GODEBUG=gctrace=1 运行程序','反复调用 runtime.GC()','把 GOGC 设为 off','看 CPU 温度'],answer:0,explain:'gctrace=1 会输出每轮 GC 的阶段耗时和堆变化；再结合 heap profile、runtime/metrics 分析。',interview:'q-ade7587e017cd344'},
+  {id:'go-gc-11',type:'judge',q:'标记阶段新分配的对象会被当作已标记（黑色），这一轮不会被回收。',answer:true,explain:'这样保证正在使用的新对象不会被误删，它们要等下一轮 GC 再判断。',interview:'q-b1c743761d552ac8'},
+  {id:'go-gc-12',q:'把 GOGC 从 100 调到 200，通常会怎样？',options:['GC 更频繁、内存更少','GC 次数减少、内存占用变高','没有影响','程序崩溃'],answer:1,explain:'GOGC 越大，允许堆长得越多才触发下一轮，GC CPU 开销降低，内存占用升高。',interview:'q-3ff9ea5bb93469b8'},
+  {id:'go-gc-13',q:'下面哪种情况，变量 u 很可能逃逸到堆上？',options:['u 只在函数内部用完','函数返回 &u','u 是一个 int 常量','u 作为值参数传给另一个函数'],answer:1,explain:'返回指针后，u 的生命周期超出了当前函数，编译器会把它放到堆上。',interview:'q-8128966a2c96a4cc'},
+  {id:'go-gc-14',type:'judge',q:'内存一直涨，最好的办法是在代码里定时调用 runtime.GC()。',answer:false,explain:'手动 GC 治标不治本，内存涨多半是还有引用没释放；先用 heap profile 找到谁拽着内存。',interview:'q-ade7587e017cd344'},
  ]},
  {id:'go-concurrency',title:'并发编程实战',summary:'原子操作、锁的选择、并发控制、channel 用法和常见坑',lessons:[
   {title:'原子操作还是锁',body:'count++ 其实是“读、加、写”三步，多个 goroutine 同时做会丢更新。只保护一个变量（计数、开关、发布配置快照）用 sync/atomic，比如 atomic.Int64 的 Add；要保护“读-判断-改”一整段流程或多个变量之间的关系，用锁。原子操作在激烈竞争下也不一定更快。',code:'var count atomic.Int64\ncount.Add(1)          // 正确\n// count.Store(count.Load()+1) // 错误：会丢更新'},
@@ -211,6 +286,27 @@ export const goLevels:AiLevel[]=[
   {id:'go-concurrency-11',q:'有多个发送者往同一个 channel 发数据，应该由谁来关闭它？',options:['任意一个发送者','接收者','等所有发送者结束后由协调者关闭','永远不关闭'],answer:2,explain:'关闭表示不会再有数据。多个发送者时用 WaitGroup 等它们全部结束，再由协调者关闭；接收者乱关会让发送者 panic。',interview:'q-663d42e7c0e290fb'},
   {id:'go-concurrency-12',type:'short',q:'什么是协程泄漏？举例并说说怎么预防。',reference:'协程泄漏是 goroutine 在业务结束后仍无法退出，比如往无人接收的无缓冲 channel 发送、等待一个永远不会关闭的 channel、忘记 cancel、锁一直不释放、后台循环没有退出分支。它会占用栈和引用的对象，数量持续上涨会拖垮服务。预防：给每个 goroutine 定义生命周期，阻塞操作配 context 或超时，select 里监听 ctx.Done()，调用方等待它们收尾；用 goroutine profile 观察数量和堆栈。',points:['goroutine 无法退出','发送无人接收/等待不关闭的 channel','用 context、超时、退出分支','用 goroutine profile 定位'],explain:'举一个具体例子并给出对应的修复方式最有说服力。',interview:'q-f6132d872e9784ca'},
   {id:'go-concurrency-13',q:'singleflight 最适合解决哪个问题？',options:['长期缓存查询结果','缓存失效瞬间大量相同请求同时回源','跨机器分布式锁','限制每秒请求数'],answer:1,explain:'同一个 key 的并发调用只执行一次、共享结果。它不保存结果，也不跨进程。',interview:'q-05b541b03bf3f929'},
+  {id:'go-concurrency-14',type:'judge',q:'使用了 channel 的程序就不会有数据竞争。',answer:false,explain:'channel 只同步交接那一刻；传过去的指针或切片，两边之后同时修改照样会竞争。',interview:'q-5d35537eb1d002b0'},
+  {id:'go-concurrency-15',q:'程序“一直在忙着重试，但业务没有任何进展”，这叫？',options:['死锁','活锁','饥饿','数据竞争'],answer:1,explain:'死锁是互相等待谁都动不了；活锁是一直在执行和重试但没进展；饥饿是某个任务老拿不到资源。',interview:'q-5d35537eb1d002b0'},
+  {id:'go-concurrency-16',q:'服务的 main 函数怎样“守住”并能优雅退出？',options:['for {} 空循环','select {}','用 signal.NotifyContext 等待退出信号，再做收尾','time.Sleep(很久)'],answer:2,explain:'for{} 忙等占 CPU；select{} 可能被报告死锁；等信号再优雅关闭才是服务的正确写法。',interview:'q-81c523006197611b'},
+  {id:'go-concurrency-17',type:'fill',q:'需要“任一任务出错就取消其他任务并返回错误”，可以用 golang.org/x/sync 里的 ____ 包。',accepted:['errgroup'],explain:'errgroup.WithContext 返回的 ctx 会在第一个错误时取消，Wait 返回第一个错误。',interview:'q-c9ec292e716d6fa3'},
+ ]},
+ {id:'go-testing',title:'测试与工具链',summary:'单元测试、表格驱动、基准、竞态检测、模糊测试和常用工具',lessons:[
+  {title:'第一个测试',body:'测试文件以 _test.go 结尾，测试函数叫 TestXxx(t *testing.T)。go test ./... 运行所有包的测试。t.Errorf 记录失败并继续，t.Fatalf 记录失败并立刻结束当前测试。',code:'func TestAdd(t *testing.T) {\n    if got := Add(1, 2); got != 3 {\n        t.Errorf("Add(1,2) = %d, want 3", got)\n    }\n}'},
+  {title:'表格驱动测试',body:'把多组输入和期望结果写成一个切片，循环用 t.Run 跑子测试。新增用例只要加一行，失败时也能看出是哪一组。',code:'tests := []struct {\n    name string\n    a, b, want int\n}{\n    {"正数", 1, 2, 3},\n    {"负数", -1, -2, -3},\n}\nfor _, tt := range tests {\n    t.Run(tt.name, func(t *testing.T) {\n        if got := Add(tt.a, tt.b); got != tt.want {\n            t.Errorf("got %d, want %d", got, tt.want)\n        }\n    })\n}'},
+  {title:'基准、竞态与模糊测试',body:'BenchmarkXxx(b *testing.B) 测性能，go test -bench=. -benchmem 输出每次耗时和内存分配。go test -race 在运行时检测数据竞争，只能发现实际跑到的路径。FuzzXxx(f *testing.F) 是模糊测试，自动生成大量输入寻找 bug。go test -cover 查看覆盖率。'},
+  {title:'常用工具链',body:'gofmt 统一代码格式；go vet 检查可疑写法（比如 Printf 参数不匹配、复制了锁）；go mod tidy 整理依赖；go build -race 构建带竞态检测的程序；pprof 和 trace 分析性能。很多团队还会加 staticcheck、golangci-lint。'},
+ ],quiz:[
+  {id:'go-testing-1',type:'fill',q:'Go 测试文件的文件名必须以 ____ 结尾。',accepted:['_test.go','test.go'],explain:'go test 只编译和运行 _test.go 文件里的 TestXxx、BenchmarkXxx、FuzzXxx、ExampleXxx。'},
+  {id:'go-testing-2',q:'t.Errorf 和 t.Fatalf 的区别是？',options:['没有区别','Errorf 记录失败后继续执行，Fatalf 记录失败后立刻结束当前测试','Errorf 会让整个程序崩溃','Fatalf 只打印日志不算失败'],answer:1,explain:'后续断言依赖前面的结果（比如对象为 nil 就没法继续）时用 Fatalf，其他情况用 Errorf 能一次看到更多失败。'},
+  {id:'go-testing-3',q:'表格驱动测试中，为每组用例调用的方法是？',options:['t.Run','t.Parallel','t.Skip','t.Cleanup'],answer:0,explain:'t.Run(name, func) 创建子测试，失败时显示用例名，还能用 -run 单独运行某个子测试。'},
+  {id:'go-testing-4',type:'fill',q:'运行基准测试并显示内存分配情况：go test -bench=. ____。',accepted:['-benchmem','benchmem'],explain:'-benchmem 输出 B/op 和 allocs/op；比较优化效果时最好多跑几次（-count）并用 benchstat。'},
+  {id:'go-testing-5',type:'judge',q:'go test -race 没有报警，就证明程序里一定没有数据竞争。',answer:false,explain:'竞态检测只能发现这次实际执行到的路径上的竞争，证明不了“一定没有”。'},
+  {id:'go-testing-6',q:'想自动生成大量随机输入来寻找解析函数的 bug，用哪种测试？',options:['单元测试','基准测试','模糊测试（Fuzz）','示例测试'],answer:2,explain:'Go 1.18 起支持 FuzzXxx(f *testing.F)，会不断变异输入，发现导致失败的输入后保存为回归用例。'},
+  {id:'go-testing-7',type:'multi',q:'go vet 能发现哪些问题？（多选）',options:['Printf 的格式和参数不匹配','复制了含 Mutex 的结构体','业务逻辑算错了','不可达的代码'],answers:[0,1,3],explain:'go vet 做静态检查，找常见的可疑写法；业务逻辑对不对还得靠测试。'},
+  {id:'go-testing-8',q:'统一代码格式用哪个工具？',options:['go vet','gofmt','go mod tidy','pprof'],answer:1,explain:'gofmt 按官方风格格式化代码，大多数编辑器保存时会自动运行。'},
+  {id:'go-testing-9',type:'judge',q:'只运行名字匹配 TestLogin 的测试，可以用 go test -run TestLogin。',answer:true,explain:'-run 接受正则表达式，匹配测试名和子测试名，比如 -run TestAdd/负数。'},
+  {id:'go-testing-10',type:'short',q:'怎么给一个依赖数据库的函数写单元测试？',reference:'把对数据库的依赖抽象成一个小接口，函数接收这个接口；测试时传入一个内存实现或假的实现（fake / mock），只验证业务逻辑。真正和数据库交互的代码另外写集成测试，用测试容器或测试库运行，并在 t.Cleanup 里清理数据。',points:['依赖抽象成接口','测试传入 fake / mock','集成测试单独连真实数据库','用 t.Cleanup 清理'],explain:'核心是依赖注入：业务逻辑不直接依赖具体的数据库客户端。'},
  ]},
  {id:'go-engineering',title:'工程实战与性能优化',summary:'写 Web 服务、用好常见库，用工具找到并解决性能问题',lessons:[
   {title:'net/http 与 Web 框架',body:'http.ListenAndServe 先监听端口，再循环接收连接；每个连接由一个 goroutine 读请求，调用 Handler 的 ServeHTTP 写响应。Gin、Echo 在它之上提供路由、参数绑定和中间件。Gin 的中间件组成一条链，c.Next() 执行后面的处理，再回来执行后置逻辑；c.Abort() 只阻止后续处理，自己还要 return。',code:'r.Use(func(c *gin.Context) {\n    start := time.Now()\n    c.Next()\n    log.Printf("%d %s", c.Writer.Status(), time.Since(start))\n})'},
@@ -231,5 +327,9 @@ export const goLevels:AiLevel[]=[
   {id:'go-engineering-10',q:'用 pprof 分析内存时，inuse_space 表示？',options:['程序启动以来累计分配的字节','当前仍在使用（存活）的内存','操作系统的 RSS','GC 次数'],answer:1,explain:'inuse_space 看当前存活的内存，alloc_space 看累计分配量，两者意义不同。',interview:'q-d918716097c90db8'},
   {id:'go-engineering-11',q:'不要求保持顺序时，删除切片第 i 个元素最快的方式是？',options:['用最后一个元素覆盖 s[i]，再截短','逐个把后面的元素往前移','新建切片复制其他元素','用 map 代替'],answer:0,explain:'覆盖再截短是 O(1)；保序删除需要移动后续元素，是 O(n)。元素含指针时记得清掉尾部引用。',interview:'q-ce9139e2ff585c12'},
   {id:'go-engineering-12',type:'judge',q:'slices.Clone 会把切片里指针指向的对象也一起深拷贝。',answer:false,explain:'slices.Clone 是浅拷贝，只复制元素本身；指针、map、slice 元素指向的数据仍然共享。',interview:'q-03de90c85069fa3d'},
+  {id:'go-engineering-13',q:'用 Viper 实现配置热更新时，新配置应该怎样发布给业务代码？',options:['直接修改正在使用的配置对象字段','解析并校验新配置，成功后用 atomic.Pointer 整体替换','重启整个服务','每次请求都重新读文件'],answer:1,explain:'先解析校验，失败就保留旧配置；成功后整体替换，读者拿到的始终是完整快照。',interview:'q-eee7ec9d9516a477'},
+  {id:'go-engineering-14',type:'judge',q:'json.Unmarshal 到 map[string]any 再逐个取值，通常比直接解码到结构体更快。',answer:false,explain:'经过 map 中转会多出大量分配和类型断言，通常更慢；直接解码到结构体更快也更安全。',interview:'q-fd7a0f3562629bc1'},
+  {id:'go-engineering-15',q:'GODEBUG=schedtrace=1000 的作用是？',options:['每 1000 毫秒输出一次调度器概况','限制 1000 个 goroutine','每 1000 次请求打一条日志','开启 1000 个线程'],answer:0,explain:'schedtrace 定期输出 P、M、运行队列等信息，加 scheddetail=1 更详细；要结合 trace 和业务指标判断根因。',interview:'q-eaf00bfd1d8e3bdb'},
+  {id:'go-engineering-16',type:'short',q:'一个 API 接口 P99 延迟很高，你会怎么排查和优化？',reference:'先建立指标：QPS、错误率、P50/P95/P99 和资源使用；用链路追踪找出最慢的阶段，再用 pprof、trace 看 CPU 热点和等待。常见优化：减少下游调用次数、能批量就批量、设置超时并传递取消、复用连接、减少内存分配和序列化开销、缩小锁的范围、限制并发防止排队；必要时加缓存或异步化，但要明确一致性。优化后用同样的数据和负载对比，确认 P99 和错误率都没有变差。',points:['先看指标和链路追踪','pprof / trace 找热点和等待','减少调用、批量、超时、复用连接','同样负载下对比验证'],explain:'面试官想听的是“先测量、再定位、再优化、再验证”的完整闭环。',interview:'q-a2c3d84afb7585b5'},
  ]},
 ];

@@ -212,6 +212,12 @@ export const glossaryEnglish:Record<string,string>={
 'GRPO':'Group Relative Policy Optimization: samples a group of answers per prompt and uses each answer’s reward relative to the group as its advantage, removing PPO’s value model.',
 '工具投毒':'Tool poisoning: hiding malicious instructions in a tool’s name or description to make the model overstep permissions or leak data; a form of indirect prompt injection.',
 '模型路由':'Model routing: choosing a suitable model for each request based on difficulty or type, to cut cost and latency while keeping quality.',
+'类型参数':'Type parameter: a placeholder type declared in square brackets on a generic function or type, e.g. func Max[T cmp.Ordered]; inferred or given at the call site.',
+'类型约束':'Type constraint: an interface limiting which types a type parameter may be and what operations it supports, such as any, comparable, cmp.Ordered or ~int | ~float64.',
+'方法集':'Method set: the methods a type has. T includes value-receiver methods; *T also includes pointer-receiver methods. It decides which interfaces a type satisfies.',
+'表格驱动测试':'Table-driven tests: cases are listed as a slice of inputs and expected outputs and run in a loop with t.Run; adding a case is one line.',
+'模糊测试':'Fuzz testing: the framework generates and mutates many inputs to find bugs; written as FuzzXxx(f *testing.F) since Go 1.18.',
+'io.Reader':'Go’s basic reading interface with a single Read method; files, network connections, request bodies and bytes.Buffer all implement it.',
 };
 export const glossaryAliases:Record<string,string>={'transaction':'事务','atomic operation':'原子操作','data race':'数据竞争','deadlock':'死锁','memory leak':'内存泄漏','write barrier':'写屏障','escape analysis':'逃逸分析','heap':'堆','stack':'栈','reflection':'反射','generics':'泛型','clustered index':'聚集索引','secondary index':'辅助索引','covering index':'覆盖索引','leftmost prefix':'最左前缀','phantom read':'幻读','gap lock':'间隙锁','cache avalanche':'缓存雪崩','Bloom filter':'布隆过滤器','microservices':'微服务','token bucket':'令牌桶','idempotency':'幂等','rate limiting':'限流','circuit breaker':'熔断','message queue':'消息队列','binary search':'二分查找','time complexity':'时间复杂度','space complexity':'空间复杂度'};
 export function englishDefinition(key:string){return glossaryEnglish[glossaryAliases[key]??key]}
