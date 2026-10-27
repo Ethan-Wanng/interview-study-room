@@ -75,3 +75,16 @@
 .learn-foot{display:flex;justify-content:space-between;align-items:center;font-size:14px;color:var(--quiet)}
 .learn-foot b{display:inline-flex;align-items:center;gap:5px;color:var(--primary)}
 .learn-hint{margin-top:26px;color:var(--quiet);font-size:15px;text-align:center}
+/* 阶段训练 / 阶段考试 / 最终考试 */
+.ai-exam-card{border-style:dashed;border-width:2px}
+.ai-exam-card.training{border-color:color-mix(in srgb,var(--primary) 45%,var(--line))}
+.ai-exam-card.stage{border-color:color-mix(in srgb,#d08a1e 60%,var(--line));background:color-mix(in srgb,#f5b942 8%,var(--surface))}
+.ai-exam-card.final{border-color:color-mix(in srgb,#c0392b 55%,var(--line));background:color-mix(in srgb,#e74c3c 7%,var(--surface))}
+.ai-exam-card .ai-num{display:grid;place-items:center}
+.ai-exam-card.done{border-style:solid}
+.ai-tier-review{margin-left:auto;display:inline-flex;align-items:center;gap:5px;padding:4px 11px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--primary);font-size:13px;font-weight:650;cursor:pointer}
+.ai-tier-review:hover{background:var(--surface-soft)}
+.ai-exam-info ul{display:flex;gap:28px;list-style:none;padding:0;margin:0 0 14px;flex-wrap:wrap}
+.ai-exam-info li{display:flex;flex-direction:column;color:var(--quiet);font-size:14px}
+.ai-exam-info li strong{font-size:28px;color:var(--ink)}
+.ai-exam-lock{display:flex;align-items:center;gap:6px;color:var(--alert-ink,#ad3747);font-weight:600}

@@ -1,0 +1,21 @@
+import type {AiQuiz} from '../journey';
+
+// AI「入门」阶段训练：认识大模型、学会调用、RAG 入门、工具调用。比关卡题更偏场景判断。
+export const aiTrain1:AiQuiz[]=[
+ {id:'ai-x1-1',q:'一个模型的上下文窗口是 128K token。你放进去 120K token 的资料，又要求它输出 20K token 的报告，会怎样？',options:['正常输出，窗口只限制输入','超出窗口：输入加输出不能超过上限，会报错或被截断','模型会自动压缩资料','输出会被分成两次自动返回'],answer:1,explain:'上下文窗口包含输入和输出；此外很多模型还有单独的最大输出 token 限制，两者都要满足。'},
+ {id:'ai-x1-2',q:'同一段中文，分别交给两个不同厂商的模型计费，token 数差了 30%。最可能的原因是？',options:['其中一个厂商算错了','两个模型的分词器（tokenizer）不同','中文不能按 token 计费','网络延迟不同'],answer:1,explain:'不同模型的词表和分词方式不同，同一段文字切出的 token 数可能差很多，估算成本要用对应模型的计数工具。'},
+ {id:'ai-x1-3',type:'multi',q:'用户问“我们公司的报销上限是多少”，模型自信地编了一个数字。下面哪些做法能有效降低这种幻觉？（多选）',options:['用 RAG 把公司制度原文放进提示，并要求只依据资料回答','把 temperature 调到 0 就能保证答对','允许模型在资料里找不到时回答“不知道”','要求回答附上引用的段落，并在程序里校验引用存在'],answers:[0,2,3],explain:'temperature 只影响随机性，不能让模型知道它没见过的内部信息；给依据、允许拒答、校验引用才有效。'},
+ {id:'ai-x1-4',q:'聊天应用里，用户在第 3 轮说“把刚才那段翻译成英文”，模型却不知道“刚才那段”是什么。最可能的原因是？',options:['模型记忆力差','每次请求没有把之前的对话历史一起发送，API 本身是无状态的','temperature 太高','token 不够'],answer:1,explain:'模型 API 不会记住上一次请求，多轮对话要由应用把历史消息放进本次请求的 messages 里。'},
+ {id:'ai-x1-5',q:'要求模型输出 JSON，但偶尔会多出一句“好的，以下是结果：”导致解析失败。最可靠的改进是？',options:['在提示词里多写几遍“只输出 JSON”','使用 API 提供的结构化输出 / JSON Schema 模式，并在程序里校验，失败时带错误信息重试','把 max_tokens 调小','改用更长的提示词'],answer:1,explain:'约束解码或 JSON 模式能从机制上保证格式，再加 Schema 校验和有限次重试兜底；单靠提示词只能降低概率。'},
+ {id:'ai-x1-6',type:'judge',q:'system 提示里写的规则，用户在对话里无论怎么要求，模型都一定不会违反。',answer:false,explain:'system 提示优先级更高，但不是安全边界，越狱和提示注入都可能让模型违反；关键限制要在程序和权限层面实现。'},
+ {id:'ai-x1-7',q:'流式输出（streaming）主要改善了什么？',options:['总的生成时间','首字延迟，用户能更早看到内容','回答的准确率','token 费用'],answer:1,explain:'总耗时基本不变，但第一个字更快出现，体验更好；代价是要处理中途断开、部分结果和最终用量统计。'},
+ {id:'ai-x1-8',type:'fill',q:'RAG 的完整英文是 Retrieval-____ Generation。',accepted:['Augmented','augmented'],explain:'检索增强生成：先检索相关资料，再让模型基于资料生成回答。'},
+ {id:'ai-x1-9',q:'RAG 系统里，文档切块（chunk）切得太大，最可能带来的问题是？',options:['检索不到任何内容','一块里混了很多主题，向量表达被稀释，检索不准，还浪费上下文','模型无法读取','embedding 维度变高'],answer:1,explain:'太大的块语义不聚焦，太小的块又可能把一个答案切断；通常按段落或标题切，并保留适当重叠。'},
+ {id:'ai-x1-10',type:'multi',q:'下面哪些情况更适合用 RAG，而不是微调？（多选）',options:['知识每天都在更新','需要回答时给出出处','想让模型学会一种固定的输出风格','资料涉及权限，不同用户能看的不一样'],answers:[0,1,3],explain:'频繁更新、需要引用和权限控制都适合 RAG；固定风格、格式这类“行为”更适合微调或提示词。'},
+ {id:'ai-x1-11',q:'换了一个新的 embedding 模型后，检索效果变得非常差。最可能漏了哪一步？',options:['没有重启数据库','没有用新模型重新计算所有文档的向量，新旧向量不在同一个空间里','向量维度太高','忘了调 temperature'],answer:1,explain:'查询和文档必须用同一个 embedding 模型；更换模型要全量重建索引。'},
+ {id:'ai-x1-12',q:'工具调用（function calling）中，模型返回了“要调用 get_weather(city=北京)”。下一步应该由谁做什么？',options:['模型自己去调用天气接口','应用程序执行这个函数，把结果作为工具消息发回给模型，让它继续生成回答','直接把这个 JSON 显示给用户','结束对话'],answer:1,explain:'模型只负责决定调用什么、传什么参数，真正执行的是你的代码；执行前还要校验参数和权限。'},
+ {id:'ai-x1-13',type:'judge',q:'只要工具的描述写清楚了，就可以直接执行模型给出的参数，不需要再做校验。',answer:false,explain:'模型给出的参数可能缺失、类型错误，也可能是被注入诱导的恶意值；必须按 Schema 校验并检查权限，高风险操作要用户确认。'},
+ {id:'ai-x1-14',type:'multi',q:'关于 MCP（Model Context Protocol），下面哪些说法正确？（多选）',options:['它让 AI 应用用统一的方式接入外部工具和数据源','接入任何 MCP 服务器都是安全的','工具描述和返回内容会进入模型上下文，也可能带来提示注入','服务器可以提供工具、资源和提示模板'],answers:[0,2,3],explain:'MCP 统一了接入方式，但没有解决信任问题，第三方服务器要审核来源、最小权限、高风险操作确认。'},
+ {id:'ai-x1-15',type:'short',q:'设计一个“根据公司内部文档回答员工问题”的最小 RAG 流程，说出每一步做什么。',reference:'离线：收集文档 → 解析成纯文本 → 按段落/标题切块（保留来源和权限信息）→ 用 embedding 模型向量化 → 存入向量库。在线：用户提问 → 用同一个 embedding 模型把问题向量化 → 检索最相关的若干块（按用户权限过滤）→ 把这些块和问题一起放进提示，要求只依据资料回答并标注出处 → 模型生成答案 → 返回答案和引用。还要记录日志，用评测集持续检查检索和回答质量。',points:['解析、切块、向量化、入库','查询用同一个 embedding 模型','按权限过滤检索结果','提示要求依据资料、给出处','记录日志并评测'],explain:'能把离线和在线两条线讲清楚，并提到权限和评测，就是好答案。'},
+ {id:'ai-x1-16',type:'code',q:'用伪代码或 Go 写出工具调用的循环：调用模型 → 如果模型要求调用工具就执行并把结果加回消息 → 直到模型给出最终回答（最多循环 5 次）。',reference:'messages := []Message{{Role: "user", Content: question}}\nfor step := 0; step < 5; step++ {\n    resp, err := model.Chat(ctx, messages, tools)\n    if err != nil {\n        return "", err\n    }\n    messages = append(messages, resp.Message)\n    if len(resp.ToolCalls) == 0 {\n        return resp.Text, nil // 最终回答\n    }\n    for _, call := range resp.ToolCalls {\n        result, err := runTool(ctx, call) // 内部校验参数和权限\n        if err != nil {\n            result = "工具执行失败：" + err.Error()\n        }\n        messages = append(messages, Message{Role: "tool", ToolCallID: call.ID, Content: result})\n    }\n}\nreturn "", errors.New("超过最大步数")',points:['把模型回复加入消息历史','没有工具调用就结束','执行工具并按调用 ID 回传结果','工具出错也要告诉模型','设置最大步数'],explain:'最大步数防止无限循环；工具执行前的参数校验和权限检查必不可少。'},
+];

@@ -1,4 +1,4 @@
-import type {AiLevel,Rank,Tier} from '@/content/journey';
+import type {AiLevel,Exam,Rank,Tier} from '@/content/journey';
 import type {Animation} from '../ai/animations/types';
 
 // 一个可以闯关学习的学科：关卡、难度分档、段位，以及每关关联的面试题。
@@ -14,5 +14,6 @@ export type Subject={
  passRate:number;
  interviewByLevel:Record<string,string[]>;
  interviewSubject:[string,string];        // 「面试」里对应的学科名
+ exams:Exam[];                            // 阶段训练、阶段考试和最终考试
  animations:Animation[];                  // 动画课堂（按关卡关联，没有就传空数组）
 };
