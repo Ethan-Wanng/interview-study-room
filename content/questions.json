@@ -3124,6 +3124,48 @@
       "sourceParagraph": 781
     },
     {
+      "id": "q-8eed302c69b3eb2e",
+      "track": "backend",
+      "category": "数据库与缓存",
+      "section": "数据库与缓存",
+      "title": "MySQL 主从复制延迟怎么发现和处理？",
+      "blocks": [
+        {
+          "type": "text",
+          "text": "主从复制是主库把 binlog 发给从库，从库的 I/O 线程写入 relay log，SQL 线程（或多个并行 applier）重放。延迟常见原因有：主库大事务或批量更新、从库机器更弱或负载更高、单线程重放跟不上、大表 DDL、网络抖动。发现方式：SHOW REPLICA STATUS 的 Seconds_Behind_Source 只是估算，更可靠的是在主库定时写心跳表、在从库比对时间。处理上，拆小大事务和批量操作，开启并行复制（replica_parallel_workers 配合基于 WRITESET 的依赖跟踪），提升从库配置。业务上要接受读从库可能读到旧数据：刚写完马上要读的场景（比如下单后看订单）走主库，或者带上版本号/GTID 等待从库追上；不能假设从库总是实时一致。"
+        }
+      ],
+      "sourceParagraph": 0
+    },
+    {
+      "id": "q-cd319686c5f3c235",
+      "track": "backend",
+      "category": "数据库与缓存",
+      "section": "数据库与缓存",
+      "title": "分库分表怎么设计？分片键怎么选？",
+      "blocks": [
+        {
+          "type": "text",
+          "text": "先确认单库真的到了瓶颈：做过索引和 SQL 优化、读写分离、归档冷数据之后，数据量或写入量仍然扛不住，才考虑分库分表，因为它会带来跨分片查询、分布式事务和扩容迁移的复杂度。分片键要选查询最常带上、分布均匀、不会频繁修改的字段，例如订单按 user_id 分片，用户查自己的订单只落一个分片。常见路由有哈希取模（分布均匀但扩容要迁移）、范围（按时间，便于归档但容易热点）以及按映射表路由。不带分片键的查询（比如商家查订单）可以建按另一维度分片的冗余表或同步到 ES。全局唯一 ID 用号段、雪花算法等生成，不能再依赖单库自增。扩容通常要双写或基于 binlog 迁移，并在切换前做数据校验。"
+        }
+      ],
+      "sourceParagraph": 0
+    },
+    {
+      "id": "q-c90bd2a4838c6555",
+      "track": "backend",
+      "category": "数据库与缓存",
+      "section": "数据库与缓存",
+      "title": "用 Redis 实现分布式锁要注意什么？",
+      "blocks": [
+        {
+          "type": "text",
+          "text": "加锁用 SET key 随机值 NX PX 30000：NX 保证只有一个客户端能设置成功，PX 设置过期时间，防止持锁的进程崩溃后锁永远不释放。解锁时必须先判断值是不是自己设置的随机值再删除，并且用 Lua 脚本把“判断 + 删除”做成原子操作，否则可能误删别人的锁。主要的坑：业务执行时间超过锁过期时间，锁提前失效，两个客户端同时进入临界区，可以用看门狗续期，但续期线程本身也可能卡住；Redis 主从切换时锁可能丢失（复制是异步的）。所以对正确性要求高的场景，要在被保护的资源上加 fencing token（每次加锁递增的版本号，写入时校验），或者直接依赖数据库的唯一约束、乐观锁。Redlock 有争议，不能当作绝对安全的方案。"
+        }
+      ],
+      "sourceParagraph": 0
+    },
+    {
       "id": "q-95b656f5b11cb77f",
       "track": "backend",
       "category": "微服务",
@@ -3670,6 +3712,48 @@
       "sourceParagraph": 860
     },
     {
+      "id": "q-e994dda5397d9993",
+      "track": "backend",
+      "category": "微服务",
+      "section": "微服务",
+      "title": "分布式事务有哪些常见方案？",
+      "blocks": [
+        {
+          "type": "text",
+          "text": "2PC 两阶段提交：协调者先让所有参与者预提交（prepare），都同意后再统一提交。它保证强一致，但会长时间锁资源，协调者故障时参与者可能一直阻塞，互联网业务较少直接使用。TCC：每个服务提供 Try（预留资源，比如冻结余额）、Confirm（确认）、Cancel（释放）三个接口，由业务实现补偿，要处理空回滚、悬挂和幂等。Saga：把长事务拆成一串本地事务，每一步都有对应的补偿操作，失败时按相反顺序补偿，适合流程长的业务，但中间状态对外可见。本地消息表 / 事务性 outbox：在同一个本地事务里写业务数据和一条待发送消息，再由后台可靠投递到 MQ，下游幂等消费，实现最终一致。选型看一致性要求、业务能否设计补偿以及开发成本，很多场景用 outbox 加对账就足够了。"
+        }
+      ],
+      "sourceParagraph": 0
+    },
+    {
+      "id": "q-42228e55cc58156f",
+      "track": "backend",
+      "category": "微服务",
+      "section": "微服务",
+      "title": "服务注册与发现是怎么工作的？",
+      "blocks": [
+        {
+          "type": "text",
+          "text": "服务实例启动时把自己的地址、端口和元数据注册到注册中心（如 etcd、Consul、Nacos，或 K8s 的 Service/Endpoints），并通过心跳或租约保持在线；实例下线或心跳超时后被摘除。调用方有两种模式：客户端发现，调用方从注册中心拉取或订阅实例列表，自己做负载均衡；服务端发现，请求先到负载均衡器或网关，由它查询注册中心并转发。注册中心本身要高可用，etcd、Consul 基于 Raft 偏向一致性，部分方案在网络分区时偏向可用性，需要理解取舍。还要注意：实例刚启动但还没准备好时不要接流量（就绪检查）；下线时先摘除注册再优雅停止；客户端缓存实例列表，注册中心短暂不可用时仍能继续调用。"
+        }
+      ],
+      "sourceParagraph": 0
+    },
+    {
+      "id": "q-08815d2a347da9a6",
+      "track": "backend",
+      "category": "微服务",
+      "section": "微服务",
+      "title": "灰度发布和金丝雀发布怎么做？",
+      "blocks": [
+        {
+          "type": "text",
+          "text": "灰度发布是让新版本先只承接一小部分流量，确认没问题再逐步放大。常见做法：在网关或 Service Mesh 按比例分流（先 1%、5%，再 20%、50%、100%），或按用户 ID、地区、内部员工等维度定向放量；K8s 里可以用两个 Deployment 配合流量规则，或借助 Argo Rollouts 等工具自动推进。每一步都要观察错误率、延迟分位数、业务指标和资源使用，设置自动回滚阈值。注意新旧版本会同时在线，接口和数据库结构变更必须向前、向后兼容（比如先加字段再使用，旧字段延后删除）；有状态的会话、缓存格式、消息格式也要兼容。金丝雀发布是灰度的一种，强调用小部分真实流量先“试毒”。"
+        }
+      ],
+      "sourceParagraph": 0
+    },
+    {
       "id": "q-2e484a0c5a039b1a",
       "track": "backend",
       "category": "设计模式与算法",
@@ -4156,6 +4240,60 @@
         }
       ],
       "sourceParagraph": 1220
+    },
+    {
+      "id": "q-41b371208c8a2b18",
+      "track": "backend",
+      "category": "设计模式与算法",
+      "section": "设计模式与算法",
+      "title": "Go 中如何实现观察者（发布订阅）模式？",
+      "blocks": [
+        {
+          "type": "text",
+          "text": "观察者模式中，主题维护一组订阅者，状态变化时通知所有订阅者，发布方不需要知道具体有谁在监听，从而解耦。Go 里可以让订阅者实现一个接口，或者直接注册回调函数；也可以用 channel：每个订阅者拿到一个 channel，发布时向所有 channel 发送。要注意：订阅者列表的增删和遍历需要加锁；某个订阅者处理慢会阻塞发布方，可以使用带缓冲的 channel、丢弃策略或每个订阅者独立的 goroutine；取消订阅时要关闭对应的 channel 并从列表移除，避免 goroutine 泄漏。跨进程的发布订阅通常交给 MQ 实现。"
+        },
+        {
+          "type": "code",
+          "text": "type Bus struct {\n    mu   sync.RWMutex\n    subs map[chan string]struct{}\n}\nfunc (b *Bus) Subscribe() chan string {\n    ch := make(chan string, 16)\n    b.mu.Lock(); b.subs[ch] = struct{}{}; b.mu.Unlock()\n    return ch\n}\nfunc (b *Bus) Publish(msg string) {\n    b.mu.RLock(); defer b.mu.RUnlock()\n    for ch := range b.subs {\n        select { case ch <- msg: default: } // 满了就丢弃，不阻塞发布方\n    }\n}"
+        }
+      ],
+      "sourceParagraph": 0
+    },
+    {
+      "id": "q-c7bff07bdc346cf3",
+      "track": "backend",
+      "category": "设计模式与算法",
+      "section": "设计模式与算法",
+      "title": "如何用堆求一个数组中最大的 K 个数？",
+      "blocks": [
+        {
+          "type": "text",
+          "text": "维护一个大小为 K 的小顶堆：遍历数组，堆没满就放进去；满了之后，如果当前数比堆顶（堆里最小的数）大，就替换堆顶并下沉调整。遍历结束后堆里就是最大的 K 个数。时间复杂度 O(n log K)，空间 O(K)，适合数据量很大甚至是数据流、K 较小的场景。如果只要第 K 大的一个数，也可以用快速选择，平均 O(n)，但会修改原数组且最坏 O(n²)。Go 可以实现 container/heap 的接口来使用堆。"
+        },
+        {
+          "type": "code",
+          "text": "type MinHeap []int\nfunc (h MinHeap) Len() int           { return len(h) }\nfunc (h MinHeap) Less(i, j int) bool { return h[i] < h[j] }\nfunc (h MinHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }\nfunc (h *MinHeap) Push(x any)        { *h = append(*h, x.(int)) }\nfunc (h *MinHeap) Pop() any          { old := *h; x := old[len(old)-1]; *h = old[:len(old)-1]; return x }\n\nfunc TopK(nums []int, k int) []int {\n    h := &MinHeap{}\n    for _, x := range nums {\n        if h.Len() < k { heap.Push(h, x) } else if k > 0 && x > (*h)[0] { (*h)[0] = x; heap.Fix(h, 0) }\n    }\n    return *h\n}"
+        }
+      ],
+      "sourceParagraph": 0
+    },
+    {
+      "id": "q-b8e7fa67643486dd",
+      "track": "backend",
+      "category": "设计模式与算法",
+      "section": "设计模式与算法",
+      "title": "滑动窗口：求无重复字符的最长子串",
+      "blocks": [
+        {
+          "type": "text",
+          "text": "用左右两个指针维护一个“没有重复字符”的窗口。右指针每次向右扩展一个字符；如果这个字符在窗口里已经出现过，就把左指针移到它上一次出现位置的下一位，保证窗口内依然没有重复。用一个 map（或长度 128 的数组）记录每个字符最后出现的下标，每一步更新最长长度。每个字符最多被左右指针各访问一次，时间 O(n)，空间 O(字符集大小)。注意左指针只能向右移动，不能因为旧的下标往回退；如果要处理中文，应先转成 []rune 再按字符处理。"
+        },
+        {
+          "type": "code",
+          "text": "func LongestUnique(s string) int {\n    last := map[rune]int{}\n    best, left := 0, 0\n    for right, c := range []rune(s) {\n        if i, ok := last[c]; ok && i >= left {\n            left = i + 1\n        }\n        last[c] = right\n        if right-left+1 > best { best = right - left + 1 }\n    }\n    return best\n}"
+        }
+      ],
+      "sourceParagraph": 0
     },
     {
       "id": "q-31ed7ebd242ddb79",
@@ -4872,6 +5010,48 @@
       "sourceParagraph": 1324
     },
     {
+      "id": "q-dd0a574cb5397142",
+      "track": "backend",
+      "category": "Linux、操作系统与网络",
+      "section": "Linux、操作系统与网络",
+      "title": "TCP 拥塞控制是怎么工作的？",
+      "blocks": [
+        {
+          "type": "text",
+          "text": "拥塞控制是为了不把网络挤爆，发送方维护一个拥塞窗口 cwnd，实际能发的数据量取 cwnd 和对方接收窗口的较小值。经典过程：慢启动阶段，cwnd 从较小值开始，每收到一个 ACK 就增加，近似每个往返翻倍；达到慢启动阈值 ssthresh 后进入拥塞避免，每个往返只加一点，线性增长。发现丢包时：超时重传说明拥塞严重，ssthresh 减半、cwnd 回到很小重新慢启动；收到 3 个重复 ACK 触发快重传，立即重发丢失的包，并进入快恢复，cwnd 降到一半左右继续发送，而不是从头开始。Linux 默认算法是 CUBIC，也可以选择 BBR，后者根据测得的带宽和往返时延控制发送速率，而不是只看丢包。流量控制（接收窗口）和拥塞控制不是一回事。"
+        }
+      ],
+      "sourceParagraph": 0
+    },
+    {
+      "id": "q-467a0dc0db3571c5",
+      "track": "backend",
+      "category": "Linux、操作系统与网络",
+      "section": "Linux、操作系统与网络",
+      "title": "HTTP/1.1、HTTP/2 和 HTTP/3 有什么区别？",
+      "blocks": [
+        {
+          "type": "text",
+          "text": "HTTP/1.1 是文本协议，默认持久连接，但一条连接上请求基本要排队（队头阻塞），浏览器只能对同一域名开多条连接来并发。HTTP/2 改成二进制分帧，一条 TCP 连接上可以多路复用很多个流，还有头部压缩（HPACK）；但底层仍是 TCP，一旦丢包，整条连接上的所有流都要等重传，存在 TCP 层的队头阻塞。HTTP/3 基于 QUIC，跑在 UDP 上：每个流独立重传，一个流丢包不影响其他流；QUIC 集成了 TLS 1.3，握手更快，还支持连接迁移（网络从 Wi-Fi 切到 4G 连接不断）。代价是部分网络会限制 UDP，服务端和中间设备的支持也需要考虑。HTTP 的语义（方法、状态码、头部）在三个版本里基本一致。"
+        }
+      ],
+      "sourceParagraph": 0
+    },
+    {
+      "id": "q-cb0c4508f2549bbd",
+      "track": "backend",
+      "category": "Linux、操作系统与网络",
+      "section": "Linux、操作系统与网络",
+      "title": "DNS 解析的过程是怎样的？",
+      "blocks": [
+        {
+          "type": "text",
+          "text": "访问 www.example.com 时，程序先查本地：浏览器缓存、操作系统缓存和 hosts 文件。没有命中就问配置的递归解析器（运营商或 8.8.8.8 这类公共 DNS）。递归解析器如果也没有缓存，就从根域名服务器开始迭代查询：根服务器告诉它 .com 由哪些顶级域服务器负责，.com 服务器再告诉它 example.com 的权威服务器，最后由权威服务器返回 A/AAAA 记录。每一级结果都按 TTL 缓存，所以修改 DNS 后生效有延迟。DNS 默认用 UDP 53 端口，响应太大或区域传输时用 TCP。常见问题有缓存污染、解析慢、TTL 设得太长导致切换慢；需要加密可以用 DoH、DoT。"
+        }
+      ],
+      "sourceParagraph": 0
+    },
+    {
       "id": "q-7effdfe28efadfc5",
       "track": "backend",
       "category": "项目",
@@ -5038,6 +5218,48 @@
         }
       ],
       "sourceParagraph": 1350
+    },
+    {
+      "id": "q-3d7048a20ee437b3",
+      "track": "backend",
+      "category": "项目",
+      "section": "项目",
+      "title": "如何设计一个短链接系统？",
+      "blocks": [
+        {
+          "type": "text",
+          "text": "核心功能：把长网址转成短码，访问短码时 302 跳转到原网址。短码生成可以用发号器（数据库号段或分布式 ID）得到唯一整数，再转成 62 进制字符串，7 位就能表示三万多亿个；也可以对长网址做哈希取前几位，但要处理冲突。存储一张 code → url 的映射表，code 加唯一索引；同一个长网址是否复用短码看业务需求。访问是读多写少，热门短码放进 Redis 缓存，缓存未命中再查数据库，不存在的短码也要缓存空值防穿透。跳转用 302 便于统计点击，用 301 浏览器会缓存。还要考虑：防止被滥用（限流、恶意网址检测）、过期时间、点击统计异步写入（先进队列再聚合），以及短码不可预测，避免被遍历。"
+        }
+      ],
+      "sourceParagraph": 0
+    },
+    {
+      "id": "q-6cfed07bfb92e432",
+      "track": "backend",
+      "category": "项目",
+      "section": "项目",
+      "title": "订单超时自动取消怎么设计（延迟任务）？",
+      "blocks": [
+        {
+          "type": "text",
+          "text": "需求：下单 30 分钟未支付自动取消并释放库存。方案一：定时任务扫表，每分钟查询“未支付且创建时间超过 30 分钟”的订单，实现简单，但有延迟、数据多时扫描压力大，需要在状态和创建时间上建索引并分批处理。方案二：延迟消息，下单时发一条 30 分钟后投递的消息（RocketMQ 延迟消息、RabbitMQ 死信队列或延迟插件），到点后消费并检查订单状态。方案三：Redis 有序集合，score 存到期时间，后台轮询取出到期订单。无论哪种方案，取消时都必须按状态条件更新（WHERE status = 未支付），保证与“用户刚好在这时支付”并发时只有一个成功，库存释放要幂等；同时保留扫表作为兜底，防止消息丢失。"
+        }
+      ],
+      "sourceParagraph": 0
+    },
+    {
+      "id": "q-8fcc9f406b2f5246",
+      "track": "backend",
+      "category": "项目",
+      "section": "项目",
+      "title": "线上接口突然超时，你会怎么排查？",
+      "blocks": [
+        {
+          "type": "text",
+          "text": "第一步先止血再定位：看监控确认影响范围（全部接口还是单个接口、所有实例还是部分实例、从什么时间开始），对照这个时间点有没有发布、配置变更或流量突增，必要时先回滚、扩容或限流。第二步沿链路定位：用链路追踪找到耗时集中在哪一段——本服务处理、数据库、缓存、下游服务还是网络。第三步按方向深入：数据库看慢查询、锁等待和连接池是否耗尽；本服务看 CPU、GC、goroutine 数和 pprof；下游看它的延迟和错误率；网络看丢包、重传和 DNS。第四步修复后用同样的流量验证 P99 和错误率，并复盘：补充监控告警、超时和熔断配置，把这次的排查过程写成预案。全程注意保留现场证据，比如 goroutine 和 heap profile、慢日志。"
+        }
+      ],
+      "sourceParagraph": 0
     }
   ]
 }

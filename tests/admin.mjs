@@ -14,7 +14,7 @@ try{
  assert.equal((await call('/api/admin')).status,401);
  assert.equal((await post({action:'login',key:'adm_'+'0'.repeat(64)})).status,401);
  let r=await post({action:'login',key:ownerKey});await ok(r.clone());let owner=r.headers.get('set-cookie').split(';')[0];assert.match(owner,/__Host-study-admin/);
- let panel=await ok(await call('/api/admin',null,owner));assert.equal(panel.admin.role,'owner');assert.equal(panel.questions.length,443);assert.ok(!JSON.stringify(panel).includes(ownerKey));
+ let panel=await ok(await call('/api/admin',null,owner));assert.equal(panel.admin.role,'owner');assert.equal(panel.questions.length,458);assert.ok(!JSON.stringify(panel).includes(ownerKey));
  assert.equal((await call('/api/admin',{action:'subject',name:'Physics'},owner,'https://evil.test')).status,403);
  await ok(await post({action:'subject',name:'物理',nameEn:'Physics'},owner));panel=await ok(await call('/api/admin',null,owner));const subject=panel.subjects.find(s=>s.name==='物理').id;
  const invite=await ok(await post({action:'invite',subjects:[subject],allowNew:false},owner));assert.match(invite.key,/^inv_/);
