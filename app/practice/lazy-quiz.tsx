@@ -1,7 +1,6 @@
 'use client';
 import '../ai/ai.css';
 import {useState} from 'react';
-import Link from 'next/link';
 import {ArrowLeft,Check,Dices,RotateCcw,Shuffle,Trophy} from 'lucide-react';
 import {Progress} from '@/components/ui/progress';
 import {useI18n} from '../components/i18n';
@@ -39,7 +38,7 @@ export default function LazyQuiz({username,subjects}:{username:string;subjects:L
    setStage({kind:'quiz',items,index:0,results:items.map(()=>null),shares})}
   catch{setError(L('题目加载失败，请检查网络后重试。','Failed to load questions.'));setStage({kind:'setup'})}};
  const again=(items:Item[],shares:Record<string,number>)=>{const next=shuffle(items).map(it=>toItem(it.level,it.quiz));setStage({kind:'quiz',items:next,index:0,results:next.map(()=>null),shares})};
- const back=<Link href="/practice" className="ai-back"><ArrowLeft size={16}/>{L('返回训练','Back to practice')}</Link>;
+ const back=<a href="/practice" className="ai-back"><ArrowLeft size={16}/>{L('返回训练','Back to practice')}</a>;
 
  if(stage.kind==='quiz'){const it=stage.items[stage.index],res=stage.results[stage.index],last=stage.index===stage.items.length-1;
   return <Shell username={username}>{back}

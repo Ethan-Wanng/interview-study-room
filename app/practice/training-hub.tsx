@@ -1,7 +1,6 @@
 'use client';
 import '../ai/ai.css';
 import {useSyncExternalStore} from 'react';
-import Link from 'next/link';
 import {ArrowLeft,ArrowRight,Award,ClipboardCheck,Dices,Dumbbell,Lock,Sparkles} from 'lucide-react';
 import {Progress} from '@/components/ui/progress';
 import {useI18n,LanguageControl} from '../components/i18n';
@@ -22,7 +21,7 @@ function useSaved(username:string,subjects:HubSubject[]){
  return raw.split('\u0001').map(parse)}
 
 export function Shell({username,children}:{username:string;children:React.ReactNode}){const {locale,t}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
- return <div className="ai-shell"><header className="ai-header"><Link href="/practice" className="ai-brand"><Dumbbell size={23}/><span>{t('面试自习室')}<small>{L('训练','Practice')}</small></span></Link><SiteNav active="practice"/><div className="top-actions"><LanguageControl/><ThemeControl/><AccountMenu username={username}/></div></header>
+ return <div className="ai-shell"><header className="ai-header"><a href="/practice" className="ai-brand"><Dumbbell size={23}/><span>{t('面试自习室')}<small>{L('训练','Practice')}</small></span></a><SiteNav active="practice"/><div className="top-actions"><LanguageControl/><ThemeControl/><AccountMenu username={username}/></div></header>
   <main className="ai-main">{!username&&<p className="visitor-banner">{L('游客模式 · 成绩只保存在当前浏览器','Guest mode · results are saved in this browser only')}</p>}{children}</main></div>}
 
 // 「训练」首页：和「学习」一样先选学科，点进去再看这个学科的阶段训练、阶段考试和最终考试。
@@ -46,7 +45,7 @@ export function SubjectTraining({username,subject:s}:{username:string;subject:Hu
  const icon=(k:HubExam['kind'])=>k==='training'?<Dumbbell size={18}/>:k==='final'?<Award size={18}/>:<ClipboardCheck size={18}/>;
  const kindName=(k:HubExam['kind'])=>k==='training'?L('阶段训练','Stage training'):k==='stage'?L('阶段考试','Stage exam'):L('最终考试','Final exam');
  return <Shell username={username}>
-  <Link href="/practice" className="ai-back"><ArrowLeft size={16}/>{L('返回训练','Back to practice')}</Link>
+  <a href="/practice" className="ai-back"><ArrowLeft size={16}/>{L('返回训练','Back to practice')}</a>
   <div className="ai-title"><span className="eyebrow">PRACTICE · {s.icon}</span><h1>{L(`${s.name}训练`,`${s.nameEn} practice`)}</h1><p>{L(`已通过 ${done} / ${s.exams.length}。训练里的每一项都可以直接开始，不需要先解锁。阶段训练的题量是该阶段关卡题的一半；阶段考试和最终考试包含所有题型。`,`${done} / ${s.exams.length} passed. Everything here is open right away.`)}</p><Progress value={done/s.exams.length*100}/></div>
   <ol className="ai-levels">{s.exams.map(e=>{const open=true,ok=passed.has(e.id),b=best[e.id],need:string[]=[];
    return <li key={e.id}><a className={'ai-card ai-level ai-exam-card '+e.kind+(ok?' done':'')+(open?'':' locked')} href={`${s.href}?exam=${e.id}&from=practice`}><span className="ai-num">{icon(e.kind)}</span><span className="ai-level-text"><strong>{e.title}</strong><small>{kindName(e.kind)} · {L(`${e.count} 题 · 及格 ${Math.round(e.passRate*100)}%`,`${e.count} questions · pass ${Math.round(e.passRate*100)}%`)}{!open&&need.length>0&&<> · {L(`需先完成：${need.slice(0,3).join('、')}${need.length>3?' 等':''}`,'Complete prerequisites first')}</>}</small></span><span className="ai-level-state">{ok?<><Sparkles size={15}/>{L('已通过','Passed')} · {Math.round((b??0)*100)}%</>:open?<>{b!==undefined?L(`最佳 ${Math.round(b*100)}%`,`Best ${Math.round(b*100)}%`):L('开始','Start')}<ArrowRight size={15}/></>:<><Lock size={14}/>{L('未解锁','Locked')}</>}</span></a></li>})}</ol>
