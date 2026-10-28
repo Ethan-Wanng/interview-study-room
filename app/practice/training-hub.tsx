@@ -29,7 +29,7 @@ export default function TrainingHub({username,subjects}:{username:string;subject
  const saved=useSaved(username,subjects);
  return <Shell username={username}>
   <div className="ai-title"><span className="eyebrow">PRACTICE</span><h1>{L('选一门开始训练','Pick a subject to practice')}</h1><p>{L('选一门学科，直接开始阶段训练、阶段考试或最终考试，不需要先解锁；也可以用「懒人」随机测验，把几门学科的题混在一起练。','Pick a subject and start any training or exam right away, or use Lazy mode for a random mixed quiz.')}</p></div>
-  <a href="/practice/lazy" className="ai-card lazy-entry"><span className="learn-icon"><Dices size={26}/></span><span className="lazy-entry-text"><strong>{L('懒人 · 随机测验','Lazy · random quiz')}</strong><span className="muted">{L('选一门或几门学科，自定义题量，从各学科的最终考试里随机抽题，混在一起打乱顺序作答。','Pick subjects and a count; questions are drawn from each final exam and shuffled together.')}</span></span><b>{L('开始','Start')}<ArrowRight size={16}/></b></a>
+  <a href="/practice/lazy" className="ai-card lazy-entry"><span className="learn-icon"><Dices size={26}/></span><span className="lazy-entry-text"><strong>{L('懒人 · 随机测验','Lazy · random quiz')}</strong><span className="muted">{L('选学科、选难度（入门、进阶、高阶、专家或最终）、自定义题量，随机抽题，混在一起打乱顺序作答。','Pick subjects, a level and a count; questions are drawn at random and shuffled together.')}</span></span><b>{L('开始','Start')}<ArrowRight size={16}/></b></a>
   <div className="learn-subjects">{subjects.map((s,i)=>{const {passed}=saved[i]??parse(''),done=s.exams.filter(e=>passed.has(e.id)).length,total=s.exams.length,questions=s.exams.reduce((n,e)=>n+e.count,0);
    const kinds=(k:HubExam['kind'])=>s.exams.filter(e=>e.kind===k).length;
    return <a key={s.id} href={`/practice/${s.id}`} className="ai-card learn-subject">
