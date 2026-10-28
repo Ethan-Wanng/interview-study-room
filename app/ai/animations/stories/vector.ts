@@ -58,7 +58,7 @@ export const vectorStories:Record<string,Story>={
  ]},
  'ai-q-vdb-scale':{title:'一千万条向量，要多大的“仓库”',beats:[
   {say:'要存一千万个切块，每个切块是一个 1024 维的向量，每个数字占 4 个字节。',add:[A('v','🔢','1 个向量 = 1024 × 4 字节',320,70,{kind:'item'})]},
-  {say:'算一下：1000 万 × 1024 × 4 字节 ≈ 41GB，这只是原始向量。',add:[A('raw','💾','约 41 GB',150,180,{kind:'tag',tone:'warm'})],note:'1000 万 × 1024 × 4 ≈ 41 GB'},
+  {say:'算一下：1000 万 × 1024 × 4 字节 ≈ 41 GB，这只是原始向量。',add:[A('raw','💾','约 41 GB',150,180,{kind:'tag',tone:'warm'})],note:'1000 万 × 1024 × 4 ≈ 41 GB'},
   {say:'HNSW 索引还要额外存“邻居关系”，内存需求还会更大。',add:[A('hnsw','🕸️','+ 索引开销',490,180,{kind:'tag',tone:'warm'})]},
   {say:'太贵？办法一：选维度更低的 embedding；办法二：用 float16 或 int8 存储；办法三：PQ 压缩。',add:[A('save','🗜️','降维 · 量化 · 压缩',320,280,{kind:'item',tone:'ok'})],tone:{raw:'ok'}},
   {say:'性能调优：调 HNSW 的 efSearch 等参数，在召回率和延迟之间找平衡，用带答案的查询集实测。',bubble:{who:'save',text:'召回 95%，\nP95 延迟 30ms'}},

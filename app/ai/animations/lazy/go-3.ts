@@ -1,0 +1,36 @@
+import {A} from '../story';
+import type {LazyEpisode} from './engine';
+
+// Go 懒人模式第 3 集：中央厨房（switch、defer、panic/recover、泛型与反射、goroutine、channel、select、context）。
+export const goLazy3:LazyEpisode={id:'lazy-go-3',subject:'go',tier:1,levels:['go-flow','go-generics','go-channel'],icon:'🏭',title:'中央厨房：传送带、广播和万能模具',summary:'咖啡馆开了中央厨房，用它讲清 switch、defer、panic、泛型、反射、channel、select 和 context。',beats:[
+ {say:'一年过去，Gopher 咖啡开了五家分店。小鹿在城郊建了一座中央厨房，所有分店的订单都汇到这里。第一个难题是：订单五花八门，怎么分给不同的工位？',add:[A('lu','🦌','小鹿',110,170,{tone:'primary'}),A('hq','🏭','中央厨房',420,170,{kind:'item',tone:'primary'})]},
+ {say:'她在门口设了一个分拣台，这就是 switch。订单是蛋糕就走左边，是咖啡就走中间，其他的走右边。Go 的分拣台有个好习惯：每个分支执行完就自动停下，不会顺手把下一个分支也执行了，所以不用写 break。',drop:['hq'],add:[A('sw','🔀','switch 分拣台',420,90,{kind:'item',tone:'primary'})]},
+ {say:'如果真想让订单继续流到下一个分支，就要明确写 fallthrough，而且它不会再检查下一个分支的条件，直接往下走。小鹿觉得这太容易出错，规定厨房里尽量不用。',add:[A('ft','⬇️','fallthrough：不判断条件',420,210,{kind:'tag',tone:'warm'})]},
+ {say:'分拣台还有一种高级用法：不看订单内容，而看订单“是什么类型”。switch v := order.(type)，是蛋糕订单就交给甜点师，是饮品订单就交给咖啡师，这就是类型 switch。',drop:['ft'],add:[A('ts','🏷️','switch v := x.(type)',420,210,{kind:'tag',tone:'ok'})]},
+ {say:'第二个难题是收尾。每个厨师下班前都要做几件事：关火、洗锅、锁门。小鹿让大家在开工时就把收尾事项写在盘子上，一个个叠起来。下班时从最上面一个拿起，倒着做完，这就是 defer：后写的先执行。',drop:['sw','ts'],add:[A('plates','🍽️','defer 叠盘子',420,120,{kind:'item',tone:'primary'})],sub:{plates:'锁门 → 洗锅 → 关火'}},
+ {say:'为什么要开工就写？因为人总会忘。打开冰箱，紧跟一句 defer 关冰箱；拿起锁，紧跟一句 defer 解锁。这样无论中途从哪个门离开，收尾都不会漏。',bubble:{who:'plates',text:'打开就写关闭'}},
+ {say:'但盘子上写的数字，是开工那一刻就写死的。小熊写下 defer 打印库存，那时库存是 10，下班时库存变成了 3，打印出来的还是 10。想要下班时的最新值，就要在 defer 里放一个闭包，到时候再去看。',add:[A('arg','📝','参数在注册时就定了',420,240,{kind:'tag',tone:'warm'})]},
+ {say:'还有个坑：小熊在一个循环里处理一万个原料箱，每打开一个箱子就写一句 defer 关箱子。结果直到整个函数结束，一个箱子都没关，仓库被打开的箱子堆满了。正确做法是把每一箱的处理放进一个小函数里，小函数结束就关箱。',drop:['arg'],add:[A('loop','📦','循环里的 defer 会堆积',420,240,{kind:'tag',tone:'bad'})]},
+ {say:'第三个难题是意外。某天烤箱突然冒烟，这就是 panic：正常流程立刻中断，开始执行所有已经写好的收尾盘子，然后一路向上报警。如果没人处理，整个厨房，也就是整个程序，就会停摆。',drop:['loop','plates'],add:[A('fire','🔥','panic：烤箱冒烟',420,120,{kind:'item',tone:'bad'})]},
+ {say:'灭火器叫 recover，但它只放在收尾盘子里才有用：在 defer 的函数里调用 recover，才能接住 panic，让这一层平稳结束。而且每个工位只能扑灭自己工位的火，隔壁工位着火，你这里的灭火器够不着。',add:[A('ext','🧯','defer + recover',420,240,{kind:'tag',tone:'ok'})],send:[{from:'ext',to:'fire',text:'接住'}]},
+ {say:'小鹿强调：panic 是真正的紧急事故，比如程序员写错了逻辑。牛奶不够、订单格式不对这种日常问题，应该用 error 纸条来汇报，而不是动不动拉火警。',tone:{fire:'warm'},bubble:{who:'lu',text:'日常问题用 error'}},
+ {say:'第四个难题来自甜点部。他们为巧克力蛋糕、草莓蛋糕、抹茶蛋糕各做了一套模具，其实形状完全一样，只是材料不同。三套模具，三份几乎一样的代码，改一处就要改三处。',drop:['fire','ext'],add:[A('m1','🍫','巧克力模具',230,90,{kind:'tag'}),A('m2','🍓','草莓模具',420,90,{kind:'tag'}),A('m3','🍵','抹茶模具',610-80,180,{kind:'tag'})]},
+ {say:'Go 1.18 带来了万能模具，也就是泛型。一套模具写一次，材料作为参数传进来：func Bake[T Flavor](t T)。方括号里的 T 叫类型参数，用的时候编译器会自动推断是哪种材料。',drop:['m1','m2','m3'],add:[A('gen','🧁','万能模具 Bake[T]',420,120,{kind:'item',tone:'ok'})]},
+ {say:'不过模具上要写清楚适用范围，这就是约束。比如一个比大小的模具，要求材料必须“能比较大小”，就写 [T cmp.Ordered]。约束里的 ~int 表示“底层是 int 的也行”，所以自己定义的 type Grams int 也能用。',add:[A('cons','📏','约束：cmp.Ordered · ~int',420,240,{kind:'tag',tone:'primary'})]},
+ {say:'厨房里还有一台 X 光机，叫反射。它能在运行时透过包装看到里面装的是什么类型、有哪些字段，JSON 打包员就是靠它读结构体标签的。但 X 光机又慢又容易照错，类型错误要到运行时才暴露。能用泛型或接口解决的，就别开 X 光机。',drop:['cons'],add:[A('xray','🩻','反射：运行时看类型',420,240,{kind:'tag',tone:'warm'})]},
+ {say:'第五个难题，也是最关键的：订单太多，一个厨师做不完。小鹿说：每张订单派一个人去做。在 Go 里，派一个人只需要写一个 go 字。这些“人”叫 goroutine，非常轻，一开始只占几 KB 的空间，开成千上万个也没问题。',drop:['gen','xray'],add:[A('g1','👩‍🍳','goroutine',300,90),A('g2','👨‍🍳','goroutine',480,90)]},
+ {say:'厨师之间怎么交接半成品？Go 的建议是：不要大家抢着去同一张桌子上拿东西，而是用传送带传过去。这条传送带就是 channel。一句名言是：不要通过共享内存来通信，而要通过通信来共享内存。',add:[A('belt','➡️','channel 传送带',390,220,{kind:'item',tone:'primary'})],send:[{from:'g1',to:'belt'},{from:'belt',to:'g2'}]},
+ {say:'传送带有两种。无缓冲的传送带没有地方放东西，做好的蛋糕必须当面交到下一个人手里，两个人要碰头，交接才算完成。有缓冲的传送带像一段能放几盘的台面，台面没满，放下就能走。',sub:{belt:'无缓冲：碰头 · 有缓冲：台面'}},
+ {say:'传送带的规矩也要记牢。往已经关掉的传送带上放东西，会直接 panic；从关掉的传送带上拿，会先把剩下的拿完，之后拿到的都是空盘子。还有一条从没装好的传送带，也就是 nil channel，放和拿都会永远等下去。',add:[A('close','🔒','关了不能放，nil 永远等',390,320,{kind:'tag',tone:'warm'})]},
+ {say:'所以关传送带这件事，交给负责“放”的那一方来做：所有东西都放完了，再关。拿的一方用 for range 一直拿，传送带一关，循环就自然结束。',bubble:{who:'g1',text:'我放完了，我来关'}},
+ {say:'有的厨师要同时盯着好几件事：原料到了没有、订单取消了没有、下班时间到了没有。select 让他同时看着几条传送带，哪条先有动静就处理哪条；几条同时有动静，就随机挑一条，谁也不偏心。',drop:['close','g2'],add:[A('sel','👀','select：同时盯几条',560-40,90,{kind:'tag',tone:'primary'})]},
+ {say:'最后是广播系统，也就是 context。顾客突然取消了订单，前台在广播里喊一声，所有参与这张订单的厨师都会听到，ctx.Done() 这扇门打开，大家立刻停手，不再浪费原料。',drop:['belt'],add:[A('ctx','📢','context：取消广播',390,220,{kind:'item',tone:'warm'})],send:[{from:'ctx',to:'g1',text:'取消'}]},
+ {say:'广播还能设定时间：context.WithTimeout 就像说“这单最多做五分钟”，时间一到自动广播取消。记得用完调用 cancel 关掉广播，并把 ctx 作为第一个参数，一路传给每个工位。',add:[A('to','⏱️','WithTimeout + cancel',390,320,{kind:'tag',tone:'ok'})]},
+ {say:'广播里还能夹带一点小信息，比如这张订单的追踪号、下单的顾客是谁，这就是 context.WithValue。但小鹿规定：广播只播“这张订单的身份信息”，不要拿它来传“加几勺糖”这种业务参数，否则谁也说不清参数到底从哪来。',drop:['to'],add:[A('val','🏷️','WithValue：只放追踪号和身份',390,320,{kind:'tag',tone:'warm'})]},
+ {say:'有一天小熊发现，有几个厨师一直站在传送带尽头发呆。原来他们在等一盘永远不会来的蛋糕：上游的订单早就取消了，却没人通知他们。这就是 goroutine 泄漏，人还在，工资照付，内存也一直占着。',drop:['val'],add:[A('leak','🧍','永远等待的 goroutine',390,290,{kind:'tag',tone:'bad'})]},
+ {say:'解决办法是：每一个派出去的人，都要有回家的路。等待时用 select 同时听着 ctx.Done()，订单一取消就离开；或者给传送带留好缓冲，让最后一盘蛋糕放下就能走。',tone:{leak:'ok'},sub:{leak:'select + ctx.Done()'}},
+ {say:'还有个厨师很勤快，他在 select 里加了 default 分支，没东西做就立刻再看一遍，一秒钟看了几百万次，把 CPU 都转烫了。default 让 select 不再等待，放在死循环里就会变成忙等。没事做的时候，就安心地等。',drop:['leak'],add:[A('busy','🌀','select + default 死循环 = 忙等',390,320,{kind:'tag',tone:'warm'})]},
+ {say:'甜点部后来又用泛型做了一个通用的托盘类型 Tray[T any]，可以装蛋糕，也可以装饼干，Push、Pop 都只写一次。标准库也有了一批泛型工具，比如 slices.Sort、slices.Contains、maps.Keys，以前要自己写的循环，现在一行就够了。',drop:['busy'],add:[A('tray','🧺','Tray[T any] · slices 包',390,320,{kind:'tag',tone:'ok'})]},
+ {say:'这天深夜，中央厨房安静下来。小鹿看着墙上的流程图：分拣台、叠盘子、灭火器、万能模具、传送带、广播。她忽然明白，好的厨房不是每个人拼命干活，而是交接清楚、收尾干净、出事有人管。',drop:['sel','ctx','g1','tray'],tone:{lu:'ok'}},
+ {say:'这一集的要点。',memo:['defer 后进先出，参数立即求值','channel 传数据，select 多路等，context 广播取消']},
+]};

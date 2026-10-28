@@ -1,13 +1,21 @@
-// 后端通用学习空间：12 个关卡，覆盖数据库、缓存、Linux、网络、操作系统、消息队列、微服务、搜索和系统设计。
+// 后端通用学习空间：23 个关卡，从“后端是什么”的小白起步，到数据库、缓存、Linux、网络、操作系统、消息队列、云原生、搜索和系统设计。
+// 新增关卡写在 content/backend-new/ 下，最后按 backendLevelOrder 的顺序组装。
 // 每道题都有固定 id（错题本按 id 记录），新增题目请使用新的 id，不要修改或复用已有 id。
 // interview 字段关联 content/questions.json 里的后端面试题 id。
 import type {AiLevel,Rank,Tier} from './journey';
+import {beBasics,beCli} from './backend-new/basics';
+import {beDb101} from './backend-new/db101';
+import {beDs,beAlgo2} from './backend-new/algo';
+import {beLog} from './backend-new/log';
+import {beHttp,beTrouble} from './backend-new/ops';
+import {beIo} from './backend-new/io';
+import {beKafka,beCloud} from './backend-new/expert';
 
 export const backendPassRate=0.65;
-export const backendTiers:Tier[]=[{name:'入门',nameEn:'Beginner',from:0,to:2},{name:'进阶',nameEn:'Intermediate',from:3,to:5},{name:'高阶',nameEn:'Advanced',from:6,to:8},{name:'专家',nameEn:'Expert',from:9,to:11}];
-export const backendRanks:Rank[]=[{min:0,name:'后端新手'},{min:2,name:'入门'},{min:4,name:'熟手'},{min:7,name:'高手'},{min:10,name:'架构师'},{min:12,name:'大神'}];
+export const backendTiers:Tier[]=[{name:'入门',nameEn:'Beginner',from:0,to:5},{name:'进阶',nameEn:'Intermediate',from:6,to:11},{name:'高阶',nameEn:'Advanced',from:12,to:17},{name:'专家',nameEn:'Expert',from:18,to:22}];
+export const backendRanks:Rank[]=[{min:0,name:'后端小白'},{min:3,name:'入门'},{min:6,name:'熟手'},{min:12,name:'高手'},{min:18,name:'架构师'},{min:23,name:'大神'}];
 
-export const backendLevels:AiLevel[]=[
+const coreLevels:AiLevel[]=[
  {id:'be-sql',title:'SQL 与表设计',summary:'写对 SQL，选对字段类型，理解计数和自增',lessons:[
   {title:'常用 SQL',body:'JOIN 把多张表按条件连起来；GROUP BY 分组后用聚合函数（COUNT、SUM、AVG）统计，HAVING 过滤分组结果，WHERE 过滤分组前的行。窗口函数（ROW_NUMBER、RANK）可以在不合并行的情况下做排名和“每组前 N 条”。',code:'-- 每位用户已支付总额超过 1000\nSELECT user_id, SUM(amount) AS total\nFROM orders WHERE status = \'paid\'\nGROUP BY user_id HAVING SUM(amount) > 1000;'},
   {title:'字段类型怎么选',body:'CHAR(M) 定长，适合长度固定的短值（国家代码、MD5）；VARCHAR(M) 变长，额外记录长度，适合昵称、地址。M 是字符数，实际字节数看字符集，utf8mb4 一个字符最多 4 字节。金额用 DECIMAL 或以“分”为单位的整数，不要用浮点数。'},
@@ -42,7 +50,7 @@ export const backendLevels:AiLevel[]=[
   {id:'be-index-9',q:'订单列表翻到很深的页：LIMIT 10000000, 20 很慢。连续翻页最好的方案是？',options:['加大 LIMIT 的值','游标分页：WHERE id > 上一页最后的 id ORDER BY id LIMIT 20','加更多 CPU','改用 OFFSET'],answer:1,explain:'深 offset 要扫描并丢弃大量行；游标分页直接从上次位置开始，按时间排序时加唯一 id 做第二排序键。',interview:'q-f040a7419f630ff3'},
   {id:'be-index-10',type:'short',q:'一条 SQL 很慢，你的优化步骤是什么？',reference:'先通过慢查询日志确认它确实又慢又频繁；用 EXPLAIN / EXPLAIN ANALYZE 看访问方式、使用的索引、扫描行数、是否回表、是否有额外排序或临时表；对症优化：只取需要的列，按过滤和排序建合适的联合索引，改写对索引列做函数的条件，深分页改游标，消除 N+1 查询；用有代表性的数据验证扫描行数和耗时，注意索引带来的写入成本。',points:['慢查询日志定位','EXPLAIN 看访问方式和扫描行数','建合适的联合索引、改写条件','只取需要的列、避免深分页','用真实数据验证'],explain:'先定位、再分析、再优化、再验证。',interview:'q-3338596b521f2957'},
  ]},
- {id:'be-algo',title:'设计模式与数据结构',summary:'常用设计模式、复杂度分析和面试必备的数据结构',lessons:[
+ {id:'be-algo',title:'设计模式与代码设计',summary:'六大原则、常用设计模式，以及用 Go 写出好改的代码',lessons:[
   {title:'设计原则与常用模式',body:'六大原则（单一职责、开闭、里氏替换、依赖倒置、接口隔离、迪米特）的目标都是“需求变化时改得少”。常用模式按场景记：多种支付方式用策略模式；HTTP 中间件是装饰器；对接不同协议用适配器；复杂对象的构造用建造者或 functional options；全局唯一实例用单例（Go 里用 sync.Once）。'},
   {title:'复杂度分析',body:'时间复杂度看输入变大时工作量怎么增长：二分 O(log n)、扫描 O(n)、排序 O(n log n)、两两比较 O(n²)。空间复杂度看额外存储，递归的调用栈也要算。还要说清最好、平均、最坏和摊还：切片 append 偶尔扩容 O(n)，平均下来每次 O(1)。'},
   {title:'数据结构速览',body:'链表插入删除 O(1)（已知前驱）、查找 O(n)；栈后进先出，队列先进先出（数组实现用环形缓冲）；哈希表平均 O(1) 查找；堆能 O(log n) 取最大/最小，适合 Top K；二叉搜索树中序遍历有序；LRU 缓存用“哈希表 + 双向链表”实现 O(1) 的访问和淘汰。'},
@@ -59,7 +67,7 @@ export const backendLevels:AiLevel[]=[
   {id:'be-algo-9',q:'切片 append 偶尔会触发 O(n) 的扩容复制，但我们常说它是 O(1)，这是哪种复杂度？',options:['最好情况','最坏情况','摊还（均摊）复杂度','空间复杂度'],answer:2,explain:'扩容按倍数增长，把偶尔的 O(n) 平摊到每次操作上，平均是 O(1)。',interview:'q-7934b553b7e39e8d'},
   {id:'be-algo-10',type:'code',q:'用 Go 写一个反转单链表的函数 Reverse(head *Node) *Node。',reference:'type Node struct {\n    Val  int\n    Next *Node\n}\n\nfunc Reverse(head *Node) *Node {\n    var prev *Node\n    for cur := head; cur != nil; {\n        next := cur.Next\n        cur.Next = prev\n        prev = cur\n        cur = next\n    }\n    return prev\n}',points:['用 prev、cur、next 三个指针','先保存 next 再改指向','循环结束返回 prev','空链表返回 nil'],explain:'时间 O(n)，空间 O(1)；也可以用递归，但递归栈是 O(n)。',interview:'q-b13c09da3854131b'},
  ]},
- {id:'be-tx',title:'事务、锁与日志',summary:'隔离级别、MVCC、各种锁，以及 redo log、binlog 和主从复制',lessons:[
+ {id:'be-tx',title:'事务、隔离级别与锁',summary:'隔离级别、MVCC、各种锁和幻读，日志先认识一下',lessons:[
   {title:'隔离级别与 MVCC',body:'四种隔离级别：读未提交（会脏读）、读已提交（每条语句看最新已提交数据，可能不可重复读）、可重复读（InnoDB 默认，普通查询在整个事务里看同一张快照）、可串行化。普通 SELECT 是“快照读”，靠 MVCC（undo log 里的历史版本）实现；SELECT ... FOR UPDATE、UPDATE 是“当前读”，读最新数据并加锁。'},
   {title:'InnoDB 的锁',body:'共享锁 S 允许多人读，排他锁 X 修改时独占；意向锁是表级标记，用来快速判断表里有没有行锁。行锁加在索引记录上：记录锁锁一条记录，间隙锁锁两条记录之间的空隙防止插入，临键锁是记录锁加前面的间隙。更新条件没有索引时会扫描并锁住大量记录，效果接近锁表。'},
   {title:'redo log、undo log 与 binlog',body:'redo log 是 InnoDB 的物理日志，先写日志再改数据页，用于崩溃恢复；undo log 记录修改前的版本，用于回滚和 MVCC；binlog 是 Server 层的逻辑日志，用于主从复制和按时间点恢复。两者通过两阶段提交保持一致。“双 1”配置（innodb_flush_log_at_trx_commit=1、sync_binlog=1）持久性最强。'},
@@ -93,7 +101,7 @@ export const backendLevels:AiLevel[]=[
   {id:'be-redis-9',q:'LRU 和 LFU 淘汰策略的区别是？',options:['完全一样','LRU 淘汰最久没被访问的，LFU 淘汰访问次数最少的','LRU 淘汰最大的 key','LFU 只用于 volatile'],answer:1,explain:'LRU 容易被一次性的全量扫描污染；LFU 更能保住长期热点，但需要计数衰减来淘汰过时热点。',interview:'q-baae548966245f03'},
   {id:'be-redis-10',type:'short',q:'用 Redis 实现分布式锁，需要注意哪些问题？',reference:'加锁用 SET key 随机值 NX PX 过期时间，保证互斥和自动过期；解锁时用 Lua 脚本判断值是自己的再删除，避免误删别人的锁。业务执行时间可能超过过期时间导致锁提前失效，可以用看门狗续期，但续期也可能失败；Redis 主从切换时锁可能丢失。对正确性要求高的场景，要在被保护的资源上校验 fencing token（递增版本号），或直接用数据库唯一约束、乐观锁。',points:['SET NX PX + 随机值','Lua 判断后删除','锁可能提前过期，续期也可能失败','主从切换可能丢锁','关键处用 fencing token'],explain:'分布式锁只能降低冲突概率，正确性最终要在资源侧保证。',interview:'q-c90bd2a4838c6555'},
  ]},
- {id:'be-linux',title:'Linux 实战与故障排查',summary:'常用命令、进程与信号、文件与链接，以及 CPU、内存、I/O 排查',lessons:[
+ {id:'be-linux',title:'Linux 进阶：进程、文件与权限',summary:'进程与信号、inode 与链接、shell 环境，以及排查入门',lessons:[
   {title:'常用命令',body:'找文件 find，搜内容 rg/grep；看日志 less、tail -F（日志轮转后也能跟）；进程 ps、top、pidstat；内存 free、vmstat；磁盘 df、du、iostat；网络 ip、ss -lntp、curl、tcpdump；服务 systemctl、journalctl。看超大日志不要用编辑器整体打开，用 less、tail -n、rg -n 和 sed -n 截取。'},
   {title:'进程与信号',body:'停止服务先发 SIGTERM 让程序清理收尾，不行再 SIGKILL（不能被捕获）。僵尸进程是已经退出但父进程还没 wait 回收的进程，要让父进程回收；D 状态是不可中断睡眠，通常在等磁盘，可能暂时不响应 kill。2>&1 把标准错误指向标准输出当前指向的位置，重定向从左到右生效。',code:'# 输出和错误都写入日志\n./app > app.log 2>&1\n# 只看最后 200 行并跟随\ntail -n 200 -F app.log'},
   {title:'文件、inode 和链接',body:'文件内容和元数据存在 inode 里，文件名存在目录里。硬链接是多个名字指向同一个 inode，删除一个名字只是链接数减一；软链接存的是目标路径，目标删除后变成悬空链接。删除了大文件但空间没释放，多半是还有进程打开着它：lsof +L1 能找到。'},
@@ -110,7 +118,7 @@ export const backendLevels:AiLevel[]=[
   {id:'be-linux-9',q:'crontab 里的脚本手动执行正常，定时执行却失败了。最常见的原因是？',options:['cron 服务太慢','cron 的环境变量很少（PATH 很短、没有你的配置），脚本依赖的命令或变量找不到','脚本太长','磁盘满了'],answer:1,explain:'在脚本里使用绝对路径、显式设置环境变量，并把输出重定向到日志方便排查。',interview:'q-785843ed24adfb0e'},
   {id:'be-linux-10',type:'short',q:'线上一台服务器 CPU 突然 100%，请说出你的排查步骤。',reference:'先用 top 或 mpstat 看是用户态、内核态、iowait 还是 steal 高；用 top 找到 CPU 最高的进程，再用 top -H -p PID 或 pidstat -t 找到具体线程。用户态高：用 perf 或语言自带的 profiler（Go 用 pprof 的 CPU profile）找热点函数，看是否有死循环、频繁分配或正则回溯；内核态高：检查系统调用、网络包量和上下文切换。先保留现场证据，必要时限流或扩容止血，修复后用同样负载验证。',points:['先分清用户态/内核态/iowait/steal','定位进程再定位线程','perf / pprof 找热点','保留证据，先止血','修复后验证'],explain:'有步骤、有工具、有止血和验证，就是完整答案。',interview:'q-b515960b47d0fb77'},
  ]},
- {id:'be-network',title:'计算机网络',summary:'TCP 握手挥手、可靠传输与拥塞控制，HTTP 各版本、HTTPS 和 DNS',lessons:[
+ {id:'be-network',title:'TCP/IP 与传输层',summary:'IP、TCP 握手挥手、可靠传输与拥塞控制、UDP 与 Keepalive',lessons:[
   {title:'TCP 连接的建立和关闭',body:'三次握手：SYN → SYN+ACK → ACK，交换并确认双方的起始序号。四次挥手：两个方向各自发 FIN、回 ACK。主动关闭的一方最后进入 TIME_WAIT 等待 2MSL：一是让最后的 ACK 丢了能重发，二是让旧连接的残留报文过期，避免干扰新连接。'},
   {title:'可靠传输与拥塞控制',body:'TCP 用序列号、ACK、重传和校验和保证可靠有序；接收窗口做流量控制，拥塞窗口做拥塞控制：慢启动指数增长，到阈值后线性增长；超时说明严重拥塞，窗口回到很小；3 个重复 ACK 触发快重传和快恢复。TCP 是字节流，没有消息边界，应用要自己用长度字段或分隔符分帧（解决“粘包”）。'},
   {title:'HTTP、HTTPS 与 WebSocket',body:'HTTP/1.1 持久连接但请求要排队；HTTP/2 一条连接多路复用、头部压缩，但 TCP 丢包仍会让所有流等待；HTTP/3 基于 QUIC（UDP），每个流独立重传，握手更快。HTTPS 在 TCP 之上做 TLS 握手：协商密钥、验证证书和域名，之后加密传输。WebSocket 在 HTTP 握手升级后提供长连接双向通信。'},
@@ -127,7 +135,7 @@ export const backendLevels:AiLevel[]=[
   {id:'be-network-9',q:'ping 一台服务器能通，但 curl 它的 8080 端口超时。最可能的原因是？',options:['网络完全断了','ICMP 能通不代表 TCP 端口可达：可能服务没启动、端口没监听，或被防火墙拦截','DNS 解析错误','ping 有 bug'],answer:1,explain:'ping 只验证 ICMP 路径；排查要看服务监听（ss -lntp）、防火墙和安全组规则。',interview:'q-7eaa08c3883d24fd'},
   {id:'be-network-10',type:'short',q:'在浏览器输入一个 https 网址并回车，到页面显示出来，中间发生了什么？',reference:'浏览器解析 URL，检查 HSTS、缓存和 Service Worker；需要联网时做 DNS 解析（浏览器缓存、系统缓存、递归解析器向根、顶级域、权威服务器查询）；建立 TCP 连接并完成 TLS 握手（HTTP/3 则是 QUIC），或复用已有连接；发送 HTTP 请求，经过 CDN、负载均衡到达后端，后端查询数据后返回响应；浏览器处理重定向、缓存和 Cookie，解析 HTML/CSS 构建 DOM 和 CSSOM，执行 JavaScript，布局、绘制和合成，并继续加载图片等子资源。',points:['缓存与 HSTS 检查','DNS 解析过程','TCP + TLS 或 QUIC','CDN、负载均衡、后端','解析、执行脚本、渲染'],explain:'能把网络、服务端、浏览器三段讲清楚就是好答案。',interview:'q-7314d29f4c8ca639'},
  ]},
- {id:'be-os',title:'操作系统原理',summary:'用户态与内核态、虚拟内存、进程通信与调度、I/O 模型和零拷贝',lessons:[
+ {id:'be-os',title:'操作系统原理',summary:'用户态与内核态、虚拟内存、内存分配、进程通信与调度',lessons:[
   {title:'用户态、内核态与进程',body:'程序平时在用户态，读文件、发网络包要通过系统调用进入内核态；硬件中断和异常（比如缺页）也会进入内核。态切换不等于进程切换。进程是资源隔离的单位，线程共享进程的地址空间；进程间通信有管道、消息队列、共享内存（最快但要自己同步）、信号和 socket。'},
   {title:'虚拟内存',body:'程序使用虚拟地址，由 MMU 通过页表（TLB 缓存翻译结果）转换成物理地址。现代系统主要靠分页：内存切成固定大小的页，可以分散存放。Linux 允许超额申请，真正写入时才分配物理页，不够时用 swap，再不够就 OOM。页面置换算法有 FIFO、LRU、Clock（近似 LRU）等。'},
   {title:'I/O 模型',body:'阻塞 / 非阻塞说的是“数据没好时等不等”：非阻塞会立刻返回 EAGAIN。同步 / 异步说的是“谁把数据搬回来”：select、poll、epoll 只是就绪通知，数据仍由你自己 read，属于同步；io_uring 等可以由内核完成后通知。epoll 把关注的连接保存在内核里，只返回就绪的，适合大量连接；ET 模式要读到 EAGAIN 为止。'},
@@ -144,7 +152,7 @@ export const backendLevels:AiLevel[]=[
   {id:'be-os-9',type:'judge',q:'DMA 让 I/O 完全不需要 CPU 参与。',answer:false,explain:'CPU 仍要配置描述符、处理完成中断和管理缓冲区；DMA 省掉的是逐字节搬运数据的工作。',interview:'q-c27a84be9ecfdf3e'},
   {id:'be-os-10',type:'short',q:'说说阻塞/非阻塞 和 同步/异步 这两组概念的区别，并举例。',reference:'阻塞与非阻塞描述的是“数据还没准备好时调用方怎么等”：阻塞调用会一直等待，非阻塞调用立刻返回 EAGAIN，调用方稍后再试。同步与异步描述的是“最后由谁完成数据搬运”：同步 I/O 中数据由调用方自己 read 出来，即使先通过 epoll 等到了就绪通知；异步 I/O 是提交请求后由内核完成读写，再通知调用方结果已经在缓冲区里，比如 io_uring。所以 epoll + 非阻塞 socket 属于“同步非阻塞”。',points:['阻塞/非阻塞：等待方式','同步/异步：谁完成搬运','epoll 是就绪通知，仍属同步','io_uring 是完成通知','epoll + 非阻塞 = 同步非阻塞'],explain:'两组概念是两个维度，不要混为一谈。',interview:'q-c6f65211e594ea8c'},
  ]},
- {id:'be-mq',title:'消息队列与 Kafka',summary:'为什么用 MQ，Kafka 的存储、写入、消费组，以及可靠、顺序、去重和积压',lessons:[
+ {id:'be-mq',title:'消息队列与 Kafka 基础',summary:'为什么用 MQ、怎么选型，Kafka 的存储、写入和高吞吐',lessons:[
   {title:'为什么用消息队列',body:'MQ 把同步调用改成异步协作：解耦（下游谁关心谁订阅）、削峰（先缓冲再慢慢处理）、广播事件。代价是引入最终一致、延迟和运维成本。必须立刻得到强一致结果的关键校验，不适合放进 MQ。选型：Kafka 高吞吐、可回放；RabbitMQ 路由灵活；RocketMQ 支持延迟消息和事务消息。'},
   {title:'Kafka 的存储和写入',body:'topic 分成多个分区，每个分区是只追加的日志，按大小或时间切成 segment，并有稀疏索引。顺序写、批量压缩、页缓存和 sendfile 让它吞吐很高。生产者按 key 选分区、攒批发给分区 leader，follower 拉取复制；acks=all 配合 min.insync.replicas 才能保证多副本都收到。'},
   {title:'消费组与位移',body:'同一消费组内，一个分区同时只被一个消费者读；消费者数超过分区数，多出来的会闲着。位移（offset）提交到内部主题 __consumer_offsets，提交的是“下一条要读的位置”。先处理再提交是“至少一次”，可能重复；先提交再处理可能丢。成员变化会触发重平衡，处理太慢超过 max.poll.interval.ms 也会被踢出。'},
@@ -161,7 +169,7 @@ export const backendLevels:AiLevel[]=[
   {id:'be-mq-9',type:'multi',q:'下面哪些情况可能导致 Kafka 的业务数据“丢失”？（多选）',options:['生产者没等发送结果就退出','acks=1 时 leader 写入后、复制前宕机','消费者先提交位移再处理，处理时崩溃','消息还没被消费就超过了保留期被清理'],answers:[0,1,2,3],explain:'丢失可能发生在生产、存储、消费任何一层，要每一层都配合好。',interview:'q-64d6c9192640528c'},
   {id:'be-mq-10',type:'short',q:'Kafka 出现了严重的消息积压（lag 持续上涨），你会怎么处理？',reference:'先看 lag 增长速度和最旧未处理消息的时间，判断原因：生产量突增、消费者故障或变慢、某个分区是热点、下游数据库或服务变慢。处理：恢复故障的消费者；优化消费逻辑（批量处理、减少外部调用）；在分区数允许的范围内增加消费者；扩容时注意保护下游，别把数据库压垮；把处理失败的“毒消息”隔离到重试队列。必要时延长保留期防止消息过期丢失。长期看要评估分区数和消费能力的规划。',points:['先判断原因','恢复和优化消费者','扩消费者不超过分区数','保护下游，隔离毒消息','延长保留期，做容量规划'],explain:'先止血再根治，别让扩容把下游压垮。',interview:'q-d52b9b98efc875aa'},
  ]},
- {id:'be-ms',title:'微服务与云原生',summary:'拆分与治理、容错限流超时、可观测，以及 Docker 和 K8s',lessons:[
+ {id:'be-ms',title:'微服务架构与治理',summary:'拆分原则、容错限流超时、注册发现、灰度发布与可观测',lessons:[
   {title:'拆分与设计原则',body:'按业务领域和数据归属拆分：规则和它的数据放在同一个服务里，服务之间只通过 API 或事件交互，不直接读写别人的数据库。拆太细的信号：两个服务总是一起发布、频繁互相调用、共享表。从单体迁移要渐进替换、可回滚，数据所有权在明确的时间点转移。'},
   {title:'容错、限流与超时',body:'每次远程调用都要设超时；只对幂等操作做指数退避加抖动的重试，并有总的重试预算；持续失败就熔断，非核心功能降级；按依赖隔离资源。限流算法有固定窗口、滑动窗口、漏桶、令牌桶。整条调用链共享一个截止时间：入口定总预算，往下传剩余时间，Go 里用 context 传递。'},
   {title:'注册发现、灰度与可观测',body:'实例启动时注册到注册中心并靠心跳续约，下线时先摘除再停机；调用方从注册中心拿实例列表做负载均衡。灰度发布先切小流量，盯错误率、延迟分位数和业务指标，没问题再放量，新旧版本要兼容。可观测：日志、指标（Prometheus 的 Counter、Gauge、Histogram、Summary）、链路追踪。'},
@@ -213,3 +221,8 @@ export const backendLevels:AiLevel[]=[
   {id:'be-design-10',type:'short',q:'设计一个“订单超时 30 分钟未支付自动取消”的功能，说说方案和需要注意的点。',reference:'方案：下单时发一条 30 分钟后投递的延迟消息（或用 Redis 有序集合按到期时间存订单 id，后台轮询），到期后检查并取消；同时保留定时扫表作为兜底，扫描“待支付且创建超过 30 分钟”的订单，状态和创建时间上建索引、分批处理。注意点：取消时按状态条件更新，防止和用户支付并发冲突；释放库存要幂等，防止重复补回；消息可能丢失或重复，所以要幂等消费加扫表兜底；记录日志便于对账。',points:['延迟消息或 ZSet + 扫表兜底','按状态条件更新','库存释放幂等','消息可能丢失或重复','索引、分批、对账'],explain:'核心难点是并发下的状态一致和可靠兜底。',interview:'q-6cfed07bfb92e432'},
  ]},
 ];
+
+// 从小白到专家的关卡顺序：入门 6 关、进阶 6 关、高阶 6 关、专家 5 关。
+export const backendLevelOrder=['be-basics','be-cli','be-db101','be-sql','be-ds','be-algo2','be-index','be-tx','be-log','be-redis','be-linux','be-algo','be-network','be-http','be-os','be-io','be-trouble','be-mq','be-kafka','be-ms','be-cloud','be-es','be-design'];
+const allLevels=[...coreLevels,beBasics,beCli,beDb101,beDs,beAlgo2,beLog,beHttp,beTrouble,beIo,beKafka,beCloud];
+export const backendLevels:AiLevel[]=backendLevelOrder.map(id=>{const l=allLevels.find(x=>x.id===id);if(!l)throw new Error('缺少关卡：'+id);return l});

@@ -1,0 +1,38 @@
+import type {AiLevel} from '../journey';
+
+// 前端进阶：异步编程；作用域、闭包、this 与原型。
+export const feAsync:AiLevel={id:'fe-async',title:'异步编程：事件循环、Promise 与 async',summary:'为什么 JS 不会卡死，宏任务微任务，Promise 和 await 的正确用法',lessons:[
+ {title:'单线程和事件循环',body:'JavaScript 在主线程上一次只做一件事。网络请求、定时器交给浏览器去等，完成后把回调放进队列。同步代码执行完后，先清空微任务队列（Promise.then、await 之后的代码），再渲染，再取下一个宏任务（setTimeout、点击事件）。',code:"console.log(1);\nsetTimeout(() => console.log(2));\nPromise.resolve().then(() => console.log(3));\nconsole.log(4); // 1 4 3 2"},
+ {title:'Promise',body:'Promise 表示一个将来才有结果的操作，有 pending、fulfilled、rejected 三种状态，状态一旦确定不再改变。then 接成功，catch 接失败，finally 都会执行。组合：all 全部成功、allSettled 等全部结束、race 第一个结束、any 第一个成功。'},
+ {title:'async / await',body:'async 函数总是返回 Promise；await 等待 Promise 的结果，让异步代码像同步一样写。错误用 try/catch。互不依赖的请求不要连续 await，要用 Promise.all 并行；forEach 里的 await 不会等待，用 for...of。',code:'async function load() {\n  try {\n    const [user, orders] = await Promise.all([getUser(), getOrders()]);\n    render(user, orders);\n  } catch (e) {\n    showError(e);\n  }\n}'},
+ {title:'取消和竞态',body:'fetch 用 AbortController 取消：controller.abort() 后请求以 AbortError 失败。搜索框快速输入时，旧请求可能比新请求更晚返回，覆盖正确结果，所以发新请求前取消旧请求，或只采用最新一次请求的结果。'},
+],quiz:[
+ {id:'fe-async-1',q:'下面代码输出顺序是？',code:"console.log('A');\nsetTimeout(() => console.log('B'), 0);\nPromise.resolve().then(() => console.log('C'));\nconsole.log('D');",options:['A B C D','A D C B','A D B C','A C D B'],answer:1,explain:'同步 A D → 微任务 C → 宏任务 B。',interview:'fe-q-event-loop'},
+ {id:'fe-async-2',type:'multi',q:'下面哪些回调属于微任务？（多选）',options:['Promise.then','setTimeout','queueMicrotask','await 之后的代码'],answers:[0,2,3],explain:'setTimeout 是宏任务。',interview:'fe-q-event-loop'},
+ {id:'fe-async-3',q:'三个请求要全部成功才能显示页面，有一个失败就提示错误，用？',options:['Promise.all','Promise.allSettled','Promise.race','Promise.any'],answer:0,explain:'all 有一个失败就整体失败。',interview:'fe-q-promise'},
+ {id:'fe-async-4',q:'给请求加 3 秒超时，最合适的是？',options:['Promise.all','Promise.race([fetch, 3 秒后 reject 的 Promise])','setInterval','while 循环等待'],answer:1,explain:'谁先结束谁决定结果；也可以用 AbortSignal.timeout。',interview:'fe-q-promise'},
+ {id:'fe-async-5',type:'judge',q:'Promise 从 pending 变成 fulfilled 后，还可以再变成 rejected。',answer:false,explain:'状态一旦确定就不再改变。',interview:'fe-q-promise'},
+ {id:'fe-async-6',q:'getUser 和 getOrders 互不依赖，各需 1 秒。下面哪种写法总耗时约 1 秒？',options:['先 await getUser() 再 await getOrders()','await Promise.all([getUser(), getOrders()])','在 forEach 里 await','用 setTimeout 包起来'],answer:1,explain:'并行发起再一起等待。',interview:'fe-q-async-await'},
+ {id:'fe-async-7',type:'fill',q:'取消 fetch 请求需要创建一个 ____Controller，把它的 signal 传给 fetch。',accepted:['Abort','abort'],explain:'controller.abort() 会让 fetch 以 AbortError 拒绝。',interview:'fe-q-fetch-cancel'},
+ {id:'fe-async-8',type:'judge',q:'arr.forEach(async item => { await save(item) }) 执行完 forEach 时，所有 save 都已完成。',answer:false,explain:'forEach 不会等待 async 回调；要顺序执行用 for...of，并行用 Promise.all(arr.map(...))。',interview:'fe-q-async-await'},
+ {id:'fe-async-9',q:'搜索框先输入 "re" 再输入 "react"，结果列表却显示了 "re" 的结果。原因是？',options:['浏览器缓存','旧请求晚返回，覆盖了新结果（请求竞态）','接口坏了','没有防抖'],answer:1,explain:'发新请求前要取消旧请求，或只采用最新请求的结果。',interview:'fe-q-fetch-cancel'},
+ {id:'fe-async-10',type:'short',q:'为什么在微任务里不停地添加新的微任务会让页面卡死？',reference:'事件循环每次取完一个宏任务后，会把微任务队列清空才进行渲染和处理下一个宏任务；清空过程中新加入的微任务也会在本轮执行。如果微任务里一直添加新的微任务，队列永远清不空，浏览器就没有机会渲染和响应用户输入，页面看起来卡死。长计算应该分片放进宏任务（setTimeout、MessageChannel、scheduler）或交给 Web Worker。',points:['渲染前要清空微任务队列','新微任务在本轮继续执行','队列清不空，渲染和输入被饿死','长任务分片或放 Worker'],explain:'理解这一点能解释很多“卡顿”问题。',interview:'fe-q-event-loop'},
+]};
+
+export const feScope:AiLevel={id:'fe-scope',title:'作用域、闭包、this 与原型',summary:'JS 最常考的四个概念，以及内存泄漏',lessons:[
+ {title:'作用域和闭包',body:'变量在哪里声明，就在哪里可见（词法作用域）。内部函数可以访问外部函数的变量；外部函数返回后，内部函数仍然记得这些变量，这就是闭包。闭包能做私有状态、函数工厂、防抖节流，但长期持有大对象会导致内存泄漏。',code:'function makeCounter() {\n  let n = 0;\n  return { inc: () => ++n, get: () => n };\n}\nconst c = makeCounter();\nc.inc(); c.inc(); c.get(); // 2'},
+ {title:'this 的指向',body:'普通函数的 this 看调用方式：obj.fn() 是 obj；单独调用 fn() 在严格模式下是 undefined；new 时是新对象；call、apply、bind 显式指定。箭头函数没有自己的 this，使用定义时外层的 this。'},
+ {title:'原型和原型链',body:'每个对象都有原型。访问属性时先找自己，找不到就沿原型一路往上找，直到 null。构造函数的 prototype 会成为实例的原型；class 和 extends 是基于原型的语法糖；instanceof 检查的就是原型链。'},
+ {title:'垃圾回收和内存泄漏',body:'JS 引擎从全局对象和调用栈出发，标记所有能访问到的对象，访问不到的被回收。泄漏 = 不用了但仍被引用：忘记移除的事件监听、没清理的定时器、全局缓存只增不删、被删掉的 DOM 仍被变量引用。用 DevTools 的 Memory 面板对比堆快照排查。'},
+],quiz:[
+ {id:'fe-scope-1',q:'下面代码输出什么？',code:'function outer() {\n  let x = 1;\n  return () => ++x;\n}\nconst f = outer();\nf();\nconsole.log(f());',options:['1','2','3','undefined'],answer:2,explain:'闭包记住了同一个 x，两次调用后是 3。',interview:'fe-q-closure'},
+ {id:'fe-scope-2',q:'const fn = obj.say; fn(); 在严格模式下 this 是？',options:['obj','window','undefined','fn'],answer:2,explain:'脱离对象单独调用，this 不再是 obj。',interview:'fe-q-this'},
+ {id:'fe-scope-3',type:'judge',q:'箭头函数的 this 可以用 call 改变。',answer:false,explain:'箭头函数没有自己的 this，call / apply / bind 都改不了。',interview:'fe-q-this'},
+ {id:'fe-scope-4',q:'dog.toString() 能调用成功，但 dog 自己没有定义 toString，原因是？',options:['浏览器自动添加','沿原型链在 Object.prototype 上找到了','toString 是全局函数','JS 会忽略不存在的方法'],answer:1,explain:'属性查找沿原型链向上。',interview:'fe-q-prototype'},
+ {id:'fe-scope-5',type:'fill',q:'获取一个对象的原型，推荐用 Object.____(obj)。',accepted:['getPrototypeOf'],explain:'__proto__ 是历史遗留的访问方式。',interview:'fe-q-prototype'},
+ {id:'fe-scope-6',type:'multi',q:'下面哪些情况可能造成内存泄漏？（多选）',options:['组件卸载后没有清除 setInterval','window 上绑定的 resize 监听从不移除','用 const 声明局部变量','全局 Map 缓存只增不删'],answers:[0,1,3],explain:'局部变量在函数结束后不再被引用就能回收。',interview:'fe-q-gc'},
+ {id:'fe-scope-7',q:'for (var i = 0; i < 3; i++) setTimeout(() => console.log(i)) 输出？',options:['0 1 2','3 3 3','undefined ×3','报错'],answer:1,explain:'var 只有一个 i，定时器执行时已经是 3；改成 let 输出 0 1 2。',interview:'fe-q-hoisting'},
+ {id:'fe-scope-8',q:'class Dog extends Animal 本质上是？',options:['复制了 Animal 的所有代码','基于原型链的继承语法糖','一种新的数据类型','和原型无关'],answer:1,explain:'Dog.prototype 的原型指向 Animal.prototype。',interview:'fe-q-prototype'},
+ {id:'fe-scope-9',type:'judge',q:'JS 现代引擎主要用“标记清除”回收内存，循环引用的两个对象只要都访问不到，也会被回收。',answer:true,explain:'标记清除看的是可达性，不是引用计数。',interview:'fe-q-gc'},
+ {id:'fe-scope-10',type:'short',q:'页面用久了越来越卡，你怀疑是内存泄漏，会怎么排查？',reference:'打开 Chrome DevTools 的 Performance monitor 观察 JS 堆大小和 DOM 节点数是否持续上涨；在 Memory 面板执行一系列操作前后各拍一次堆快照，对比新增的对象，重点看 Detached DOM（已从页面移除但仍被引用的节点），查看它们的保留路径（Retainers）找到是谁在引用；常见原因是没有移除的事件监听、没清理的定时器、闭包、全局缓存。修复后重复操作验证内存能回落。',points:['观察堆大小和节点数趋势','操作前后对比堆快照','看 Detached DOM 和保留路径','修复后重复验证'],explain:'用证据定位，而不是凭感觉删代码。',interview:'fe-q-gc'},
+]};

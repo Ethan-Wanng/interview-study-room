@@ -1,0 +1,35 @@
+import {A} from '../story';
+import type {LazyEpisode} from './engine';
+
+// Go 懒人模式第 6 集：双十一大促（原子操作与锁、并发控制、限流、常见并发坑、测试与工具链）。
+export const goLazy6:LazyEpisode={id:'lazy-go-6',subject:'go',tier:3,levels:['go-concurrency','go-testing'],icon:'🛍️',title:'双十一大促：一万个订单同时涌进来',summary:'咖啡馆的线上商城迎来大促，用它讲原子操作、锁的选择、并发控制、限速、常见并发坑，以及测试、基准和竞态检测。',beats:[
+ {say:'Gopher 咖啡上线了网上商城，双十一的零点，一万个订单在同一秒涌了进来。小鹿盯着监控屏幕，心跳和曲线一起往上冲。这一夜，她要和并发正面交手。',add:[A('lu','🦌','小鹿',110,300,{tone:'primary'}),A('wave','🌊','一万个订单',420,90,{kind:'item',tone:'bad'})]},
+ {say:'第一个问题出在计数器上。首页显示“今日已售”，几十个 goroutine 同时给它加一，结果卖了一万杯，计数器只显示九千多。原来 count++ 不是一步完成的，而是“读出来、加一、写回去”三步。两个人同时读到 100，各自加一写回 101，有一次就白加了。',add:[A('cnt','🔢','count++：丢了更新',420,210,{kind:'item',tone:'bad'})]},
+ {say:'这就像两个收银员同时看了一眼黑板上的数字，各自在心里加一，再各自写回黑板，黑板只多了一。解决办法是让写黑板这件事一步完成，中间没人能插队：atomic.Int64 的 Add(1)，交给 CPU 的原子指令来做。',sub:{cnt:'atomic.Add(1)'},tone:{cnt:'ok'}},
+ {say:'原子操作像自动售货机，投币和出货一步到位，又快又干净。但它只管一个变量。第二个问题来了：库存扣减要先看“还有没有”，再“扣一件”，两步必须是一个整体。先原子读、再原子写，中间照样会被别人插队，最后卖出了比库存还多的咖啡豆。',drop:['cnt'],add:[A('stock','📦','先查再扣：超卖',420,210,{kind:'item',tone:'bad'})]},
+ {say:'这时就需要锁，像一间试衣间：进去之后，可以慢慢地看、改、确认，出来之前别人都进不来。用 Mutex 把“查库存、扣库存、写订单”整个包起来，超卖就消失了。小鹿记下一句：单个变量用原子，多步流程用锁。',sub:{stock:'Mutex 包住整个流程'},tone:{stock:'ok'}},
+ {say:'锁也有讲究。锁住的范围越小越好，别在锁里面去调用远方的支付服务，否则整条队伍都在等这一个电话。读多写少的数据可以考虑读写锁，但读写锁不一定更快，要用压测说话。',drop:['stock'],add:[A('scope','📏','锁的范围要小',420,210,{kind:'tag',tone:'warm'})]},
+ {say:'第三个问题是失控的 goroutine。小熊写了一段代码：每来一个订单，就 go 一个 goroutine 去通知仓库。零点一过，瞬间开了十万个 goroutine，仓库系统被打得喘不过气，内存也跟着往上飙。',drop:['scope'],add:[A('bear','🐻','小熊',300,300),A('flood','🧵','十万个 goroutine',420,210,{kind:'item',tone:'bad'})]},
+ {say:'小鹿拿出一个装着 50 个号牌的盒子：make(chan struct{}, 50)。规矩是先拿号牌，再开工，干完把号牌放回盒子。盒子空了，后来的人就在门口等。这是用 channel 做的信号量，保证同时干活的人永远不超过 50 个。',sub:{flood:'号牌盒：最多 50 个'},tone:{flood:'ok'}},
+ {say:'关键在于：一定要在启动 goroutine 之前拿号牌，而不是先开了 goroutine 再去排队，否则还是会先冒出十万个在门口等的人。等号牌的时候，也要同时听着取消广播，订单取消了就别再等。errgroup 的 SetLimit 能帮你把这些事情一起做好。',bubble:{who:'bear',text:'先拿号，再开工'}},
+ {say:'第四个问题是外部接口。合作的快递公司规定，每秒最多只能调用 100 次。小熊以为号牌盒也能解决，可号牌盒管的是“同时有几个在做”，管不了“每秒开始几个”。这是两回事。',drop:['flood'],add:[A('api','🚚','快递接口：每秒 100 次',420,210,{kind:'item',tone:'warm'})]},
+ {say:'限速要用令牌桶：一个桶里每 10 毫秒放进一枚令牌，请求拿到令牌才能出发，桶里攒下的令牌还允许一小段突发。Go 的 golang.org/x/time/rate 就是现成的令牌桶，Wait 会等到有令牌，也会响应取消。',add:[A('bucket','🪣','令牌桶 rate.Limiter',420,320,{kind:'tag',tone:'ok'})],send:[{from:'bucket',to:'api',text:'拿令牌'}],tone:{api:'ok'}},
+ {say:'第五个问题最隐蔽。小熊写了一个循环，给每个订单开一个 goroutine 打印订单号，结果在旧版本的 Go 里，打印出来全是最后一个订单号。因为闭包捕获的是变量本身，那个循环变量从头到尾只有一个，goroutine 真正执行时，它早就变成了最后一个值。',drop:['bucket','api'],add:[A('closure','🪤','闭包捕获的是变量',420,210,{kind:'item',tone:'bad'})]},
+ {say:'Go 1.22 修改了规则：用 := 声明的循环变量每一轮都是新的，这个坑终于填上了。但要注意 go.mod 里写的语言版本要够新；而且把当时的值作为参数传进去，依然是最清楚的写法。',tone:{closure:'ok'},sub:{closure:'1.22 起每轮新变量'}},
+ {say:'第六个问题叫协程泄漏。查询订单时开了一个 goroutine 去查数据库，结果通过无缓冲 channel 发回来。用户等不及关掉了页面，处理函数提前返回，再也没人接收。那个 goroutine 拿着结果站在传送带尽头，永远等下去。',drop:['closure'],add:[A('leak','🧍','永远等不到接收者',420,210,{kind:'item',tone:'bad'})]},
+ {say:'每漏一个，内存就多占一点，大促一晚上就能漏掉几十万个。预防的办法是给每个 goroutine 都留好回家的路：发送时同时听 ctx.Done()，或者用容量为 1 的缓冲 channel，让它放下结果就能走。排查时用 goroutine profile 看数量的趋势。',sub:{leak:'select + ctx.Done()'},tone:{leak:'ok'}},
+ {say:'还有几个常见误区，小鹿写在了白板上。第一，goroutine 越多不等于越快，CPU 只有那么多核。第二，用 time.Sleep 等任务结束是在碰运气，应该用 WaitGroup 或 channel。第三，用了 channel 也可能有数据竞争，因为传过去的指针两边都能改。',drop:['leak','bear'],add:[A('board','📋','并发误区白板',420,210,{kind:'item',tone:'warm'})]},
+ {say:'第七个问题，是热门商品详情的缓存。缓存过期的那一瞬间，一千个请求同时发现缓存没了，全部冲去查数据库。小鹿用了 singleflight：同一个商品的请求，只派第一个人去跑腿，其他人在前台等结果，查一次就够了。',drop:['board'],add:[A('sf','🏃','singleflight：一人跑腿',420,210,{kind:'item',tone:'ok'})]},
+ {say:'大促结束，凌晨三点，系统平稳地扛了下来。可小鹿知道，今晚能过关，靠的不是运气，而是之前写下的那一大堆测试。镜头切回一周前。',drop:['sf','wave'],add:[A('clock','🕒','一周前',420,90,{kind:'tag'})]},
+ {say:'一周前，小鹿给计算优惠的函数写了第一个测试。文件名以 _test.go 结尾，函数名以 Test 开头，参数是 t *testing.T。运行 go test，它就会自动被找出来执行。结果不对，就用 t.Errorf 报告。',add:[A('test','🧪','TestDiscount',420,210,{kind:'item',tone:'primary'})]},
+ {say:'优惠规则有很多种情况：满减、折扣、会员、叠加。她没有写十个几乎一样的测试，而是做了一张表：每一行是一组输入和期望的结果，然后一个循环，用 t.Run 给每一行起个名字跑一遍。这叫表格驱动测试，加一个情况只要加一行。',add:[A('table','📊','表格驱动 + t.Run',420,320,{kind:'tag',tone:'ok'})]},
+ {say:'测试里需要数据库怎么办？小鹿把依赖抽象成接口，测试时塞进一个假的实现，测试跑得又快又稳定。需要临时目录就用 t.TempDir()，需要清理就用 t.Cleanup()，测试结束自动收拾干净。',bubble:{who:'test',text:'依赖抽成接口'}},
+ {say:'接着她想知道生成订单号的函数够不够快，于是写了一个基准测试：BenchmarkOrderID，循环用 b.Loop()。运行 go test -bench=. -benchmem，屏幕上出现三个数字：每次耗时、每次分配多少字节、分配几次。',drop:['test','table','clock'],add:[A('bench','⏱️','Benchmark：ns/op · allocs/op',420,150,{kind:'item',tone:'primary'})]},
+ {say:'单次结果会有波动，就像一次称体重不准。她用 -count=10 多跑几次，再用 benchstat 对比优化前后，看差异是不是真的显著，而不是噪音。',add:[A('stat','📈','-count=10 + benchstat',420,270,{kind:'tag',tone:'ok'})]},
+ {say:'最关键的一招，是竞态检测。go test -race 会在运行时盯着每一次内存访问，发现两个 goroutine 没有任何同步地读写同一个变量，就打印出 WARNING: DATA RACE，还附上两边的调用栈。前面那个丢了更新的计数器，就是被它抓住的。',drop:['stat','bench'],add:[A('race','🚨','go test -race',420,150,{kind:'item',tone:'warm'})],bubble:{who:'race',text:'DATA RACE！'}},
+ {say:'但竞态检测只能发现实际跑到的代码路径，跑不到的地方它看不见，所以测试要尽量覆盖并发场景。它也会让程序变慢好几倍，一般在测试和预发环境开启，而不是线上。',add:[A('cover','🗺️','只检测跑到的路径',420,270,{kind:'tag'})]},
+ {say:'还有模糊测试：写一个 FuzzParseOrder，给它几个种子输入，Go 会自动变出各种奇怪的输入去试，专门找那些人想不到的边界情况。它在订单解析里找到一个超长字符串导致的崩溃。',drop:['cover','race'],add:[A('fuzz','🎲','Fuzz：自动造输入',420,150,{kind:'item',tone:'primary'})]},
+ {say:'最后是工具箱：go vet 检查常见的可疑写法；gofmt 统一格式，团队不再为缩进吵架；go test -cover 看覆盖率；golangci-lint 汇集了更多检查。它们都跑在每次提交的自动流水线里。',add:[A('tools','🧰','vet · gofmt · cover · lint',420,270,{kind:'tag',tone:'ok'})]},
+ {say:'镜头回到凌晨三点。小鹿关掉监控大屏，在复盘文档里写下：原子管计数，锁管流程，号牌管并发，令牌管速率，ctx 管退出；测试、基准和竞态检测，是上线前的安全网。窗外，天快亮了。',drop:['fuzz','tools'],tone:{lu:'ok'}},
+ {say:'这一集的要点。',memo:['单变量用原子，多步用锁，并发数用号牌，速率用令牌桶','表格驱动测试，benchmark 看分配，-race 抓竞态']},
+]};

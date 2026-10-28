@@ -118,3 +118,7 @@
 .st-note{fill:var(--primary);font-size:15px;font-weight:700}
 .an-dialog{max-width:min(820px,96vw)!important;width:96vw}
 .iv-anim-button{display:inline-flex;align-items:center;gap:6px;margin:6px 0 10px;padding:7px 14px;border:1px solid var(--primary);border-radius:99px;background:color-mix(in srgb,var(--primary) 10%,var(--surface));color:var(--primary);font-size:14px;font-weight:600;cursor:pointer}.iv-anim-button:hover{background:color-mix(in srgb,var(--primary) 18%,var(--surface))}
+
+/* 声音开关 */
+.an-sound button{display:inline-flex;align-items:center;gap:5px}
+@media(max-width:767px){.an-sound button span{display:none}.an-sound button{padding:8px 10px}.an-controls{flex-wrap:wrap}.an-controls>.button{flex:1 1 100%}}

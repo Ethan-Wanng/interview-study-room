@@ -1,9 +1,10 @@
 import {createRequire} from 'node:module';
 import {readFile,readdir} from 'node:fs/promises';
 import assert from 'node:assert/strict';
+import {practiceFixture} from './fixtures/practice-plugin.mjs';
 const require=createRequire(import.meta.url),local=createRequire(require.resolve('wrangler/package.json'));
 const {Miniflare}=local('miniflare'),{build}=local('esbuild');
-const output=await build({stdin:{contents:`import * as auth from './app/api/auth/route';import * as practice from './app/api/practice/route';import {practiceQuestions,grade} from './content/practice';export default {async fetch(request){const path=new URL(request.url).pathname;if(path==='/bank')return Response.json(practiceQuestions);if(path==='/grade') {const p=await request.json();return Response.json({correct:grade(practiceQuestions.find(q=>q.id===p.id),p.value)})}const api=path==='/api/auth'?auth:practice;return request.method==='POST'?api.POST(request):api.GET(request)}}`,resolveDir:process.cwd()},bundle:true,write:false,format:'esm',platform:'node',target:'es2022',external:['cloudflare:workers','node:*'],tsconfig:'tsconfig.json'});
+const output=await build({plugins:[practiceFixture],stdin:{contents:`import * as auth from './app/api/auth/route';import * as practice from './app/api/practice/route';import {practiceQuestions,grade} from './content/practice';export default {async fetch(request){const path=new URL(request.url).pathname;if(path==='/bank')return Response.json(practiceQuestions);if(path==='/grade') {const p=await request.json();return Response.json({correct:grade(practiceQuestions.find(q=>q.id===p.id),p.value)})}const api=path==='/api/auth'?auth:practice;return request.method==='POST'?api.POST(request):api.GET(request)}}`,resolveDir:process.cwd()},bundle:true,write:false,format:'esm',platform:'node',target:'es2022',external:['cloudflare:workers','node:*'],tsconfig:'tsconfig.json'});
 const mf=new Miniflare({modules:true,script:output.outputFiles[0].text,compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],d1Databases:{DB:'practice-test'}});
 try{
  const db=await mf.getD1Database('DB');

@@ -26,5 +26,5 @@ export const schemaRetry:Animation={id:'schema-retry',icon:'🧾',title:'结构�
  {caption:'第一次输出漏掉了 reasons 字段，代码里的 Schema 校验立刻拦住了它，不让坏数据流进程序。',ms:4600},
  {caption:'把校验错误发回模型：“缺少 reasons 字段”，让它照着错误信息修正。',ms:4000},
  {caption:'第二次校验通过，程序放心使用。还失败的话，走兜底逻辑并记录日志。',ms:4400},
- {caption:'记住：模型的输出永远要校验。',ms:3200},
+ {caption:'记住：模型的输出永远要校验。',ms:3200,speech:'记住：模型的输出永远要校验。约束 + 校验 + 重试 + 兜底；模型的输出永远要校验。'},
 ]};

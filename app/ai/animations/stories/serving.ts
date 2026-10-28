@@ -12,9 +12,9 @@ export const servingStories:Record<string,Story>={
   {say:'记住推理优化的几招。',memo:['KV 缓存、连续批处理','量化、投机解码']},
  ]},
  'ai-q-quantization':{title:'量化：给模型“瘦身”',beats:[
-  {say:'一个 70 亿参数的模型，每个参数用 16 位（2 字节）存储，光权重就要约 14GB 显存。',add:[A('m','🐘','7B 模型 FP16',150,170,{tone:'warm'}),A('mem','💾','约 14 GB',150,300,{kind:'tag',tone:'warm'})]},
+  {say:'一个 70 亿参数的模型，每个参数用 16 位（2 字节）存储，光权重就要约 14 GB 显存。',add:[A('m','🐘','7B 模型 FP16',150,170,{tone:'warm'}),A('mem','💾','约 14 GB',150,300,{kind:'tag',tone:'warm'})]},
   {say:'量化就像把高清照片压缩：用更少的位数表示每个数字，比如 8 位或 4 位。',add:[A('zip','🗜️','量化',350,170,{tone:'primary'})],send:[{from:'m',to:'zip'}]},
-  {say:'INT8：显存约减半，到 7GB；INT4：约 3.5GB，一张普通显卡就能跑。',add:[A('m8','🦊','INT8 约 7 GB',550,110,{kind:'item',tone:'ok'}),A('m4','🐭','INT4 约 3.5 GB',550,240,{kind:'item',tone:'ok'})],send:[{from:'zip',to:'m8',tone:'ok'},{from:'zip',to:'m4',tone:'ok'}]},
+  {say:'INT8：显存约减半，到 7 GB；INT4：约 3.5 GB，一张普通显卡就能跑。',add:[A('m8','🦊','INT8 约 7 GB',550,110,{kind:'item',tone:'ok'}),A('m4','🐭','INT4 约 3.5 GB',550,240,{kind:'item',tone:'ok'})],send:[{from:'zip',to:'m8',tone:'ok'},{from:'zip',to:'m4',tone:'ok'}]},
   {say:'代价：精度会有一点损失。INT8 影响很小；INT4 损失更明显，需要 GPTQ、AWQ 这类更好的量化方法来弥补。',sub:{m4:'可能略有失真'},tone:{m4:'warm'}},
   {say:'越小的模型、越依赖精确推理的任务（数学、代码），越要小心。',bubble:{who:'m4',text:'算数可能偶尔出错'}},
   {say:'所以上线前，一定要在自己的评测集上对比量化前后的效果。',memo:['位数更少 → 显存更省、更快','精度略降，上线前要评测']},

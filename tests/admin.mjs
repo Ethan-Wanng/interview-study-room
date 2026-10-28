@@ -14,7 +14,7 @@ try{
  assert.equal((await call('/api/admin')).status,401);
  assert.equal((await post({action:'login',key:'adm_'+'0'.repeat(64)})).status,401);
  let r=await post({action:'login',key:ownerKey});await ok(r.clone());let owner=r.headers.get('set-cookie').split(';')[0];assert.match(owner,/__Host-study-admin/);
- let panel=await ok(await call('/api/admin',null,owner));assert.equal(panel.admin.role,'owner');assert.equal(panel.questions.length,458);assert.ok(!JSON.stringify(panel).includes(ownerKey));
+ let panel=await ok(await call('/api/admin',null,owner));assert.equal(panel.admin.role,'owner');assert.equal(panel.questions.length,476);assert.ok(!JSON.stringify(panel).includes(ownerKey));
  assert.equal((await call('/api/admin',{action:'subject',name:'Physics'},owner,'https://evil.test')).status,403);
  await ok(await post({action:'subject',name:'物理',nameEn:'Physics'},owner));panel=await ok(await call('/api/admin',null,owner));const subject=panel.subjects.find(s=>s.name==='物理').id;
  const invite=await ok(await post({action:'invite',subjects:[subject],allowNew:false},owner));assert.match(invite.key,/^inv_/);
@@ -33,7 +33,7 @@ try{
  const concurrent=await Promise.all([post({action:'saveQuestion',question:{...managed,zh:{...text,title:'Velocity A'}}},editor),post({action:'saveQuestion',question:{...managed,zh:{...text,title:'Velocity B'}}},editor)]);assert.deepEqual(concurrent.map(r=>r.status).sort(),[200,409]);
  const quiz={...doc,kind:'practice',type:'choice',zh:{...text,title:'Which unit measures speed?',options:['m/s','kg','s','N'],answer:'m/s',explanation:'Speed is distance per time.'},en:null,accepted:['0']};
  let testQ=(await ok(await post({action:'saveQuestion',question:quiz},editor))).question;
- const hierarchy=await ok(await call('/test-catalog'));assert.equal(hierarchy.spaces.find(s=>s.id==='go-interview').name,'GO面试');assert.deepEqual(hierarchy.tracks.filter(s=>['go','backend'].includes(s.id)).map(s=>s.spaceId),['go-interview','go-interview']);assert.equal(hierarchy.spaces.find(s=>s.id==='ai-development').name,'AI 开发');assert.deepEqual(hierarchy.tracks.find(s=>s.id==='ai-development'),{id:'ai-development',name:'AI 开发',nameEn:'AI development',spaceId:'ai-development'});assert.equal(hierarchy.questions.filter(q=>q.track==='ai-development').length,90);
+ const hierarchy=await ok(await call('/test-catalog'));assert.equal(hierarchy.spaces.find(s=>s.id==='go-interview').name,'GO面试');assert.deepEqual(hierarchy.tracks.filter(s=>['go','backend'].includes(s.id)).map(s=>s.spaceId),['go-interview','go-interview']);assert.equal(hierarchy.spaces.find(s=>s.id==='ai-development').name,'AI 开发');assert.deepEqual(hierarchy.tracks.find(s=>s.id==='ai-development'),{id:'ai-development',name:'AI 开发',nameEn:'AI development',spaceId:'ai-development'});assert.equal(hierarchy.questions.filter(q=>q.track==='ai-development').length,90);assert.deepEqual(hierarchy.tracks.find(s=>s.id==='frontend'),{id:'frontend',name:'前端开发',nameEn:'Frontend development',spaceId:'frontend'});assert.equal(hierarchy.questions.filter(q=>q.track==='frontend').length,66);
  await ok(await post({action:'space',name:'Java面试',nameEn:'Java interviews'},editor));const hp=await ok(await call('/api/admin',null,editor));const javaSpace=hp.spaces.find(s=>s.name==='Java面试').id;
  await ok(await post({action:'subject',name:'Java',spaceId:javaSpace},editor));const hp2=await ok(await call('/api/admin',null,editor));assert.equal(hp2.subjects.find(s=>s.name==='Java').spaceId,javaSpace);
  const otherSpace='sp-unavailable';assert.equal((await post({action:'subject',name:'Missing',spaceId:otherSpace},editor)).status,400);
@@ -79,7 +79,8 @@ try{
  assert.equal((await post({action:'deleteQuestion',id:removable.id,revision:999},editor)).status,409);
  await ok(await post({action:'deleteQuestion',id:removable.id,revision:removable.revision},editor));
  const afterDelete=await ok(await call('/api/admin',null,editor));assert.ok(!afterDelete.questions.some(q=>q.id===removable.id));assert.equal(afterDelete.plans.find(p=>p.id===deletionPlan.id).status,'archived');assert.equal((await post({action:'planStatus',id:deletionPlan.id,status:'published'},editor)).status,409);
- const builtin=(await ok(await call('/api/admin',null,owner))).questions.find(q=>q.id.startsWith('go-')&&q.kind==='practice')??(await ok(await call('/api/admin',null,owner))).questions.find(q=>q.kind==='practice'&&q.subjectId==='go');
+ // 内置练习题已下线，改用内置的 Go 面试题检查“编辑不能删、所有者可以删”的权限规则。
+ const builtin=(await ok(await call('/api/admin',null,owner))).questions.find(q=>q.kind==='document'&&q.subjectId==='go');
  assert.equal((await post({action:'deleteQuestion',id:builtin.id,revision:builtin.revision},editor)).status,403);
  await ok(await post({action:'deleteQuestion',id:builtin.id,revision:builtin.revision},owner));assert.ok(!(await ok(await call('/api/admin',null,owner))).questions.some(q=>q.id===builtin.id));
  const unused=(await ok(await post({action:'invite',subjects:[subject],allowNew:false},editor))).key;await ok(await post({action:'disableAdmin',id:editorPanel.admin.id},owner));assert.equal((await call('/api/admin',null,editor)).status,401);assert.equal((await post({action:'login',key:editorKey})).status,401);assert.equal((await post({action:'register',inviteKey:unused,name:'Disabled invitation',subjectNames:'物理'})).status,400);

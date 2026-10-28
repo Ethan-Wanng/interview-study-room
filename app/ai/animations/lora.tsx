@@ -32,5 +32,5 @@ export const lora:Animation={id:'lora',icon:'🧩',title:'LoRA：只训练 0.4% 
  {caption:'训练时只更新 A 和 B，总共约 6.5 万个参数，只有 W 的 0.4%，单张显卡就能训练。',ms:5000},
  {caption:'计算时输出 = W·x + B·A·x。B 乘 A 得到一个和 W 同样大小的矩阵，相当于给 W 打了一个“低秩补丁”。',ms:5600},
  {caption:'推理时可以把 B·A 直接加回 W，不增加任何延迟；同一个底座模型还能挂多个 LoRA 适配器，按任务切换。',ms:5400},
- {caption:'再进一步，QLoRA 把底座量化到 4 位再训练 LoRA，显存需求更低。',ms:4600},
+ {caption:'再进一步，QLoRA 把底座量化到 4 位再训练 LoRA，显存需求更低。',ms:4600,speech:'再进一步，QLoRA 把底座量化到 4 位再训练 LoRA，显存需求更低。大矩阵冻住，小矩阵学习；参数少、显存省、可切换。'},
 ]};

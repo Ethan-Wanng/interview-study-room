@@ -28,3 +28,5 @@ export function buildExams(o:{prefix:string;subject:string;levels:AiLevel[];tier
  const stage=(n:0|1):Exam=>{const a=n*2,b=a+1;return {id:`${o.prefix}-exam-${n+1}`,kind:'stage',title:`阶段考试${n?'二':'一'}：${o.tiers[a].name} + ${o.tiers[b].name}`,summary:`通过「${o.tiers[a].name}」「${o.tiers[b].name}」两次阶段训练后解锁，25 题，包含所有题型`,tiers:[a,b],after:b,requires:[`${o.prefix}-train-${a+1}`,`${o.prefix}-train-${b+1}`],passRate:0.65,quiz:o.stages[n]}};
  return [train(0),train(1),stage(0),train(2),train(3),stage(1),{id:`${o.prefix}-final`,kind:'final',title:`${o.subject}最终考试`,summary:'两次阶段考试都通过后解锁，30 题，覆盖全部关卡，难度最高',tiers:[0,1,2,3],after:3,requires:[`${o.prefix}-exam-1`,`${o.prefix}-exam-2`],passRate:0.7,quiz:o.final}];
 }
+// 一次训练或考试实际出多少题：训练 = 覆盖阶段的关卡题目总数 ÷ 2（向上取整），考试按题库数量；都不超过题库里写好的题数。
+export const examSize=(e:Exam,levels:AiLevel[],tiers:Tier[])=>Math.min(e.quiz.length,e.kind==='training'?Math.ceil(e.tiers.flatMap(t=>levels.slice(tiers[t].from,tiers[t].to+1)).reduce((n,l)=>n+l.quiz.length,0)/2):e.quiz.length);

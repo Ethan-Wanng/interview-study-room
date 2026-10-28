@@ -37,5 +37,5 @@ export const kvCache:Animation={id:'kv-cache',icon:'⚡',title:'KV 缓存：推�
  {caption:'如果没有缓存：每生成一个 token，都要把前面所有 token 重新算一遍，越往后越慢。',ms:4800},
  {caption:'有了缓存：每一步只算 1 个新 token。生成 10 个 token，计算量从 105 次降到 10 次。',ms:5000},
  {caption:'代价是显存：上下文越长、同时服务的请求越多，缓存越大。vLLM 的 PagedAttention 把缓存分页管理，减少浪费。',ms:5600},
- {caption:'这就是推理优化的核心思想之一：用显存换时间。',ms:4400},
+ {caption:'这就是推理优化的核心思想之一：用显存换时间。',ms:4400,speech:'这就是推理优化的核心思想之一：用显存换时间。算过的不再算；用显存换速度。'},
 ]};

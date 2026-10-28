@@ -1,0 +1,30 @@
+import type {AiQuiz} from '../journey';
+
+// 前端入门阶段训练（25 题）：HTML、CSS、布局、JS 基础、函数与数组。比关卡题更难，侧重综合运用和排错。
+export const feTrain1:AiQuiz[]=[
+ {id:'fe-x1-1',q:'一个可点击的卡片用 <div onclick> 实现，键盘用户按 Tab 根本选不中它。最好的修复是？',options:['加 cursor: pointer','改成 <button> 或 <a>（跳转时），保留原生键盘和语义','加 tabindex="-1"','加 title 属性'],answer:1,explain:'原生交互元素自带聚焦、回车/空格触发和语义；tabindex=-1 反而让它无法通过 Tab 聚焦。'},
+ {id:'fe-x1-2',q:'head 中依次有 <script src="a.js" defer> 和 <script src="b.js" defer>，b.js 先下载完。执行顺序是？',options:['b 先执行','a 先执行，然后 b，都在 HTML 解析完成后','两者同时执行','不确定'],answer:1,explain:'defer 脚本按书写顺序、在解析完成后执行。'},
+ {id:'fe-x1-3',type:'multi',q:'下面哪些做法有助于可访问性？（多选）',options:['图片写有意义的 alt，装饰图 alt=""','用 outline: none 去掉所有焦点样式','表单控件关联 label','不只用颜色区分错误状态，同时给出文字提示'],answers:[0,2,3],explain:'去掉焦点样式会让键盘用户找不到当前位置。'},
+ {id:'fe-x1-4',q:'下面两条规则作用于同一个元素，最终颜色是？',code:'#nav a { color: red; }\n.menu .link.active { color: blue; }',options:['red','blue','取决于书写顺序','黑色'],answer:0,explain:'#nav a 是 (1,0,1)，.menu .link.active 是 (0,3,0)，ID 列先比较，红色胜出。'},
+ {id:'fe-x1-5',q:'两个相邻的段落，上面 margin-bottom: 20px，下面 margin-top: 30px，它们之间的实际距离是？',options:['50px','30px','20px','0'],answer:1,explain:'相邻块级元素的垂直外边距会合并，取较大值。'},
+ {id:'fe-x1-6',type:'judge',q:'给一个元素加上 transform: translateZ(0) 之后，它内部 position: fixed 的子元素会相对这个元素定位，而不是相对视口。',answer:true,explain:'有 transform 的祖先会成为 fixed 元素的包含块，这是弹窗“不再固定”的常见原因。'},
+ {id:'fe-x1-7',q:'表格页面的表头用 position: sticky; top: 0，却完全不吸顶。最可能的原因是？',options:['sticky 不支持表格','外层滚动容器之外的某个祖先设置了 overflow: hidden，或真正滚动的不是页面','top 写成了 0','浏览器太新'],answer:1,explain:'sticky 相对最近的滚动祖先生效，祖先的 overflow 会改变它的参照。'},
+ {id:'fe-x1-8',q:'Flex 容器中三个子项都设置了 flex: 1，但其中一个内容是很长的英文 URL，结果它比其他两个宽很多。修复方法是？',options:['设置 flex: 2','给子项 min-width: 0，并对文字设置 overflow-wrap: anywhere','改用 float','设置 width: 33%'],answer:1,explain:'flex 子项默认 min-width: auto，不会缩到比内容更窄。'},
+ {id:'fe-x1-9',type:'fill',q:'Grid 中让卡片最小 200px、自动决定列数并平分剩余空间：grid-template-columns: repeat(auto-fill, ____(200px, 1fr))。',accepted:['minmax'],explain:'auto-fill + minmax 是响应式网格最常见的写法。'},
+ {id:'fe-x1-10',q:'移动端页面在 iPhone 上被缩得很小、需要双指放大才能看清，最可能缺少了什么？',options:['CSS reset','<meta name="viewport" content="width=device-width, initial-scale=1">','favicon','字体文件'],answer:1,explain:'没有 viewport meta 时手机按 980px 左右的虚拟宽度渲染。'},
+ {id:'fe-x1-11',type:'multi',q:'下面哪些方式会创建新的 BFC？（多选）',options:['display: flow-root','overflow: hidden','position: absolute','color: red'],answers:[0,1,2],explain:'改颜色和布局上下文无关。'},
+ {id:'fe-x1-12',q:'下面代码输出什么？',code:"console.log(typeof NaN, [] + [], [] == ![]);",options:['"number" "" true','"NaN" "[]" false','"number" "[]" false','"undefined" "" true'],answer:0,explain:'NaN 是 number；两个空数组相加先转成空字符串；![] 是 false，[] == false 经过转换都是 0，结果为 true。这正是不要用 == 的原因。'},
+ {id:'fe-x1-13',q:'计算商品总价 0.1 + 0.2 得到 0.30000000000000004。电商场景最稳妥的处理是？',options:['用 toFixed(2) 后再继续参与计算','以“分”为单位用整数计算，展示时再格式化','改用 parseFloat','忽略误差'],answer:1,explain:'浮点数无法精确表示很多小数；toFixed 返回字符串且只是展示层面的四舍五入。'},
+ {id:'fe-x1-14',type:'judge',q:'const arr = [1, 2, 3]; arr.push(4); 会报错，因为 arr 是用 const 声明的。',answer:false,explain:'const 只保证变量不能重新赋值，数组内容仍然可以修改。'},
+ {id:'fe-x1-15',q:'config.timeout 可能是 0（表示不超时）。下面哪种写法能正确地在未设置时默认 3000？',options:['config.timeout || 3000','config.timeout ?? 3000','config.timeout && 3000','Number(config.timeout) || 3000'],answer:1,explain:'|| 会把 0 也当成“没设置”，?? 只处理 null 和 undefined。'},
+ {id:'fe-x1-16',q:'下面代码执行后 a 和 b 分别是？',code:"const a = { list: [1] };\nconst b = { ...a };\nb.list.push(2);\nb.name = 'x';",options:['a.list 是 [1]，a 没有 name','a.list 是 [1, 2]，a 没有 name','a.list 是 [1, 2]，a.name 是 x','a.list 是 [1]，a.name 是 x'],answer:1,explain:'展开是浅拷贝：list 数组共享，新增的 name 只在 b 上。'},
+ {id:'fe-x1-17',type:'multi',q:'React 中更新数组状态，下面哪些写法是正确的？（多选）',options:['setList([...list, item])','list.push(item); setList(list)','setList(list.filter(x => x.id !== id))','setList(list.toSorted((a, b) => a - b))'],answers:[0,2,3],explain:'原地修改后传入同一个引用，框架认为没有变化，可能不会重新渲染。'},
+ {id:'fe-x1-18',q:'["10", "10", "10"].map(parseInt) 的结果是？',options:['[10, 10, 10]','[10, NaN, 2]','[NaN, NaN, NaN]','["10", "10", "10"]'],answer:1,explain:'map 会把下标作为第二个参数传给 parseInt，分别按进制 0、1、2 解析。应写成 map(s => parseInt(s, 10)) 或 map(Number)。'},
+ {id:'fe-x1-19',type:'fill',q:'把对象数组 users 转成 id → user 的 Map：new Map(users.map(u => [u.id, ____]))。',accepted:['u'],explain:'Map 构造函数接收 [键, 值] 对组成的数组。'},
+ {id:'fe-x1-20',q:'const obj = { name: "a", say: () => this.name }; obj.say() 返回什么？',options:['"a"','undefined（箭头函数的 this 来自外层，不是 obj）','报错','obj'],answer:1,explain:'对象方法不要用箭头函数，否则拿不到对象本身。'},
+ {id:'fe-x1-21',type:'judge',q:'JSON.stringify({ a: undefined, b: () => 1, c: new Date(0) }) 的结果中会保留 a 和 b 两个字段。',answer:false,explain:'undefined 和函数会被忽略，Date 会转成 ISO 字符串。'},
+ {id:'fe-x1-22',q:'要把用户输入的搜索词放进 URL 查询参数，正确的做法是？',options:["'/search?q=' + q","用 encodeURIComponent(q) 或 URLSearchParams 拼接",'用 escape(q)','直接用 encodeURI 编码整个 URL'],answer:1,explain:'& = # 等字符必须编码；URLSearchParams 会自动处理。'},
+ {id:'fe-x1-23',type:'multi',q:'一个弹窗设置了 z-index: 1000 仍被页头盖住，可能的原因有哪些？（多选）',options:['弹窗的某个祖先设置了 transform，创建了层叠上下文','弹窗的某个祖先 opacity: 0.99','页头的 z-index 写的是 1001','弹窗用了 border-radius'],answers:[0,1,2],explain:'border-radius 不影响层叠。'},
+ {id:'fe-x1-24',type:'short',q:'一个列表项左边是头像，中间是标题和描述（可能很长），右边是时间。描述过长时要单行省略，时间始终完整显示。写出关键 CSS 并说明原因。',reference:'容器 display: flex; align-items: center; gap: 12px。头像和时间设置 flex: none（或 flex-shrink: 0），保证不被压缩。中间区域 flex: 1; min-width: 0，否则 flex 子项默认 min-width: auto 不会缩小，省略号不生效。描述设置 white-space: nowrap; overflow: hidden; text-overflow: ellipsis。',points:['容器 flex + 对齐 + gap','头像和时间 flex-shrink: 0','中间 flex: 1 且 min-width: 0','单行省略三件套'],explain:'这是日常开发中最常遇到的布局问题之一。'},
+ {id:'fe-x1-25',type:'code',q:'实现一个函数 unique(list, key)，按对象的某个字段去重，保留第一次出现的元素，要求 O(n)。',code:'function unique(list, key) {\n  // 在这里实现\n}',reference:'function unique(list, key) {\n  const seen = new Set();\n  const result = [];\n  for (const item of list) {\n    const k = item[key];\n    if (!seen.has(k)) {\n      seen.add(k);\n      result.push(item);\n    }\n  }\n  return result;\n}',points:['用 Set 记录已出现的 key','一次遍历，O(n)','保留第一次出现的元素','不修改原数组'],explain:'Set 查找平均 O(1)，比 filter + findIndex 的 O(n²) 好得多。'},
+];

@@ -6,7 +6,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 const require=createRequire(import.meta.url),{build}=createRequire(require.resolve('wrangler/package.json'))('esbuild');
-const subjects=[['Go','./content/exams/go','goExams','./content/go-journey','goLevels'],['AI','./content/exams/ai','aiExams','./content/ai-journey','aiLevels'],['后端通用','./content/exams/backend','backendExams','./content/backend-journey','backendLevels']];
+const subjects=[['Go','./content/exams/go','goExams','./content/go-journey','goLevels'],['AI','./content/exams/ai','aiExams','./content/ai-journey','aiLevels'],['后端通用','./content/exams/backend','backendExams','./content/backend-journey','backendLevels'],['前端开发','./content/exams/frontend','frontendExams','./content/frontend-journey','frontendLevels']];
 const {existsSync}=await import('node:fs');
 const present=subjects.filter(([,e])=>existsSync(e.replace('./','')+'.ts'));
 const entry=present.map(([,e,x,l,y],i)=>`export {${x} as e${i}} from '${e}';export {${y} as l${i}} from '${l}';`).join('');
@@ -15,7 +15,7 @@ const file=join(mkdtempSync(join(tmpdir(),'exams-')),'bundle.mjs');writeFileSync
 const m=await import(pathToFileURL(file).href),problems=[],ids=new Set(),allTypes=['single','multi','judge','fill','short','code'];
 present.forEach(([name],i)=>{const exams=m['e'+i],levels=m['l'+i];
  for(const l of levels)for(const q of l.quiz)ids.add(q.id);
- for(const e of exams){const need=e.kind==='training'?Math.ceil(e.tiers.flatMap(t=>levels.filter((_,j)=>j>=0)).length&&e.requires.reduce((n,id)=>n+(levels.find(l=>l.id===id)?.quiz.length??0),0)/2):e.kind==='stage'?25:30;
+ for(const e of exams){const need=e.kind==='training'?Math.ceil(e.requires.reduce((n,id)=>n+(levels.find(l=>l.id===id)?.quiz.length??0),0)/2):e.kind==='stage'?25:30;
   const types=new Set(e.quiz.map(q=>q.type??'single'));
   const status=e.quiz.length===need?'✓':`缺 ${need-e.quiz.length}`;console.log(`${name} ${e.title}：${e.quiz.length}/${need} ${status}  题型 ${[...types].join(',')}`);
   if(e.quiz.length<need)problems.push(`${name} ${e.title} 题量不足：${e.quiz.length}/${need}`);

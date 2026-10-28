@@ -43,7 +43,7 @@ export async function POST(req:Request){try{assertSameOrigin(req);const raw=awai
  }
  if(p.action==='deleteSubject'){
   const id=textValue(p.id,100,true);requireScope(a,id);
-  if(['go','backend','ai-development'].includes(id))throw new AuthError('Go、后端通用和 AI 开发是系统学科，不能删除。',409);
+  if(['go','backend','ai-development','frontend'].includes(id))throw new AuthError('Go、后端通用、AI 开发和前端开发是系统学科，不能删除。',409);
   if(!await db.prepare('SELECT id FROM subjects WHERE id=?').bind(id).first())throw new AuthError('学科不存在或已删除。',404);
   try{
    await db.batch([

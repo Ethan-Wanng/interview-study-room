@@ -1,6 +1,6 @@
 import type {CSSProperties} from 'react';
 import {Defs,Memo,textWidth} from './kit';
-import type {Animation} from './types';
+import type {Animation,Cue} from './types';
 
 // 故事板动画引擎：用“角色 + 物品 + 事件”的脚本描述一道面试题，由引擎渲染成连贯的动画。
 // 角色在各个镜头之间保持同一个 DOM 节点，位置变化会平滑移动；新角色弹出，退场角色淡出。
@@ -79,10 +79,14 @@ export function storyVisual(beats:Beat[]){return function Visual({step}:{step:nu
   {b.memo&&<Memo key={'m'+step} lines={b.memo}/>}
  </g>}}
 
+// 口诀镜头：字幕之后接着把口诀读出来。
+const speechOf=(b:Beat)=>b.memo?.length?`${b.say.replace(/[。！？]?$/,'。')}${b.memo.map(m=>m.replace(/[。；，]$/,'')).join('；')}。`:undefined;
+const cueOf=(b:Beat):Cue=>{const tones=Object.values(b.tone??{});return {add:b.add?.length??0,send:b.send?.length??0,drop:b.drop?.length??0,bubble:!!b.bubble,ok:tones.includes('ok')||(b.send??[]).some(s=>s.tone==='ok'),bad:tones.includes('bad')||(b.send??[]).some(s=>s.tone==='bad'),memo:!!b.memo}};
+
 // 动画课堂用的故事动画（关联某个学习关卡）。
-export type LessonStory={id:string;level:string;kind:'basic'|'advanced'|'review';icon:string;title:string;summary:string;beats:Beat[]};
+export type LessonStory={id:string;level:string;kind:'basic'|'advanced'|'review'|'lazy';icon:string;title:string;summary:string;beats:Beat[]};
 export function storyAnimation(o:LessonStory):Animation{return {id:o.id,level:o.level,kind:o.kind,icon:o.icon,title:o.title,summary:o.summary,continuous:true,
- scenes:o.beats.map(b=>({caption:b.say,ms:beatMs(b)})),Visual:storyVisual(o.beats)}}
+ scenes:o.beats.map(b=>({caption:b.say,ms:beatMs(b),cue:cueOf(b),speech:speechOf(b)})),Visual:storyVisual(o.beats)}}
 
 export function fromStory(interview:string,level:string,s:Story):Animation{return {id:'iv-'+interview,interview,level,kind:'interview',continuous:true,icon:'🎬',title:s.title,summary:s.beats[0].say,
- scenes:s.beats.map(b=>({caption:b.say,ms:beatMs(b)})),Visual:storyVisual(s.beats)}}
+ scenes:s.beats.map(b=>({caption:b.say,ms:beatMs(b),cue:cueOf(b),speech:speechOf(b)})),Visual:storyVisual(s.beats)}}

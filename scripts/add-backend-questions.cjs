@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports -- 独立运行的 Node 脚本 */
 // 把 scripts/data/backend-new-*.cjs 里的新增后端面试题写入 content/questions.json。
 // id 由标题哈希得到（q- + 16 位十六进制），重复运行不会重复添加；新题插在对应章节的最后一题之后。
 // 用法：node scripts/add-backend-questions.cjs
