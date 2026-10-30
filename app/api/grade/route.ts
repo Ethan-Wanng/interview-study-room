@@ -30,7 +30,7 @@ export async function POST(req:Request){try{assertSameOrigin(req);const user=awa
  const db=studyDb(),day=dayNow(),limit=limitOf(user.is_guest);
  const row=await db.prepare('INSERT INTO ai_grade_quota(user_id,day,count) VALUES(?,?,1) ON CONFLICT(user_id,day) DO UPDATE SET count=count+1 WHERE count<? RETURNING count').bind(user.id,day,limit).first<{count:number}>();
  if(!row)return fail('quota',user.is_guest?`游客每天可以用 ${limit} 次 AI 评分，今天的次数已用完。登录后每天有 ${GRADE_QUOTA.user} 次，也可以先对照得分点自评。`:`今天的 ${limit} 次 AI 评分已用完，明天再来，或先对照得分点自评。`,429,{remaining:0});
- try{const results=await grade(items as GradeItem[]);return Response.json({results,remaining:Math.max(0,limit-row.count)})}
+ try{const {results,model}=await grade(items as GradeItem[]);return Response.json({results,model,remaining:Math.max(0,limit-row.count)})}
  catch{await db.prepare('UPDATE ai_grade_quota SET count=MAX(count-1,0) WHERE user_id=? AND day=?').bind(user.id,day).run();
   return fail('failed','AI 评分暂时不可用，这次没有扣次数。可以稍后再试，或先对照得分点自评。',503)}}
  catch(e){if(e instanceof AuthError)return fail('auth',e.message,e.status);return fail('failed','AI 评分暂时不可用。',500)}}

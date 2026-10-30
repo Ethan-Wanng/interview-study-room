@@ -2,8 +2,8 @@ import {env} from 'cloudflare:workers';
 import {pointScores,type GradeItem,type GradeResult} from './grade-types';
 
 // 用 Gemini 按得分点给简答、代码和综合题打分。密钥来自 Worker 的 GEMINI_API_KEY 密钥。
-// 模型高峰期偶尔会 503 或超时，所以按顺序换下一个模型重试。
-const MODELS=['gemini-3.5-flash','gemini-2.5-flash'],TIMEOUT=30000;
+// 首选 gemini-3.8-flash；它高峰期偶尔会 503 或超时，这时换 gemini-3.5-flash 重试。
+const MODELS=['gemini-3.8-flash','gemini-3.5-flash'],TIMEOUT=40000;
 export class GradeError extends Error{}
 
 const schema={type:'OBJECT',properties:{results:{type:'ARRAY',items:{type:'OBJECT',properties:{
@@ -29,10 +29,11 @@ async function call(model:string,key:string,items:GradeItem[]){const ctl=new Abo
  finally{clearTimeout(timer)}}
 
 // 把模型的打分夹回合法范围：每个得分点 0..满分、按 0.5 取整，总分为各点之和。
-export async function grade(items:GradeItem[]):Promise<GradeResult[]>{const key=(env as unknown as Record<string,string|undefined>).GEMINI_API_KEY;if(!key)throw new GradeError('missing key');
- let raw:Awaited<ReturnType<typeof call>>|undefined,last:unknown;
- for(const model of MODELS){try{raw=await call(model,key,items);break}catch(e){last=e}}
+export async function grade(items:GradeItem[]):Promise<{results:GradeResult[];model:string}>{const key=(env as unknown as Record<string,string|undefined>).GEMINI_API_KEY;if(!key)throw new GradeError('missing key');
+ let raw:Awaited<ReturnType<typeof call>>|undefined,used='',last:unknown;
+ for(const model of MODELS){try{raw=await call(model,key,items);used=model;break}catch(e){last=e}}
  if(!raw)throw last instanceof Error?last:new GradeError('grading failed');
- return items.map(it=>{const r=raw!.results.find(x=>x.id===it.id),scores=pointScores(it.points,it.max,it.scores);
+ const results=items.map(it=>{const r=raw!.results.find(x=>x.id===it.id),scores=pointScores(it.points,it.max,it.scores);
   const hits=it.points.map((point,i)=>{const h=r?.hits[i],got=Math.max(0,Math.min(scores[i],Math.round((Number(h?.got)||0)*2)/2));return {point,got,max:scores[i],comment:h?.comment??''}});
-  return {id:it.id,max:it.max,score:hits.reduce((n,h)=>n+h.got,0),hits,feedback:r?.feedback??''}})}
+  return {id:it.id,max:it.max,score:hits.reduce((n,h)=>n+h.got,0),hits,feedback:r?.feedback??''}});
+ return {results,model:used}}
