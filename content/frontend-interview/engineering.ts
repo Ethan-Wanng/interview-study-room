@@ -4,7 +4,7 @@ const p=(text:string)=>({type:'text' as const,text}),c=(text:string)=>({type:'co
 // 前端面试题（五）：工程化、性能优化与项目。
 export const feEngineering:FeInterviewQuestion[]=[
  {id:'fe-q-bundler',section:'工程化',title:'Webpack 和 Vite 有什么区别？Vite 为什么开发时更快？',blocks:[
-  p('Webpack 在开发时也要先把整个应用打包成 bundle 才能启动，项目越大启动和热更新越慢。Vite 开发时利用浏览器原生 ES Module：启动时不打包业务代码，浏览器请求到哪个模块才即时编译哪个；第三方依赖用 esbuild 预构建一次；热更新只替换改动的模块，速度和项目大小关系不大。'),
+  p('Webpack 在开发时也要先把整个应用打包成 bundle 才能启动，项目越大启动和热更新越慢。Vite 开发时利用浏览器原生 ES Module：启动时不打包业务代码，浏览器请求到哪个模块才即时编译哪个；第三方依赖预构建一次（Vite 7 及以前用 esbuild，Vite 8 起改由 Rolldown 完成）；热更新只替换改动的模块，速度和项目大小关系不大。'),
   p('生产构建时 Vite 仍然会打包（Rollup / Rolldown），因为大量零散的模块请求在生产环境性能不好。Webpack 生态成熟、配置灵活，老项目和特殊需求（如复杂的模块联邦）仍很常见。')]},
  {id:'fe-q-tree-shaking',section:'工程化',title:'什么是 Tree Shaking？为什么有时不生效？',blocks:[
   p('Tree Shaking 是在打包时删除没有被使用的导出代码。它依赖 ES Module 的静态结构：编译期就能分析出哪些导出被 import 了。'),

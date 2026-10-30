@@ -12,7 +12,7 @@ export const feFramework:FeInterviewQuestion[]=[
   c('{todos.map(todo => <TodoItem key={todo.id} todo={todo} />)}')]},
  {id:'fe-q-hooks-rules',section:'框架原理',title:'React Hooks 为什么不能写在条件语句里？',blocks:[
   p('React 不是按名字记住每个 Hook 的状态，而是按调用顺序把状态存在组件对应的链表里：第一次渲染第 1 个 useState 对应链表第 1 项，以此类推。如果某个 Hook 写在 if 里，某次渲染它没被调用，后面所有 Hook 的顺序都会错位，读到别人的状态。'),
-  p('所以规则是：只在函数组件或自定义 Hook 的顶层调用 Hook，不要放在条件、循环、嵌套函数里。条件逻辑放到 Hook 内部判断。eslint-plugin-react-hooks 能自动检查。')]},
+  p('所以规则是：只在函数组件或自定义 Hook 的顶层调用 Hook，不要放在条件、循环、嵌套函数里。条件逻辑放到 Hook 内部判断。eslint-plugin-react-hooks 能自动检查。React 19 新增的 use 是例外：它可以在条件和循环里调用，但仍只能在组件或 Hook 内使用。')]},
  {id:'fe-q-useeffect',section:'框架原理',title:'useEffect 的依赖数组怎么写？清理函数什么时候执行？',blocks:[
   p('useEffect 在渲染提交后执行。依赖数组决定何时重新执行：不传每次渲染后都执行；[] 只在挂载后执行一次；[a, b] 在 a 或 b 变化后执行。依赖要写全，effect 里用到的会变化的值都要列出，否则拿到的是旧的闭包值。'),
   p('清理函数在下一次 effect 执行前、以及组件卸载时执行，用来取消订阅、清除定时器、abort 请求。开发模式的 StrictMode 会故意挂载 → 卸载 → 再挂载一次，用来暴露没写清理函数的问题。不需要副作用的派生计算，直接在渲染时算或用 useMemo，不要放进 effect 再 setState。'),
