@@ -4,8 +4,6 @@
 .an-stage{border-radius:18px;overflow:hidden;border:1px solid var(--line);background:radial-gradient(120% 90% at 20% 0%,color-mix(in srgb,var(--primary) 12%,var(--surface)) 0%,var(--surface) 55%,var(--surface-soft) 100%)}
 .an-stage svg{display:block;width:100%;height:auto;font-family:inherit}
 .an-stage.paused *{animation-play-state:paused!important}
-.an-caption{display:flex;gap:12px;align-items:flex-start;margin-top:16px;min-height:60px}
-.an-caption p{margin:0;font-size:17px;line-height:1.75;color:var(--ink);animation:an-in .5s cubic-bezier(.2,.8,.2,1) both}
 .an-step{flex:none;margin-top:3px;padding:3px 10px;border-radius:99px;background:var(--surface-soft);color:var(--primary);font-size:12px;font-weight:700}
 .an-progress{display:flex;gap:6px;margin-top:12px}
 .an-progress button{flex:1;height:6px;padding:0;border:0;border-radius:6px;background:var(--line);overflow:hidden;cursor:pointer}
@@ -91,14 +89,15 @@
 .an-card small{font-size:13px;color:var(--quiet);line-height:1.7}
 .an-card em{font-style:normal;font-size:12px;color:var(--primary)}
 .an-group{font-size:15px;font-weight:700;color:var(--primary);margin:6px 4px 12px}
-@media(max-width:767px){.an-caption p{font-size:15px}.an-controls{gap:8px;flex-wrap:nowrap}.an-controls .button{min-width:0;flex:1;padding:10px 8px;white-space:nowrap;font-size:14px}}
+@media(max-width:767px){.an-controls{gap:8px;flex-wrap:nowrap}.an-controls .button{min-width:0;flex:1;padding:10px 8px;white-space:nowrap;font-size:14px}}
 .an-col{fill:var(--primary);transform-box:fill-box;transform-origin:center bottom;transform:scaleY(var(--p));animation:an-growy .9s cubic-bezier(.2,.8,.2,1) both}.an-col.ok{fill:var(--notice)}.an-col.warm{fill:#e09a35}.an-col.quiet{fill:var(--quiet);opacity:.55}
 @keyframes an-growy{from{transform:scaleY(0)}to{transform:scaleY(var(--p))}}
-.an-timeline{position:relative;height:8px;margin-top:12px;border-radius:8px;background:var(--line);cursor:pointer;overflow:hidden}.an-timeline i{position:absolute;left:0;top:0;bottom:0;background:var(--primary);border-radius:8px;transition:width .05s linear}
+.an-timeline{position:relative;height:8px;margin-top:14px;border-radius:8px;background:var(--line);cursor:pointer;touch-action:none}.an-timeline::before{content:"";position:absolute;inset:-8px 0}.an-timeline i{position:absolute;left:0;top:0;bottom:0;background:var(--primary);border-radius:8px;transition:width .05s linear}
+.an-timeline b{position:absolute;top:50%;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;background:var(--primary);box-shadow:0 0 0 3px var(--surface);transform:scale(.75);transition:transform .15s}.an-timeline:hover b,.an-timeline.scrub b{transform:scale(1)}.an-timeline.scrub i{transition:none}
 .an-clock{font-size:13px;color:var(--quiet);font-variant-numeric:tabular-nums}
 .an-speed{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}.an-speed button{border:0;background:var(--surface);color:var(--body-ink);padding:8px 12px;font-size:13px;cursor:pointer}.an-speed button.on{background:var(--primary);color:var(--primary-foreground)}
 .an-controls{align-items:center}
-.an-out{animation:an-out .5s ease both;pointer-events:none}.an-xin{animation:an-xin .5s ease both}
+.an-out{animation:an-out .3s ease both;pointer-events:none}.an-xin{animation:an-xin .3s ease both}
 @keyframes an-out{to{opacity:0}}@keyframes an-xin{from{opacity:0}to{opacity:1}}
 /* 故事板动画（面试题动画） */
 .st-actor{transition:transform 1s cubic-bezier(.3,.7,.2,1),opacity .5s ease}
@@ -122,3 +121,22 @@
 /* 声音开关 */
 .an-sound button{display:inline-flex;align-items:center;gap:5px}
 @media(max-width:767px){.an-sound button span{display:none}.an-sound button{padding:8px 10px}.an-controls{flex-wrap:wrap}.an-controls>.button{flex:1 1 100%}}
+
+/* 画面内的一行字幕：整行先出现，读到哪里颜色填到哪里 */
+.an-stage{position:relative;display:flex;flex-direction:column}
+.an-stage.zoomed svg{cursor:grab;touch-action:none}.an-stage.zoomed svg:active{cursor:grabbing}
+.an-sub{display:flex;justify-content:center;align-items:center;min-height:2.4em;padding:.3em 12px .45em;background:color-mix(in srgb,var(--surface-soft) 88%,transparent);border-top:1px solid var(--line);line-height:1.4;letter-spacing:.02em}
+.an-sub-line{position:relative;white-space:nowrap;color:var(--ink);animation:an-sub-in .25s ease both}.an-stage.paused .an-sub-line{animation-play-state:running!important}
+.an-sub-fill{position:absolute;left:0;top:0;color:var(--primary);transition:clip-path .08s linear}
+@keyframes an-sub-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.an-icons button{display:inline-flex;align-items:center;gap:3px}.an-icons button span{font-size:11px;font-variant-numeric:tabular-nums}
+.an-speed button:disabled{opacity:.4;cursor:default}
+.an-zoom{min-width:44px;font-variant-numeric:tabular-nums}
+.an-speed button.rec{background:var(--alert-ink);color:#fff;animation:an-breathe 1.2s ease-in-out infinite}
+.an-msg{margin:10px 0 0;text-align:center;font-size:13px;color:var(--quiet)}
+/* 全屏：画面尽量大，控制条在下面 */
+.an-player.is-full{position:fixed;inset:0;z-index:1000;display:flex;flex-direction:column;justify-content:center;padding:16px 20px;background:var(--surface);overflow:auto}
+.an-player:fullscreen{background:var(--surface)}
+.an-player.is-full .an-stage{width:100%;max-width:calc((100vh - 230px) * 16 / 9);margin:0 auto}
+.an-player.is-full .an-timeline{width:100%;max-width:calc((100vh - 230px) * 16 / 9);margin:14px auto 0}
+@media(max-width:767px){.an-player.is-full{padding:8px}.an-player.is-full .an-stage,.an-player.is-full .an-timeline{max-width:none}}
