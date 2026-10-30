@@ -111,3 +111,12 @@ a.ai-level.locked{opacity:.72}
 .lazy-plan{margin:0;font-size:13.5px}
 .lazy-score{list-style:none;padding:0;margin:14px auto 0;display:grid;gap:6px;max-width:360px;width:100%}.lazy-score li{display:flex;justify-content:space-between;padding:6px 12px;border-radius:8px;background:color-mix(in srgb,var(--primary) 7%,transparent)}
 .lazy-wrong{margin:14px 0 0;text-align:left;width:100%}.lazy-wrong summary{cursor:pointer;font-weight:600;text-align:center}.lazy-wrong ol{display:grid;gap:12px;margin-top:12px;padding-left:22px}.lazy-wrong li{line-height:1.6}.lazy-wrong small{display:block;color:var(--quiet)}.lazy-wrong em{display:block;font-style:normal;color:var(--quiet);font-size:13.5px;margin-top:4px}
+.ai-option .ai-why{display:block;margin-top:6px;font-size:13.5px;line-height:1.7;color:var(--quiet)}
+.ai-grade{margin:14px 0;padding:14px 16px;border:1px solid var(--line);border-radius:10px;background:var(--surface-soft)}
+.ai-grade-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}.ai-grade-head b{font-size:22px;color:var(--primary)}.ai-grade-head small{margin-left:auto;color:var(--quiet);font-size:12.5px}
+.ai-grade ul{list-style:none;padding:0;margin:10px 0 0;display:grid;gap:8px}
+.ai-grade li{display:flex;align-items:flex-start;gap:10px;line-height:1.7}.ai-grade li span{flex:1;display:flex;flex-direction:column}.ai-grade li em{font-style:normal;color:var(--quiet);font-size:14px}.ai-grade li i{font-style:normal;font-weight:650;white-space:nowrap}
+.ai-grade li.full svg{color:var(--notice)}.ai-grade li.part svg{color:#c08a1e}.ai-grade li.none svg{color:var(--alert-ink)}
+.ai-grade>p{margin:10px 0 0;line-height:1.8}
+.ai-grade-error{margin:12px 0;padding:10px 14px;border-radius:10px;background:var(--alert-bg);color:var(--alert-ink);line-height:1.7}
+.ai-self-score{display:grid;gap:8px;margin-top:14px}.ai-self-score label{display:flex;align-items:flex-start;gap:10px;line-height:1.7;cursor:pointer}.ai-self-score label span{flex:1}.ai-self-score label i{font-style:normal;color:var(--quiet);white-space:nowrap}.ai-self-score input{margin-top:6px}.ai-self-score .button{justify-self:start}

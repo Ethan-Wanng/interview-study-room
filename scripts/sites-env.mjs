@@ -20,3 +20,11 @@ for (const directory of [
 ]) {
   mkdirSync(directory, { recursive: true });
 }
+
+// 本地预览用的 Gemini 密钥：从项目外的 ../1.txt 读出，写进构建目录里的 .dev.vars（wrangler dev 会读取它；dist/ 不提交）。
+// 线上用 `wrangler secret put GEMINI_API_KEY` 设置，不经过这里。
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+const keyFile = path.join(projectRoot, "../1.txt"), devVars = path.join(projectRoot, "dist/server/.dev.vars");
+if (!process.env.GEMINI_API_KEY && existsSync(keyFile) && existsSync(path.dirname(devVars))) {
+  writeFileSync(devVars, `GEMINI_API_KEY=${readFileSync(keyFile, "utf8").trim()}\n`);
+}

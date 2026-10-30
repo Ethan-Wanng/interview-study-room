@@ -1,0 +1,42 @@
+/* 150 分正式试卷：作答页、成绩页和导出 PDF 用的浅色打印样式。 */
+.paper{display:flex;flex-direction:column;gap:18px}
+.paper-intro{display:flex;flex-direction:column;align-items:flex-start;gap:14px;padding:26px 28px}.paper-intro h1{margin:0;font-size:26px}
+.paper-intro ul{list-style:none;padding:0;margin:0;width:100%;display:grid;gap:6px}.paper-intro li{display:flex;justify-content:space-between;padding:8px 12px;border-radius:8px;background:var(--surface-soft)}
+.paper-intro p{margin:0;line-height:1.9;color:var(--body-ink)}
+.paper-bar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:10px 14px;border:1px solid var(--line);border-radius:12px;background:var(--surface);backdrop-filter:blur(10px);box-shadow:0 6px 18px #0000001a}
+.paper-bar .button{margin-left:auto}
+.paper-clock{display:inline-flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums;font-weight:700;font-size:18px}.paper-clock.urgent{color:var(--alert-ink)}
+.paper-nav{display:flex;flex-wrap:wrap;gap:6px}
+.paper-nav a{min-width:32px;height:32px;display:grid;place-items:center;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--quiet);font-size:13px;text-decoration:none}
+.paper-nav a.on{background:var(--primary);border-color:var(--primary);color:#fff}
+.paper-title{margin:6px 0 0;text-align:center;font-size:26px}
+.paper-section{display:flex;flex-direction:column;gap:14px}.paper-section>h2{margin:10px 0 0;font-size:19px}
+.paper-q{scroll-margin-top:80px;padding:18px 20px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.paper-q header{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.paper-no{min-width:28px;height:28px;display:grid;place-items:center;border-radius:50%;background:var(--primary);color:#fff;font-size:13px;font-weight:700}
+.paper-max{color:var(--quiet);font-size:13px}
+.paper-got{margin-left:auto;font-weight:700;font-size:14px}.paper-got.full{color:var(--notice)}.paper-got.part{color:#c08a1e}.paper-got.none{color:var(--alert-ink)}
+.paper-q h3{margin:0 0 12px;font-size:16.5px;line-height:1.8;font-weight:600;white-space:pre-wrap}
+.paper-options{display:grid;gap:8px}.paper-judge{grid-template-columns:1fr 1fr}
+.paper-option{display:flex;align-items:center;gap:12px;width:100%;padding:11px 14px;border:1px solid var(--line);border-radius:10px;background:var(--surface-soft);color:var(--ink);font-size:15.5px;line-height:1.7;text-align:left;cursor:pointer}
+.paper-option b{min-width:26px;height:26px;display:grid;place-items:center;border-radius:50%;background:var(--surface);border:1px solid var(--line);font-size:12.5px}
+.paper-option span{flex:1}.paper-option:disabled{cursor:default}
+.paper-option.chosen{border-color:var(--primary);box-shadow:inset 0 0 0 1px var(--primary)}
+.paper-option.right{border-color:var(--notice);box-shadow:inset 0 0 0 1px var(--notice)}.paper-option.right svg{color:var(--notice)}
+.paper-option.wrong{border-color:var(--alert-ink);background:var(--alert-bg)}.paper-option.wrong svg{color:var(--alert-ink)}
+.paper-option .ai-why{display:block;margin-top:4px;font-size:13px;line-height:1.7;color:var(--quiet)}
+.paper-fill{display:grid;gap:8px}.paper-fill label{display:flex;align-items:center;gap:10px}.paper-fill label span{min-width:52px;color:var(--quiet);font-size:13.5px}
+.paper-blank{flex:1;max-width:420px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface-soft);color:var(--ink);font:inherit}
+.paper-text{width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--surface-soft);color:var(--ink);font-size:15px;line-height:1.8;resize:vertical}
+.paper-text.code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:14px}
+.paper-review{margin-top:12px;padding-top:12px;border-top:1px dashed var(--line)}.paper-review .ai-answer{margin:0 0 8px;font-weight:600}
+.paper-explain{margin:10px 0 0;line-height:1.85;color:var(--body-ink)}.paper-self{margin:8px 0;font-weight:600}
+.paper-score{display:flex;flex-direction:column;align-items:center;gap:10px;padding:26px 24px;text-align:center}.paper-score h1{margin:0;font-size:24px}
+.paper-total{margin:0;font-size:18px;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;justify-content:center}.paper-total b{font-size:46px;color:var(--primary)}
+.paper-total span{font-size:14px;font-weight:700;padding:3px 10px;border-radius:999px}.paper-total .pass{background:color-mix(in srgb,var(--notice) 15%,transparent);color:var(--notice)}.paper-total .fail{background:var(--alert-bg);color:var(--alert-ink)}
+.paper-score table{border-collapse:collapse;min-width:260px}.paper-score th,.paper-score td{padding:6px 14px;border-bottom:1px solid var(--line);text-align:left}.paper-score td{text-align:right;font-variant-numeric:tabular-nums}
+.paper-regrade{margin-top:4px}.paper-pdf-note{text-align:center}
+/* 导出 PDF 时临时加上：白底深字，去掉阴影和毛玻璃，宽度固定，便于打印阅读。 */
+.paper-print{--surface:#fff;--surface-soft:#f5f7fb;--ink:#1f2a3d;--body-ink:#3d4a60;--quiet:#5f6f86;--line:#d7dfea;--primary:#3c5aa8;--notice:#2f7a5d;--alert-ink:#b0313f;--alert-bg:#fff1f1;background:#fff;color:#1f2a3d;width:794px;padding:24px;box-sizing:border-box}
+.paper-print .ai-card,.paper-print .paper-q{box-shadow:none;backdrop-filter:none;background:#fff}
+@media (max-width:767px){.paper-q{padding:14px}.paper-judge{grid-template-columns:1fr}.paper-bar{gap:10px}.paper-clock{font-size:16px}}

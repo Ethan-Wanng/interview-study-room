@@ -19,11 +19,14 @@ import LessonCards from './lesson-cards';
 import {InterviewSource,LevelInterviews,type InterviewDoc} from './interview-reading';
 import type {Subject} from '../learn/subject';
 import SiteNav from '../components/site-nav';
+import PaperExam from './paper/paper-exam';
+import {hasPaper} from '@/content/papers';
+import {PAPER_MINUTES,PAPER_TOTAL} from '@/content/papers/types';
 import KeywordText from '../components/keyword-text';
 
 type Saved={best:Record<string,number>;passed:string[];mistakes:string[]};
 type Mode='level'|'random'|'mistakes'|'exam';
-type View={kind:'map'}|{kind:'learn';level:number}|{kind:'videos'}|{kind:'video';id:string;backTo?:{kind:'learn';level:number}}|{kind:'quiz';mode:Mode;level?:number;exam?:string;items:Item[];index:number;results:(Result|null)[]}|{kind:'result';mode:Mode;level?:number;exam?:string;items:Item[];results:Result[]}|{kind:'exam';id:string}|{kind:'lazy'};
+type View={kind:'map'}|{kind:'paper';id:string}|{kind:'learn';level:number}|{kind:'videos'}|{kind:'video';id:string;backTo?:{kind:'learn';level:number}}|{kind:'quiz';mode:Mode;level?:number;exam?:string;items:Item[];index:number;results:(Result|null)[]}|{kind:'result';mode:Mode;level?:number;exam?:string;items:Item[];results:Result[]}|{kind:'exam';id:string}|{kind:'lazy'};
 const empty:Saved={best:{},passed:[],mistakes:[]};
 const shuffle=<T,>(xs:T[])=>{const a=[...xs];for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a};
 const toItem=(q:{id:string;level:string;quiz:AiQuiz}):Item=>({...q,order:'options' in q.quiz?shuffle(q.quiz.options.map((_,i)=>i)):[]});
@@ -74,7 +77,7 @@ const passedLevelsOf=(p:Set<string>)=>levels.filter(l=>p.has(l.id)).length;
   const e=v.mode==='exam'?examById(v.exam):undefined;if(e){const score=right.length/v.items.length;next.best[e.id]=Math.max(next.best[e.id]??0,score);if(score>=e.passRate&&!next.passed.includes(e.id))next.passed.push(e.id)}
   persist(next);replaceView({kind:'result',mode:v.mode,level:v.level,exam:v.exam,items:v.items,results})}
  const header=<header className="ai-header"><a href={fromPractice?'/practice':'/learn'} className="ai-brand"><BookOpen size={23}/><span>{t("面试自习室")}<small>{fromPractice?L(`${subject.name[0]} · 训练`,`${subject.name[1]} · Practice`):L(`${subject.name[0]} · 学习`,`${subject.name[1]} · Learn`)}</small></span></a><SiteNav active={fromPractice?'practice':'learn'}/><div className="top-actions"><LanguageControl/><ThemeControl/><AccountMenu username={username}/></div></header>;
- const examView=view.kind==='exam'||((view.kind==='quiz'||view.kind==='result')&&view.mode==='exam');
+ const examView=view.kind==='exam'||view.kind==='paper'||((view.kind==='quiz'||view.kind==='result')&&view.mode==='exam');
  const back=fromPractice&&examView?<a className="ai-back" href={`/practice/${subject.id}`}><ArrowLeft size={16}/>{L("返回训练","Back to practice")}</a>:<button className="ai-back" onClick={()=>setView({kind:'map'})}><ArrowLeft size={16}/>{L("返回关卡","Back to levels")}</button>;
  let body;
  const levelIndex=(id:string)=>levels.findIndex(l=>l.id===id);
@@ -98,12 +101,16 @@ const passedLevelsOf=(p:Set<string>)=>levels.filter(l=>p.has(l.id)).length;
   <LessonCards key={level.id} lessons={level.lessons} quizCount={level.quiz.length} need={Math.ceil(level.quiz.length*passRate)} onStart={()=>start('level',view.level)}/>
   <LevelInterviews ids={subject.interviewByLevel[level.id]??[]} subject={subject.interviewSubject}/></>}
  else if(view.kind==='exam'){const e=examById(view.id)!,open=examOpen(e),best=saved.best[e.id],review=e.kind==='training'?reviews.get('tier-'+e.tiers[0]):reviews.get(e.id),types=[...new Set(e.quiz.map(q=>q.type??'single'))] as AiQuizType[];
+  const paper=e.kind!=='training'&&hasPaper(e.id);
   const need=e.requires.filter(id=>!passed.has(id)).map(id=>levels.find(l=>l.id===id)?.title??examById(id)?.title??id);
   body=<>{back}<div className="ai-title"><span className="eyebrow">{L(...examKindNames[e.kind])}</span><h1>{e.title}</h1><p>{fromPractice?e.summary.replace(/^.*?解锁，/,''):e.summary}</p></div>
-  <section className="ai-card ai-exam-info"><ul><li><strong>{examSize(e)}</strong>{L(' 道题','questions')}</li><li><strong>{Math.round(e.passRate*100)}%</strong>{L(' 及格','to pass')}</li><li><strong>{best!==undefined?Math.round(best*100)+'%':'—'}</strong>{L(' 最佳成绩','best')}</li></ul>
-   <p className="muted">{L('题型：','Types: ')}{types.map(t=>aiQuizTypes[t]).join('、')}{L('。题目全新，比关卡题更难；答完有详解，答错的题会进错题本。',' · New questions, harder than level quizzes.')}</p>
+  <section className="ai-card ai-exam-info">{paper?<ul><li><strong>44</strong>{L(' 道题','questions')}</li><li><strong>{PAPER_TOTAL}</strong>{L(' 分满分','points')}</li><li><strong>{Math.ceil(PAPER_TOTAL*e.passRate)}</strong>{L(' 分及格','to pass')}</li><li><strong>{PAPER_MINUTES}</strong>{L(' 分钟','minutes')}</li><li><strong>{best!==undefined?Math.round(best*PAPER_TOTAL):'—'}</strong>{L(' 最佳成绩','best')}</li></ul>:<ul><li><strong>{examSize(e)}</strong>{L(' 道题','questions')}</li><li><strong>{Math.round(e.passRate*100)}%</strong>{L(' 及格','to pass')}</li><li><strong>{best!==undefined?Math.round(best*100)+'%':'—'}</strong>{L(' 最佳成绩','best')}</li></ul>}
+   {paper?<p className="muted">{L('正式答卷：单选、多选、判断、填空、简答、代码和综合题（设计 + 代码），每种题型越往后越难。限时作答，交卷后才判分并显示解析，可以下载 PDF 答卷。','A full paper: answers and explanations appear after you submit; downloadable as PDF.')}</p>:<p className="muted">{L('题型：','Types: ')}{types.map(t=>aiQuizTypes[t]).join('、')}{L('。题目全新，比关卡题更难；答完有详解，答错的题会进错题本。',' · New questions, harder than level quizzes.')}</p>}
    {!open&&<p className="ai-exam-lock"><Lock size={15}/>{L(`还需要先完成：${need.join('、')}`,`Complete first: ${need.join(', ')}`)}</p>}
-   <div className="ai-result-actions">{review&&<button className="button secondary" onClick={()=>setWatching(review)}><Film size={16}/>{e.kind==='training'?L('阶段复习动画','Stage review'):L('考前复习动画','Pre-exam review')}</button>}<button className="button primary" disabled={!open} onClick={()=>start('exam',undefined,e.id)}>{e.kind==='training'?<Dumbbell size={16}/>:<ClipboardCheck size={16}/>}{L('开始','Start')}<ArrowRight size={16}/></button></div></section></>}
+   <div className="ai-result-actions">{review&&<button className="button secondary" onClick={()=>setWatching(review)}><Film size={16}/>{e.kind==='training'?L('阶段复习动画','Stage review'):L('考前复习动画','Pre-exam review')}</button>}<button className="button primary" disabled={!open} onClick={()=>paper?setView({kind:'paper',id:e.id}):start('exam',undefined,e.id)}>{e.kind==='training'?<Dumbbell size={16}/>:<ClipboardCheck size={16}/>}{L('开始','Start')}<ArrowRight size={16}/></button></div></section></>}
+ // 150 分试卷：得分按满分 150 折算成比例记入最佳成绩，达到及格线即通过。
+ else if(view.kind==='paper'){const e=examById(view.id)!;
+  body=<>{back}<PaperExam examId={e.id} title={e.title} passRate={e.passRate} storageKey={key+':'} onScored={score=>{const ratio=score/PAPER_TOTAL,next:Saved={...saved,best:{...saved.best,[e.id]:Math.max(saved.best[e.id]??0,ratio)},passed:ratio>=e.passRate&&!saved.passed.includes(e.id)?[...saved.passed,e.id]:saved.passed};persist(next)}}/></>}
  else if(view.kind==='quiz'){const it=view.items[view.index],done=view.results[view.index]!==null,last=view.index===view.items.length-1;
   body=<>{back}<div className="ai-quiz-head"><span className="eyebrow">{view.mode==='exam'?(examById(view.exam)?.title??''):view.mode==='level'?L(`第 ${view.level!+1} 关 · 答题`,`Level ${view.level!+1} · Quiz`):view.mode==='random'?L("随机练习","Random practice"):L("错题本","Mistake book")}</span><span>{view.index+1} / {view.items.length}</span></div><Progress value={(view.index+(done?1:0))/view.items.length*100}/>
   <QuestionCard key={it.id+'@'+view.index} item={it} label={view.mode!=='level'&&view.mode!=='exam'?(levels.find(l=>l.id===it.level)?.title??examById(it.level)?.title):undefined} result={view.results[view.index]} last={last} onAnswer={answer} onNext={()=>last?finish(view):replaceView({...view,index:view.index+1})}/></>}

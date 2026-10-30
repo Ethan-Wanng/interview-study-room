@@ -1,11 +1,16 @@
 // 闯关学习的通用数据结构（AI 开发、Go 开发等学科共用）。
 // 每道题都有固定 id（错题本按 id 记录），新增题目请使用新的 id，不要修改或复用已有 id。
 export type AiLesson={title:string;body:string;code?:string};
-// single 单选（默认）· multi 多选（全对才算对）· judge 判断 · fill 填空（任一可接受答案即对）· short 简答 / code 代码（看参考答案后自评）
+// single 单选（默认）· multi 多选（全对才算对）· judge 判断 · fill 填空（任一可接受答案即对）· short 简答 / code 代码 / design 综合（AI 按得分点评分，额度用完时对照参考答案自评）
 // interview：关联的面试题 id，答完题后可以展开对照。
-export type AiQuiz={id:string;q:string;explain:string;code?:string;interview?:string}&({type?:'single';options:string[];answer:number}|{type:'multi';options:string[];answers:number[]}|{type:'judge';answer:boolean}|{type:'fill';accepted:string[]}|{type:'short'|'code';reference:string;points:string[]});
+// why：与 options 一一对应，说明每个错误选项其实是什么、用来干什么（正确选项写空字符串）。
+// blanks：多空填空题，每个空一组可接受答案，题干里用「＿＿」标出空的位置；只有一个空时用 accepted。
+// scores：与 points 一一对应，每个得分点的分值（试卷题必填，练习题可省略，省略时按要点平均）。
+export type AiQuiz={id:string;q:string;explain:string;code?:string;interview?:string}&({type?:'single';options:string[];answer:number;why?:string[]}|{type:'multi';options:string[];answers:number[];why?:string[]}|{type:'judge';answer:boolean}|{type:'fill';accepted:string[];blanks?:string[][]}|{type:'short'|'code'|'design';reference:string;points:string[];scores?:number[]});
 export type AiQuizType=NonNullable<AiQuiz['type']>;
-export const aiQuizTypes:Record<AiQuizType,string>={single:'单选',multi:'多选',judge:'判断',fill:'填空',short:'简答',code:'代码'};
+export const aiQuizTypes:Record<AiQuizType,string>={single:'单选',multi:'多选',judge:'判断',fill:'填空',short:'简答',code:'代码',design:'综合'};
+// 多空填空题的空数（单空题为 1）。
+export const blankCount=(q:Extract<AiQuiz,{type:'fill'}>)=>q.blanks?.length??1;
 export type AiLevel={id:string;title:string;summary:string;lessons:AiLesson[];quiz:AiQuiz[]};
 export type Tier={name:string;nameEn:string;from:number;to:number};
 export type Rank={min:number;name:string};
