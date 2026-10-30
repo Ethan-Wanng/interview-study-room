@@ -8,5 +8,7 @@ import {aiLazy5} from './ai-5';
 import {aiLazy6} from './ai-6';
 import {aiLazy7} from './ai-7';
 import {aiLazy8} from './ai-8';
+import {aiLazyFull} from './ai-full';
 
-export const aiLazy:LazyEpisode[]=[aiLazy1,aiLazy2,aiLazy3,aiLazy4,aiLazy5,aiLazy6,aiLazy7,aiLazy8];
+// 完整故事（full）放在最后，不影响普通集的集数编号；页面上单独置顶显示。
+export const aiLazy:LazyEpisode[]=[aiLazy1,aiLazy2,aiLazy3,aiLazy4,aiLazy5,aiLazy6,aiLazy7,aiLazy8,aiLazyFull];

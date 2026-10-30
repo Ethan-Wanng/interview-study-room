@@ -7,5 +7,7 @@ import {goLazy4} from './go-4';
 import {goLazy5} from './go-5';
 import {goLazy6} from './go-6';
 import {goLazy7} from './go-7';
+import {goLazyFull} from './go-full';
 
-export const goLazy:LazyEpisode[]=[goLazy1,goLazy2,goLazy3,goLazy4,goLazy5,goLazy6,goLazy7];
+// 完整故事（full）放在最后，不影响普通集的集数编号；页面上单独置顶显示。
+export const goLazy:LazyEpisode[]=[goLazy1,goLazy2,goLazy3,goLazy4,goLazy5,goLazy6,goLazy7,goLazyFull];
