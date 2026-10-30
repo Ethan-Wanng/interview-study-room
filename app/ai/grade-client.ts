@@ -7,6 +7,11 @@ export const isWritten=(q:AiQuiz):q is Written=>q.type==='short'||q.type==='code
 export const PRACTICE_MAX=10;
 export const toGradeItem=(q:Written,answer:string,max=PRACTICE_MAX):GradeItem=>({id:q.id,kind:q.type,q:q.q,code:q.code,reference:q.reference,points:q.points,scores:q.scores,max,answer});
 
+// 今天还能用几次 AI 评分；查不到时返回 null（不影响作答）。
+export async function gradeQuota():Promise<number|null>{
+ try{const j=await fetch('/api/grade').then(r=>r.json()) as {remaining?:unknown};return typeof j.remaining==='number'?j.remaining:null}
+ catch{return null}}
+
 // 调用 AI 评分。返回评分结果，或者一个可以直接展示给用户的错误说明（额度用完、服务不可用、网络断开）。
 export type GradeOutcome={ok:true;results:GradeResult[];remaining:number}|{ok:false;quota:boolean;message:string};
 export async function requestGrade(items:GradeItem[]):Promise<GradeOutcome>{

@@ -12,7 +12,7 @@ import {Progress} from '@/components/ui/progress';
 import {useI18n,LanguageControl} from '../components/i18n';
 import ThemeControl from '../components/theme-control';
 import AccountMenu from '../components/account-menu';
-import {aiQuizTypes,examKindNames,rankAt,tierAt,type AiQuiz,type AiQuizType,type Exam} from '@/content/journey';
+import {aiQuizTypes,examKindNames,PAPER_QUESTIONS,rankAt,tierAt,type AiQuiz,type AiQuizType,type Exam} from '@/content/journey';
 import QuestionCard,{answerText,type Item,type Result} from './question-card';
 import AnimationPlayer from './animations/player';
 import LessonCards from './lesson-cards';
@@ -40,8 +40,8 @@ export default function JourneyClient({username,subject,interviews}:{username:st
  const {levels,passRate}=subject,rankOf=(n:number)=>rankAt(subject.ranks,n),tierOf=(i:number)=>tierAt(subject.tiers,i);
  const allQuestions=levels.flatMap(l=>l.quiz.map(quiz=>({id:quiz.id,level:l.id,quiz}))),examQuestions=subject.exams.flatMap(e=>e.quiz.map(quiz=>({id:quiz.id,level:e.id,quiz}))),byId=new Map([...allQuestions,...examQuestions].map(q=>[q.id,q])),interviewMap=new Map(interviews.map(d=>[d.id,d]));
  const exams=subject.exams,examById=(id?:string)=>exams.find(e=>e.id===id),tierLevels=(t:number)=>levels.slice(subject.tiers[t].from,subject.tiers[t].to+1);
- // 阶段训练题量 = 该阶段关卡题目总数 ÷ 2（向上取整）；阶段考试 25 题、最终考试 30 题，题库里写多少就出多少。
- const examSize=(e:Exam)=>Math.min(e.quiz.length,e.kind==='training'?Math.ceil(e.tiers.flatMap(tierLevels).reduce((n,l)=>n+l.quiz.length,0)/2):e.quiz.length);
+ // 阶段训练题量 = 该阶段关卡题目总数 ÷ 2（向上取整）；阶段考试和最终考试是固定 44 题的 150 分试卷。
+ const examSize=(e:Exam)=>e.kind==='training'?Math.min(e.quiz.length,Math.ceil(e.tiers.flatMap(tierLevels).reduce((n,l)=>n+l.quiz.length,0)/2)):PAPER_QUESTIONS;
  // 复习动画：阶段复习每 3 道面试题一个镜头，阶段考试每 4 道，最终考试每 5 道；关卡和面试题越多，动画越长。
  // subject 在页面里是常量，按 subject 和面试题缓存即可。
  const reviews=useMemo(()=>{const titles=new Map(interviews.map(d=>[d.id,d.title]));return new Map([...subjectReviews({...subject,titleOf:id=>titles.get(id)})].map(([k,s])=>[k,storyAnimation(s)]))},[subject,interviews]);
