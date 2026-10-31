@@ -34,7 +34,8 @@ export function playCue(cue:Cue|undefined,speed=1){const c=audio();if(!c)return;
  if(!cue.add&&!cue.send&&!cue.bubble&&!cue.ok&&!cue.bad&&!cue.drop)whoosh(c,0,0.025,0.3)}
 
 // 旁白录音：public/tts/<sha256(声音+换行+台词) 前 16 位>.mp3，时长（毫秒）记在 public/tts/index.json。换声音只改这里，然后重新生成。
-export const TTS_VOICE='Leda';
+// 现在用 Azure 的“晓晓”（温柔风格）；声音名不以 Neural 结尾时，生成脚本改用 Gemini TTS。
+export const TTS_VOICE='zh-CN-XiaoxiaoNeural';
 // 让符号读起来自然：箭头读作“到”，间隔点读作停顿，去掉表情符号。生成录音的脚本也用它整理要朗读的文字。
 export const spoken=(t:string)=>t.replace(/\s*[→⇒]\s*/g,' 到 ').replace(/\s*[·•]\s*/g,'，').replace(/\p{Extended_Pictographic}/gu,'').replace(/\n/g,'，');
 export async function ttsHash(text:string,voice=TTS_VOICE){const d=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(voice+'\n'+text));
@@ -54,19 +55,39 @@ function pickVoice(){const all=speechSynthesis.getVoices(),zh=all.filter(v=>/^zh
 // 同一个 <audio> 反复使用：手机浏览器在第一次点击播放后才允许出声，复用元素能一直保持这个许可。
 let player:HTMLAudioElement|null=null,token=0,playing='';
 let current:SpeechSynthesisUtterance|null=null; // 保留引用，避免 Chrome 回收后不触发 onend
-function webSpeech(text:string,rate:number,onEnd:()=>void){if(!voiceSupported())return onEnd();speechSynthesis.cancel();
- const u=new SpeechSynthesisUtterance(spoken(text)),v=pickVoice();u.lang=v?.lang??'zh-CN';if(v)u.voice=v;u.rate=Math.min(2,rate);
- u.onend=u.onerror=()=>{if(current===u){current=null;onEnd()}};current=u;speechSynthesis.speak(u)}
-// 朗读一句台词：有录音就从 offset 毫秒处播放录音（倍速不变调），否则用语音合成从头读。
-export function speak(text:string,rate:number,onEnd:()=>void,offset=0){stopSpeaking();const my=token,done=()=>{if(my===token){token++;onEnd()}};
+// 语音合成读到了哪里：text 是这句台词，全文按 spoken() 整理后共 len 个字，从第 from 个字开始读。
+// char/at 是最近一次“读到某个词”事件的位置和时间；有的浏览器（Chrome 的 Google 语音）不发这个事件，就按语速估算。
+const CPS=4.2; // 语音合成 1 倍速时大约每秒读几个汉字
+let ws:{text:string;len:number;from:number;rate:number;began:number;char:number;at:number;done:boolean}|null=null;
+function webSpeech(text:string,rate:number,from:number,onEnd:()=>void){if(!voiceSupported())return onEnd();speechSynthesis.cancel();
+ const all=spoken(text),u=new SpeechSynthesisUtterance(all.slice(from)),v=pickVoice();u.lang=v?.lang??'zh-CN';if(v)u.voice=v;u.rate=Math.min(2,rate);
+ const state={text,len:[...all].length,from,rate:u.rate,began:Date.now(),char:from,at:0,done:false};ws=state;
+ u.onstart=()=>{state.began=Date.now()};
+ u.onboundary=e=>{state.char=from+e.charIndex;state.at=Date.now()};
+ u.onend=u.onerror=()=>{state.done=true;if(current===u){current=null;onEnd()}};current=u;speechSynthesis.speak(u)}
+// 从整句的 frac（0–1）处开始读时，退到这个位置之前最近的标点之后，让朗读从字幕这一段的开头接上。
+function startChar(all:string,frac:number){if(frac<=0)return 0;const chars=[...all];let i=Math.min(chars.length-1,Math.round(frac*chars.length));
+ while(i>0&&!/[，。；：？！、,.;:?!…—]/.test(chars[i-1]))i--;return chars.slice(0,i).join('').length}
+// 朗读一句台词：有录音就从 offset 毫秒处播放录音（倍速不变调）；否则用语音合成，从整句的 frac 处（字幕当前这一段的开头）读起。
+export function speak(text:string,rate:number,onEnd:()=>void,offset=0,frac=0){stopSpeaking();const my=token,done=()=>{if(my===token){token++;onEnd()}};
+ pending={text,frac}; // 录音或语音还没真正开始时，字幕先停在起读的位置
  void (async()=>{const h=await ttsHash(text).catch(()=>''),ms=h?(await ttsIndex())[h]:undefined;if(my!==token)return;
-  if(!ms){playing='';return webSpeech(text,rate*1.15,done)}
+  if(!ms){playing='';return webSpeech(text,rate*1.15,startChar(spoken(text),frac),done)}
   const a=player??=new Audio();a.src=`/tts/${h}.mp3`;playing=text;a.preservesPitch=true;(a as unknown as {webkitPreservesPitch:boolean}).webkitPreservesPitch=true;
   a.playbackRate=rate;a.currentTime=Math.min(offset,ms)/1000;a.onended=done;
   const fail=()=>{if(my===token)playing='';done()};a.onerror=fail; // 加载失败时字幕改按时间估算进度
   a.play().then(()=>{a.playbackRate=rate}).catch(fail)})()}
-// 某句台词的录音读到了哪里（毫秒）：暂停、读完后停在原处；这句没有在用录音时为 null。字幕的填色进度跟着它走。
-export const narrationTime=(text:string)=>player&&playing===text?player.currentTime*1000:null;
+let pending:{text:string;frac:number}|null=null;
+// 某句台词实际读到了整句的几分之几（0–1），字幕的填色跟着它走；这句没有在朗读时为 null。
+// 录音按播放位置算；语音合成按“读到某个词”的事件算，两次事件之间、或浏览器不发事件时按语速估算，读完才到 1。
+export function narrationProgress(text:string,ms?:number|null):number|null{
+ if(player&&playing===text&&ms)return Math.min(1,player.currentTime*1000/ms);
+ if(ws&&ws.text===text)return wsProgress(ws);
+ return pending&&pending.text===text?pending.frac:null}
+function wsProgress(w:NonNullable<typeof ws>){if(w.done)return 1;
+ const est=(w.at?w.char:w.from)+(Date.now()-(w.at||w.began))/1000*CPS*w.rate,cap=w.at?w.char+8:w.len*0.95;
+ return Math.min(1,Math.min(est,cap)/(w.len||1))}
 // 中途改倍速：录音立即生效（语音合成从下一句生效）。
 export function setNarrationRate(rate:number){if(player)player.playbackRate=rate}
-export function stopSpeaking(){token++;current=null;if(player){player.onended=player.onerror=null;player.pause()}if(voiceSupported())speechSynthesis.cancel()}
+// 停下时记住语音合成读到的位置：暂停期间字幕停在这里，继续或重新打开语音时从这里接着读。
+export function stopSpeaking(){pending=ws?{text:ws.text,frac:wsProgress(ws)}:null;token++;current=null;ws=null;if(player){player.onended=player.onerror=null;player.pause()}if(voiceSupported())speechSynthesis.cancel()}

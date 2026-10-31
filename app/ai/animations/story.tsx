@@ -84,7 +84,7 @@ const speechOf=(b:Beat)=>b.memo?.length?`${b.say.replace(/[。！？]?$/,'。')}
 const cueOf=(b:Beat):Cue=>{const tones=Object.values(b.tone??{});return {add:b.add?.length??0,send:b.send?.length??0,drop:b.drop?.length??0,bubble:!!b.bubble,ok:tones.includes('ok')||(b.send??[]).some(s=>s.tone==='ok'),bad:tones.includes('bad')||(b.send??[]).some(s=>s.tone==='bad'),memo:!!b.memo}};
 
 // 动画课堂用的故事动画（关联某个学习关卡）。
-export type LessonStory={id:string;level:string;kind:'basic'|'advanced'|'review'|'lazy';icon:string;title:string;summary:string;beats:Beat[]};
+export type LessonStory={id:string;level:string;kind:'basic'|'advanced'|'lazy';icon:string;title:string;summary:string;beats:Beat[]};
 export function storyAnimation(o:LessonStory):Animation{return {id:o.id,level:o.level,kind:o.kind,icon:o.icon,title:o.title,summary:o.summary,continuous:true,
  scenes:o.beats.map(b=>({caption:b.say,ms:beatMs(b),cue:cueOf(b),speech:speechOf(b)})),Visual:storyVisual(o.beats)}}
 

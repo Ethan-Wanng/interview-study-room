@@ -6,7 +6,7 @@ import type {GradeResult} from '@/lib/grade-types';
 export type PaperAnswer={choice?:number[];judge?:boolean;blanks?:string[];text?:string};
 // 主观题的得分：AI 评分结果，或者 AI 不可用时自评勾选的得分点。
 export type WrittenScore={kind:'ai';result:GradeResult}|{kind:'self';score:number;got:boolean[]};
-// orders：开考时为每道选择题随机打乱的选项顺序（存原始下标），复查和 PDF 沿用同一顺序。
+// orders：开考时为每道选择题随机打乱的选项顺序（存原始下标），交卷后复查沿用同一顺序；下载的 PDF 按原始顺序。
 export type PaperRecord={startedAt:number;answers:Record<string,PaperAnswer>;orders?:Record<string,number[]>;submittedAt?:number;written?:Record<string,WrittenScore>;gradeNote?:string};
 
 // 每道题的题型内序号和满分，按试卷顺序排好。

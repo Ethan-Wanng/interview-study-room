@@ -4,7 +4,7 @@ import {useEffect,useMemo,useReducer,useRef,useState,useSyncExternalStore} from 
 import {Download,FastForward,Maximize,Minimize,Pause,Play,Rewind,RotateCcw,Speech,Square,Volume2,VolumeX,ZoomIn,ZoomOut} from 'lucide-react';
 import {useI18n} from '../../components/i18n';
 import type {Animation} from './types';
-import {narrationDurations,narrationTime,playCue,setNarrationRate,speak,stopSpeaking} from './sound';
+import {narrationDurations,narrationProgress,playCue,setNarrationRate,speak,stopSpeaking} from './sound';
 import {chunkAt,splitLine} from './subtitle';
 import {canRecord,recordElement,type Recording} from './record';
 
@@ -56,13 +56,6 @@ export default function AnimationPlayer({animation,onEnd}:{animation:Animation;o
  // 旁白没读完时，画面停在当前镜头末尾等它；万一没有回调，按时长估一个最长等待时间兜底。
  const speaking=useRef({on:false,until:0}),played=useRef('');
  useEffect(()=>{if(!s.playing)return;const timer=setInterval(()=>dispatch({type:'tick',hold:speaking.current.on&&Date.now()<speaking.current.until}),TICK);return()=>clearInterval(timer)},[s.playing]);
- useEffect(()=>{if(!voice||!s.playing||scrub){speaking.current.on=false;stopSpeaking();return}
-  const text=lines[step],d=audioMs(step),offset=d?Math.max(0,s.t-starts[step]):0;
-  if(d&&offset>=d){speaking.current.on=false;return} // 拖到了这句读完之后的停顿里
-  const state={on:true,until:Date.now()+((d?d-offset:[...text].length*380)+3000)/s.speed};speaking.current=state;
-  speak(text,s.speed,()=>{state.on=false},offset);
-  return()=>{state.on=false};
- },[step,s.round,s.playing,s.seeks,voice,scrub]); // eslint-disable-line react-hooks/exhaustive-deps -- 只在换镜、跳转、暂停继续时重新朗读
  useEffect(()=>{setNarrationRate(s.speed)},[s.speed]);
  useEffect(()=>()=>stopSpeaking(),[]);
  const endRef=useRef(onEnd);useEffect(()=>{endRef.current=onEnd});
@@ -96,9 +89,28 @@ export default function AnimationPlayer({animation,onEnd}:{animation:Animation;o
  useEffect(()=>{const el=stage.current;if(!el)return;const ro=new ResizeObserver(([e])=>setStageW(e.contentRect.width));ro.observe(el);return()=>ro.disconnect()},[]);
  const fontSize=Math.round(Math.max(14,Math.min(full?34:22,stageW*0.032))),font=`600 ${fontSize}px system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif`;
  const chunks=useMemo(()=>splitLine(lines[step],stageW*0.92-24,font),[lines,step,stageW,font]);
- const d=audioMs(step),heard=d?narrationTime(lines[step]):null,local=s.t-starts[step];
- const progress=heard!==null&&d?heard/d:Math.min(1,local/(lengths[step]*(d?1:0.85)));
+ // 开着语音时，填色跟着实际朗读的位置走（录音的播放位置，或语音合成读到的字）；关掉语音时按时间估。
+ const d=audioMs(step),local=s.t-starts[step],timeProgress=Math.min(1,local/(lengths[step]*(d?1:0.85)));
+ const heard=voice&&!scrub?narrationProgress(lines[step],d):null,progress=heard??timeProgress;
  const {index:ci,fill}=chunkAt(chunks,progress);
+ // 朗读：换镜时从头读；暂停后继续时从字幕当前这一段的开头接着读；拖动进度后按新位置读。
+ // 关掉语音时，字幕从语音实际读到的位置接着按时间走；再打开时，从字幕正显示的这一段开头读起。两边始终对得上。
+ // 有录音时直接从对应的毫秒处播放；语音合成从对应的字读起，读完前画面停在这一镜末尾等它。
+ const lastSeeks=useRef(s.seeks),lastVoice=useRef(voice);
+ useEffect(()=>{const seeked=lastSeeks.current!==s.seeks,voiceOn=voice&&!lastVoice.current,voiceOff=!voice&&lastVoice.current;lastSeeks.current=s.seeks;lastVoice.current=voice;
+  if(!voice||!s.playing||scrub){speaking.current.on=false;stopSpeaking();
+   const p=voiceOff&&!durs?.[step]?narrationProgress(lines[step]):null;
+   if(p!==null)dispatch({type:'remap',t:Math.min(starts[step]+p*lengths[step]*0.85,starts[step]+lengths[step]-1)});
+   return}
+  const text=lines[step],d=audioMs(step),offset=d?Math.max(0,s.t-starts[step]):0;
+  if(d&&offset>=d){speaking.current.on=false;return} // 拖到了这句读完之后的停顿里
+  const p=d?0:seeked||voiceOn?timeProgress:narrationProgress(text)??timeProgress;
+  if(!d&&p>=0.999){speaking.current.on=false;return} // 这句已经读完
+  const frac=p>0?chunks[chunkAt(chunks,p).index].from:0;
+  const state={on:true,until:Date.now()+((d?d-offset:[...text].length*(1-frac)*380)+3000)/s.speed};speaking.current=state;
+  speak(text,s.speed,()=>{state.on=false},offset,frac);
+  return()=>{state.on=false};
+ },[step,s.round,s.playing,s.seeks,voice,scrub]); // eslint-disable-line react-hooks/exhaustive-deps -- 只在换镜、跳转、暂停继续、开关语音时重新朗读
 
  // 下载：从头播放并录下画面和声音，播完自动保存。
  const [rec,setRec]=useState<Recording|null>(null),[msg,setMsg]=useState(''),recRef=useRef<Recording|null>(null);

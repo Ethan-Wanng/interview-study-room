@@ -7,4 +7,4 @@ export type Cue={add:number;send:number;drop:number;bubble:boolean;ok:boolean;ba
 export type Scene={caption:string;ms:number;cue?:Cue;speech?:string};
 // continuous：画面元素跨分镜保持不变、平滑移动（故事板动画），播放器不做整幅交叉淡化。
 // interview：面试题动画对应的面试题 id。
-export type Animation={id:string;title:string;summary:string;icon:string;level:string;kind:'basic'|'advanced'|'interview'|'review'|'lazy';scenes:Scene[];Visual:ComponentType<{step:number}>;continuous?:boolean;interview?:string};
+export type Animation={id:string;title:string;summary:string;icon:string;level:string;kind:'basic'|'advanced'|'interview'|'lazy';scenes:Scene[];Visual:ComponentType<{step:number}>;continuous?:boolean;interview?:string};

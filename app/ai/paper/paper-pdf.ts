@@ -1,4 +1,4 @@
-// 把交卷后的答卷页面导出成 PDF：先在白底浅色样式下截图，再按 A4 分页，尽量在两道题之间换页。
+// 把试卷或答案与解析导出成 PDF：先在白底浅色样式下截图，再按 A4 分页，尽量在两道题之间换页。
 // 用截图而不是文字排版，是为了中文、代码块和图标都和页面一模一样，不依赖字体文件。
 export async function downloadPaperPdf(el:HTMLElement,filename:string){
  const [{default:html2canvas},{jsPDF}]=await Promise.all([import('html2canvas-pro'),import('jspdf')]);

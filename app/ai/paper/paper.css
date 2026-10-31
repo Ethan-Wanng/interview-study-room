@@ -40,3 +40,18 @@
 .paper-print{--surface:#fff;--surface-soft:#f5f7fb;--ink:#1f2a3d;--body-ink:#3d4a60;--quiet:#5f6f86;--line:#d7dfea;--primary:#3c5aa8;--notice:#2f7a5d;--alert-ink:#b0313f;--alert-bg:#fff1f1;background:#fff;color:#1f2a3d;width:794px;padding:24px;box-sizing:border-box}
 .paper-print .ai-card,.paper-print .paper-q{box-shadow:none;backdrop-filter:none;background:#fff}
 @media (max-width:767px){.paper-q{padding:14px}.paper-judge{grid-template-columns:1fr}.paper-bar{gap:10px}.paper-clock{font-size:16px}}
+/* 下载用的空白试卷和答案与解析：放在屏幕外渲染，只用来截图生成 PDF。 */
+.paper-print-host{position:fixed;left:-10000px;top:0;pointer-events:none}
+.paper-printout{display:flex;flex-direction:column;gap:12px;font-size:14.5px;line-height:1.8}
+.pp-head{text-align:center;padding-bottom:10px;border-bottom:2px solid var(--ink)}.pp-head h1{margin:0;font-size:24px}.pp-head h2{margin:4px 0 6px;font-size:17px;font-weight:600;letter-spacing:4px}.pp-head p{margin:2px 0;color:var(--body-ink)}
+.pp-fields{margin-top:10px!important}.pp-fields i{display:inline-block;width:110px;border-bottom:1px solid var(--ink);vertical-align:bottom}
+.paper-printout .paper-section>h2{font-size:17px}.paper-printout .paper-section>h2 small{margin-left:8px;font-size:13px;font-weight:400;color:var(--quiet)}
+.pp-q{padding:4px 0 10px!important;border:0!important;border-bottom:1px dashed var(--line)!important;border-radius:0!important}
+.pp-q h3{margin:0 0 6px;font-size:15px;font-weight:500;line-height:1.85;white-space:pre-wrap}.pp-q h3 b{margin-right:4px}.pp-judge{margin-left:6px}
+.pp-code{margin:6px 0;padding:10px 12px;border:1px solid var(--line);border-radius:6px;background:var(--surface-soft);font:13px/1.65 ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
+.pp-options{list-style:none;margin:0;padding:0 0 0 22px;display:grid;gap:2px}.pp-options li{display:flex;gap:8px}.pp-options li span{flex:1}
+.pp-options li small{display:block;color:var(--quiet);font-size:12.5px;line-height:1.7}.pp-options li.right{font-weight:600;color:var(--notice)}.pp-options li em{font-style:normal;font-weight:700}
+.pp-space{margin-top:6px;border:1px solid var(--line);border-radius:6px;background:repeating-linear-gradient(#fff 0 31px,#e4e9f1 31px 32px)}
+.pp-answer{margin:6px 0 0 22px;padding:8px 12px;border-left:3px solid var(--primary);background:var(--surface-soft)}.pp-answer p{margin:2px 0}
+.pp-key b,.pp-explain b{color:var(--ink)}.pp-ref{white-space:pre-line;color:var(--body-ink)}.pp-explain{color:var(--body-ink)}
+.pp-points{margin:0;padding-left:20px}.pp-points em{margin-left:8px;font-style:normal;color:var(--quiet)}
