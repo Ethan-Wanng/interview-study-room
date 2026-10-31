@@ -4,7 +4,7 @@ export async function downloadPaperPdf(el:HTMLElement,filename:string){
  const [{default:html2canvas},{jsPDF}]=await Promise.all([import('html2canvas-pro'),import('jspdf')]);
  el.classList.add('paper-print');
  try{const top=el.getBoundingClientRect().top;
-  // 可以换页的位置：每道题和每个大题的顶部（相对答卷顶部，CSS 像素）。
+  // 可以换页的位置：每道题和每个大题的顶部（相对页面顶部，CSS 像素）。
   const breaks=[...el.querySelectorAll<HTMLElement>('.paper-q,.paper-section>h2')].map(n=>n.getBoundingClientRect().top-top).filter(y=>y>0);
   const scale=1.6,canvas=await html2canvas(el,{scale,backgroundColor:'#ffffff',useCORS:true,windowWidth:el.scrollWidth});
   const pdf=new jsPDF({unit:'pt',format:'a4',orientation:'portrait'}),pageW=pdf.internal.pageSize.getWidth(),pageH=pdf.internal.pageSize.getHeight(),margin=28;
