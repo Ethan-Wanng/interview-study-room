@@ -34,10 +34,21 @@ export function playCue(cue:Cue|undefined,speed=1){const c=audio();if(!c)return;
  if(!cue.add&&!cue.send&&!cue.bubble&&!cue.ok&&!cue.bad&&!cue.drop)whoosh(c,0,0.025,0.3)}
 
 // 旁白录音：public/tts/<sha256(声音+换行+台词) 前 16 位>.mp3，时长（毫秒）记在 public/tts/index.json。换声音只改这里，然后重新生成。
-// 现在用 Azure 的“晓晓”（温柔风格）；声音名不以 Neural 结尾时，生成脚本改用 Gemini TTS。
-export const TTS_VOICE='zh-CN-XiaoxiaoNeural';
-// 让符号读起来自然：箭头读作“到”，间隔点读作停顿，去掉表情符号。生成录音的脚本也用它整理要朗读的文字。
-export const spoken=(t:string)=>t.replace(/\s*[→⇒]\s*/g,' 到 ').replace(/\s*[·•]\s*/g,'，').replace(/\p{Extended_Pictographic}/gu,'').replace(/\n/g,'，');
+// 现在用本机开源模型 Kokoro 的 50 号中文女声（kokoro-<编号>）；声音名以 Neural 结尾用 Azure，其余用 Gemini TTS。
+export const TTS_VOICE='kokoro-50';
+// 让符号读起来自然：箭头读作“到”，百分号、运算符、比较符读成中文，代码里的点、下划线、连字符读成“点”或空格，
+// 括号、引号、顿号等读作停顿或不读，去掉表情符号。只影响朗读，字幕照原文显示。生成录音的脚本也用它整理要朗读的文字。
+const SAY:[RegExp,string][]=[
+ [/\p{Extended_Pictographic}/gu,''],[/\n/g,'，'],
+ [/\s*(?:->|=>|[→⇒])\s*/g,' 到 '],[/\s*(?:[·•…、;；]|——|—)\s*/g,'，'],
+ [/(\d+(?:\.\d+)?)\s*%/g,'百分之$1'],[/%/g,' 百分号 '],
+ [/\s*:=\s*/g,' 赋值为 '],[/\s*(?:>=|≥)\s*/g,' 大于等于 '],[/\s*(?:<=|≤)\s*/g,' 小于等于 '],[/\s*(?:!==?|≠)\s*/g,' 不等于 '],[/\s*={2,3}\s*/g,' 等于 '],
+ [/\s*&&\s*/g,' 并且 '],[/\s*\|\|\s*/g,' 或者 '],[/\s*≈\s*/g,' 约等于 '],[/(\d)\s*\*\s*(?=\d)/g,'$1 乘 '],[/\s*×\s*/g,' 乘 '],[/[−]/g,'减'],
+ [/\+\+/g,' 加加 '],[/\s*\+\s*/g,' 加 '],[/\s*=\s*/g,' 等于 '],[/\s*>\s*/g,' 大于 '],[/\s*<\s*/g,' 小于 '],
+ [/²/g,'的平方'],[/°/g,'度'],[/①/g,'一，'],[/②/g,'二，'],[/③/g,'三，'],[/④/g,'四，'],
+ [/(\d)\s*[~～-]\s*(\d)/g,'$1到$2'],[/([A-Za-z0-9])\.(?=[A-Za-z])/g,'$1 点 '],[/[_-]/g,' '],[/\//g,'，'],[/&/g,' 和 '],[/\|/g,' 或 '],[/@/g,' at '],
+ [/[:：]\s*/g,'，'],[/\?/g,'？'],[/!/g,'！'],[/[()（）[\]{}<>《》「」『』【】"'“”‘’`#\\*~～]/g,' '],[/\s*，(\s*，)+\s*/g,'，'],[/ {2,}/g,' ']];
+export const spoken=(t:string)=>SAY.reduce((s,[re,to])=>s.replace(re,to),t).trim();
 export async function ttsHash(text:string,voice=TTS_VOICE){const d=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(voice+'\n'+text));
  return [...new Uint8Array(d).slice(0,8)].map(b=>b.toString(16).padStart(2,'0')).join('')}
 type Index=Record<string,number>;

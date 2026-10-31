@@ -1,5 +1,6 @@
 // 把动画旁白预先生成为 MP3（各平台听到的是同一个声音），写到 public/tts/。
-// 声音名以 Neural 结尾（如 zh-CN-XiaoxiaoNeural）用 Azure 语音，否则用 Gemini TTS。
+// 声音名 kokoro-<编号>（如 kokoro-22）用本机的开源模型生成（仓库外的 ../tts-local，不联网、不需要账号）；
+// 以 Neural 结尾（如 zh-CN-XiaoxiaoNeural）用 Azure 语音；其余用 Gemini TTS。
 // 文件名是 sha256(声音+换行+台词) 的前 16 位，public/tts/index.json 记每个文件的时长（毫秒）。
 // 已生成的跳过，可以随时中断、再次运行接着做；台词改了只会生成改动的那几句。
 // 用法：
@@ -8,6 +9,8 @@
 //   node scripts/gen-tts.mjs --voices Leda,Aoede     用这几个声音各生成一份（试听选声音）
 //   node scripts/gen-tts.mjs --list                  只统计句数、字数，不调用接口
 //   --concurrency 4  同时请求数；--prune  删除不再用到的录音
+//   --subject ai     只生成某个学科（ai、go、backend、frontend）
+//   --shard 0/2      本机生成时开几个进程并行：每个进程只做自己那一份，各写各的 index.shard-*.json，下次不分片运行时合并
 //   --budget 450000  最多用掉多少 Azure 计费字符就停（Azure 每个汉字按 2 个字符计费；免费层每月 50 万）
 // 密钥都在仓库外，不打印、不写进仓库：Gemini 读 ../1.txt；Azure 读 ../azure.txt（第一行密钥，第二行区域，如 eastasia）。
 // Azure 免费层（F0）每分钟只能请求 20 次，所以 Azure 默认单线程、每分钟 18 次。
@@ -45,18 +48,32 @@ const m=await import(pathToFileURL(file).href);
 const interviews=[[m.stories,'ai'],[m.goStories,'go'],[m.backendStories,'backend'],[m.dbStories,'db'],[m.frontendStories,'frontend']].flatMap(([group,level])=>Object.entries(group).map(([id,s])=>m.fromStory(id,level,s)));
 const lazy=[...m.goLazy,...m.aiLazy,...m.backendLazy,...m.frontendLazy].map(m.lazyAnimation);
 const all=[...m.animations,...m.goAnimations,...m.backendAnimations,...m.frontendAnimations,...interviews,...lazy];
-const only=opt('--only')?.split(',').filter(Boolean),picked=only?all.filter(a=>only.includes(a.id)):all;
+// --subject ai|go|backend|frontend：只生成某个学科的动画（课堂动画、面试题动画、懒人故事）。
+const story=(group,level)=>Object.entries(group).map(([id,s])=>m.fromStory(id,level,s)),lazyOf=list=>list.map(m.lazyAnimation);
+const bySubject={ai:()=>[...m.animations,...story(m.stories,'ai'),...lazyOf(m.aiLazy)],go:()=>[...m.goAnimations,...story(m.goStories,'go'),...lazyOf(m.goLazy)],
+ backend:()=>[...m.backendAnimations,...story(m.backendStories,'backend'),...story(m.dbStories,'db'),...lazyOf(m.backendLazy)],frontend:()=>[...m.frontendAnimations,...story(m.frontendStories,'frontend'),...lazyOf(m.frontendLazy)]};
+const subject=opt('--subject');if(subject&&!bySubject[subject])throw new Error('--subject 只能是 '+Object.keys(bySubject).join('、'));
+const only=opt('--only')?.split(',').filter(Boolean),pool=subject?bySubject[subject]():all,picked=only?pool.filter(a=>only.includes(a.id)):pool;
 if(only&&picked.length<only.length)console.warn('找不到的动画：'+only.filter(id=>!picked.some(a=>a.id===id)).join(', '));
 const lines=[...new Set(picked.flatMap(a=>a.scenes.map(s=>s.speech??s.caption)))];
 const voices=(opt('--voices')??m.TTS_VOICE).split(',').filter(Boolean);
 const chars=lines.reduce((n,t)=>n+[...t].length,0);
 console.log(`${picked.length} 个动画，${lines.length} 句不重复的台词，${chars} 字；声音：${voices.join(', ')}`);
-if(flag('--list')){const cjk=lines.reduce((n,t)=>n+[...m.spoken(t)].filter(c=>/[⺀-鿿가-힯豈-﫿]/.test(c)).length,0),all=lines.reduce((n,t)=>n+[...m.spoken(t)].length,0);console.log(`Azure 计费字符约 ${all+cjk}（汉字按 2 个计）`);process.exit(0)}
+if(flag('--list')){const cjk=lines.reduce((n,t)=>n+[...m.spoken(t)].filter(c=>/[⺀-鿿가-힯豈-﫿]/.test(c)).length,0),all=lines.reduce((n,t)=>n+[...m.spoken(t)].length,0);console.log(`Azure 计费字符约 ${all+cjk}（汉字按 2 个计）`);
+ const sym=new Map();for(const t of lines)for(const c of m.spoken(t))if(!/[\p{Script=Han}A-Za-z0-9\s，。？！]/u.test(c))sym.set(c,(sym.get(c)??0)+1);
+ console.log('朗读文字里的其他符号（次数）：'+[...sym].sort((x,y)=>y[1]-x[1]).map(([c,n])=>c+' '+n).join('  '));
+ // 本机模型：列出词典里没有、也不会按字母读的英文词（会被跳过不读），在 ../tts-local/words.json 里补读法。
+ if(voices.some(v=>/^kokoro-\d+$/.test(v))){const t=createRequire(import.meta.url)(resolve('..','tts-local','tts.cjs'));for(const l of lines)t.prepare(m.spoken(l));
+  console.log('本机模型不认识的英文词（次数）：'+[...t.unknownWords()].sort((x,y)=>y[1]-x[1]).map(([w,n])=>w+' '+n).join('  '))}
+ process.exit(0)}
 
 // ---- 2. 逐句调用 TTS 接口，转成 MP3 ----
-const azure=voices.some(v=>/Neural$/.test(v));
-if(azure&&voices.some(v=>!/Neural$/.test(v)))throw new Error('一次只能用同一家的声音（Azure 的 *Neural 或 Gemini 的）');
-const [key,region]=readFileSync(resolve('..',azure?'azure.txt':'1.txt'),'utf8').split(/\r?\n/).map(x=>x.trim());
+const kind=v=>/^kokoro-\d+$/.test(v)?'local':/Neural$/.test(v)?'azure':'gemini',provider=kind(voices[0]);
+if(voices.some(v=>kind(v)!==provider))throw new Error('一次只能用同一种声音（本机 kokoro-*、Azure 的 *Neural 或 Gemini 的）');
+const azure=provider==='azure',local=provider==='local';
+// 本机模型：../tts-local/tts.cjs（sherpa-onnx + Kokoro），同步生成，一个进程一次一句。
+const localTts=local?createRequire(import.meta.url)(resolve('..','tts-local','tts.cjs')):null;
+const [key,region]=local?['local']:readFileSync(resolve('..',azure?'azure.txt':'1.txt'),'utf8').split(/\r?\n/).map(x=>x.trim());
 if(!key)throw new Error(`../${azure?'azure.txt':'1.txt'} 里没有密钥`);
 if(azure&&!region)throw new Error('../azure.txt 第二行要写区域（Azure 门户“密钥和终结点”里的“位置/区域”，如 eastasia）');
 const dispatcher=new EnvHttpProxyAgent(); // 走 HTTPS_PROXY（本机代理），NO_PROXY 里的地址直连
@@ -79,11 +96,16 @@ async function azureTts(text,voice){const ssml=`<speak version="1.0" xmlns="http
   const wait=Math.min(60000,3000*2**attempt)+Math.random()*1000;console.warn(`  重试（${err}），${Math.round(wait/1000)} 秒后`);await sleep(wait)}}
 const hashOf=(voice,text)=>createHash('sha256').update(voice+'\n'+text).digest('hex').slice(0,16);
 mkdirSync(OUT,{recursive:true});
-const indexFile=join(OUT,'index.json'),index=existsSync(indexFile)?JSON.parse(readFileSync(indexFile,'utf8')):{};
-const saveIndex=()=>{const tmp=indexFile+'.tmp';writeFileSync(tmp,JSON.stringify(Object.fromEntries(Object.entries(index).sort(([a],[b])=>a<b?-1:1))));renameSync(tmp,indexFile)};
+// 并行时每个进程写自己的 index.shard-<i>.json；不分片运行时把这些分片合并进 index.json 并删掉。
+const shard=opt('--shard')?.split('/').map(Number),mainIndex=join(OUT,'index.json'),indexFile=shard?join(OUT,`index.shard-${shard[0]}.json`):mainIndex;
+const index=existsSync(mainIndex)?JSON.parse(readFileSync(mainIndex,'utf8')):{},shardFiles=readdirSync(OUT).filter(f=>/^index\.shard-\d+\.json$/.test(f));
+for(const f of shardFiles)Object.assign(index,JSON.parse(readFileSync(join(OUT,f),'utf8')));
+const own=shard?(existsSync(indexFile)?JSON.parse(readFileSync(indexFile,'utf8')):{}):index;
+const saveIndex=()=>{const tmp=indexFile+'.tmp';writeFileSync(tmp,JSON.stringify(Object.fromEntries(Object.entries(own).sort(([a],[b])=>a<b?-1:1))));renameSync(tmp,indexFile)};
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
-async function tts(text,voice){if(azure)return azureTts(text,voice);const body={contents:[{parts:[{text:STYLE+m.spoken(text)}]}],generationConfig:{responseModalities:['AUDIO'],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:voice}}}}};
+async function tts(text,voice){if(azure)return azureTts(text,voice);
+ if(local){const {pcm,rate}=localTts.synth(m.spoken(text),Number(voice.slice(7)),0.95);return {pcm:Buffer.from(pcm.buffer,pcm.byteOffset,pcm.byteLength),rate,usage:{}}}const body={contents:[{parts:[{text:STYLE+m.spoken(text)}]}],generationConfig:{responseModalities:['AUDIO'],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:voice}}}}};
  for(let attempt=0;;attempt++){let res,err;
   try{res=await proxyFetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,{method:'POST',dispatcher,headers:{'content-type':'application/json','x-goog-api-key':key},body:JSON.stringify(body),signal:AbortSignal.timeout(120000)})}catch(e){err=e.cause?.code??e.name}
   if(res?.ok){const j=await res.json(),part=j.candidates?.[0]?.content?.parts?.find(p=>p.inlineData);
@@ -100,14 +122,14 @@ function trim(s,rate){const th=400;let a=0,b=s.length;while(a<b&&Math.abs(s[a])<
  return s.subarray(Math.max(0,a-Math.round(rate*0.06)),Math.min(s.length,b+Math.round(rate*0.12)))}
 function mp3(samples,rate){const enc=new Mp3Encoder(1,rate,KBPS),parts=[];for(let i=0;i<samples.length;i+=1152)parts.push(enc.encodeBuffer(samples.subarray(i,i+1152)));parts.push(enc.flush());return Buffer.concat(parts.map(p=>Buffer.from(p)))}
 
-const jobs=voices.flatMap(voice=>lines.map(text=>({voice,text,hash:hashOf(voice,text)}))),todo=jobs.filter(j=>!(index[j.hash]&&existsSync(join(OUT,j.hash+'.mp3'))));
+const jobs=voices.flatMap(voice=>lines.map(text=>({voice,text,hash:hashOf(voice,text)}))),todo=jobs.filter(j=>!(index[j.hash]&&existsSync(join(OUT,j.hash+'.mp3')))).filter((_,i)=>!shard||i%shard[1]===shard[0]);
 console.log(`需要生成 ${todo.length} 句（已有 ${jobs.length-todo.length} 句）`);
-const conc=Number(opt('--concurrency')??(azure?2:3)),started=Date.now(),stat={n:0,chars:0,audioMs:0,callMs:0,inTok:0,outTok:0,fail:0},samples=new Map();
+const conc=Number(opt('--concurrency')??(local?1:azure?2:3)),started=Date.now(),stat={n:0,chars:0,audioMs:0,callMs:0,inTok:0,outTok:0,fail:0},samples=new Map();
 let next=0,unsaved=0,fatal='',spent=0;
 async function worker(){while(next<todo.length){const j=todo[next++],t0=Date.now(),cost=billable(m.spoken(j.text));
  if(spent+cost>budget){next=todo.length;fatal=`达到 --budget ${budget} 计费字符，本次用了 ${spent}`;break}spent+=cost;
  try{const {pcm,rate,usage}=await tts(j.text,j.voice),raw=new Int16Array(pcm.buffer,pcm.byteOffset,pcm.length>>1),s=trim(raw,rate),ms=Math.round(s.length/rate*1000);
-  const f=join(OUT,j.hash+'.mp3');writeFileSync(f+'.tmp',mp3(s,rate));renameSync(f+'.tmp',f);index[j.hash]=ms;
+  const f=join(OUT,j.hash+'.mp3');writeFileSync(f+'.tmp',mp3(s,rate));renameSync(f+'.tmp',f);index[j.hash]=own[j.hash]=ms;
   if(opt('--voices'))samples.set(j.hash,{s,rate});
   stat.n++;stat.chars+=[...j.text].length;stat.audioMs+=ms;stat.callMs+=Date.now()-t0;stat.inTok+=usage.promptTokenCount??0;stat.outTok+=usage.candidatesTokenCount??0;
   if([...j.text].length>=15&&ms/[...j.text].length>330)console.warn(`  注意：${j.hash} 每字 ${Math.round(ms/[...j.text].length)} 毫秒，偏慢，可能把风格提示也读出来了`);
@@ -116,6 +138,7 @@ async function worker(){while(next<todo.length){const j=todo[next++],t0=Date.now
  catch(e){if(e.fatal){next=todo.length;fatal=e.message}stat.fail++;console.error(`失败 ${j.voice} ${j.hash}：${e.message}  ${j.text.slice(0,24)}`)}}}
 process.on('SIGINT',()=>{saveIndex();console.log('\n已保存进度，下次运行会接着生成。');process.exit(130)});
 await Promise.all(Array.from({length:Math.min(conc,todo.length)},worker));saveIndex();
+if(!shard)for(const f of shardFiles)unlinkSync(join(OUT,f)); // 分片已经合并进 index.json
 
 // 试听：每个声音把这批台词连成一个 MP3（句间停 0.3 秒），放在 outputs/tts-samples/（不进仓库）。
 if(opt('--voices')){mkdirSync('outputs/tts-samples',{recursive:true});
