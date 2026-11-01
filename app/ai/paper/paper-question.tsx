@@ -36,7 +36,7 @@ export default function PaperQuestion({q,no,max,answer,order,onChange,review}:{q
   <h3>{q.q}</h3>{q.code&&<pre className="ai-snippet"><code>{q.code}</code></pre>}{body}
   {review&&<div className="paper-review">
    {!written&&<p className="ai-answer">{L('正确答案：','Answer: ')}{type==='single'||type==='multi'?(type==='multi'?(q as Extract<AiQuiz,{type:'multi'}>).answers:[(q as Extract<AiQuiz,{answer:number}>).answer]).map(i=>letters[(order??[]).indexOf(i)>=0?(order??[]).indexOf(i):i]).sort().join('、')+'  ':''}{answerText(q,L)}</p>}
-   {written&&review.written?.kind==='ai'&&<GradeBreakdown result={review.written.result}/>}
+   {written&&review.written?.kind==='ai'&&<GradeBreakdown result={review.written.result} code={q.type!=='short'}/>}
    {written&&!review.written&&review.onSelfScore&&<SelfScore points={written.points} scores={written.scores} max={max} onDone={review.onSelfScore}/>}
    {written&&review.written?.kind==='self'&&<p className="paper-self">{L(`自评 ${review.written.score} / ${max} 分`,`Self-scored ${review.written.score} / ${max}`)}</p>}
    {written&&<div className="ai-reference"><strong>{L('参考答案','Reference answer')}</strong>{q.type==='short'?<p><KeywordText text={written.reference}/></p>:<pre><code>{written.reference}</code></pre>}</div>}

@@ -6,10 +6,12 @@ import {pointScores,type GradeResult} from '@/lib/grade-types';
 const half=(n:number)=>Number.isInteger(n)?String(n):n.toFixed(1);
 
 // AI 评分结果：总分、每个得分点拿了几分和点评、一句总评。练习题和试卷共用。
-export function GradeBreakdown({result,remaining}:{result:GradeResult;remaining?:number}){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
+// code：代码题、综合题的示范回答按代码排版。
+export function GradeBreakdown({result,remaining,code}:{result:GradeResult;remaining?:number;code?:boolean}){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
  return <div className="ai-grade"><div className="ai-grade-head"><strong>{L('AI 评分','AI score')}</strong><b>{half(result.score)} / {result.max}</b>{remaining!==undefined&&<small>{L(`今天还可以用 ${remaining} 次`,`${remaining} left today`)}</small>}</div>
   <ul>{result.hits.map((h,i)=><li key={i} className={h.got>=h.max?'full':h.got>0?'part':'none'}>{h.got>=h.max?<Check size={16}/>:h.got>0?<CircleDot size={16}/>:<X size={16}/>}<span><b>{h.point}</b>{h.comment&&<em>{h.comment}</em>}</span><i>{half(h.got)} / {h.max}</i></li>)}</ul>
-  {result.feedback&&<p>{result.feedback}</p>}</div>}
+  {result.feedback&&<p>{result.feedback}</p>}
+  {result.answer&&<details className="ai-grade-answer" open><summary>{L('AI 示范回答','AI model answer')}</summary>{code?<pre><code>{result.answer}</code></pre>:<p>{result.answer}</p>}</details>}</div>}
 
 // 自评：AI 评分用不了时，对照得分点逐条勾选答到的部分，按分值算分。
 export function SelfScore({points,scores,max,onDone}:{points:string[];scores?:number[];max:number;onDone:(score:number,got:boolean[])=>void}){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;

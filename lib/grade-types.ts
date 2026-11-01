@@ -5,7 +5,8 @@ export type GradeItem={id:string;kind:GradeKind;q:string;code?:string;reference:
 export type GradeRequest={items:GradeItem[]};
 // hits 与 points 一一对应：got 是这个得分点拿到的分，comment 说明哪里答到了、哪里没答到。
 export type GradeHit={point:string;got:number;max:number;comment:string};
-export type GradeResult={id:string;score:number;max:number;hits:GradeHit[];feedback:string};
+// answer：AI 自己写的满分示范回答，评分后展示给学生对照。
+export type GradeResult={id:string;score:number;max:number;hits:GradeHit[];feedback:string;answer?:string};
 export type GradeResponse={results:GradeResult[];model:string;remaining:number}|{error:'quota';remaining:0;message:string}|{error:'failed';message:string};
 
 // 每日 AI 评分额度：游客 5 次，登录用户 100 次。

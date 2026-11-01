@@ -24,7 +24,7 @@ import {Mp3Encoder} from '@breezystack/lamejs';
 import {fetch as proxyFetch,EnvHttpProxyAgent} from 'undici';
 
 const args=process.argv.slice(2),flag=k=>args.includes(k),opt=k=>{const i=args.indexOf(k);return i>=0?args[i+1]:undefined};
-const MODEL='gemini-3.8-flash-tts',RATE=24000,KBPS=32,OUT='public/tts';
+const MODEL='gemini-3.8-flash-tts',RATE=24000,KBPS=48,OUT='public/tts';
 // 风格提示（温柔、亲切、自然，语速适中）用简短的英文指令：中文长指令会被当成正文读出来，试听时每句多出十来秒。
 const STYLE='Read aloud in Mandarin Chinese, in a warm, gentle, friendly and natural voice, at a moderate pace:\n';
 
@@ -120,7 +120,14 @@ async function tts(text,voice){if(azure)return azureTts(text,voice);
 // 去掉开头结尾的静音（留一点余量），句与句之间的停顿由播放器控制。
 function trim(s,rate){const th=400;let a=0,b=s.length;while(a<b&&Math.abs(s[a])<th)a++;while(b>a&&Math.abs(s[b-1])<th)b--;
  return s.subarray(Math.max(0,a-Math.round(rate*0.06)),Math.min(s.length,b+Math.round(rate*0.12)))}
-function mp3(samples,rate){const enc=new Mp3Encoder(1,rate,KBPS),parts=[];for(let i=0;i<samples.length;i+=1152)parts.push(enc.encodeBuffer(samples.subarray(i,i+1152)));parts.push(enc.flush());return Buffer.concat(parts.map(p=>Buffer.from(p)))}
+// lamejs 编 32kHz 以下（MPEG-2）的 MP3 时只写出空帧，播放是静音；所以先按整数倍线性插值升到 32kHz 以上
+// （24kHz → 48kHz），再按 MPEG-1 编码。编出来的数据大半是 0 字节说明又编坏了，直接报错，不保存静音文件。
+function upsample(s,rate){const k=Math.ceil(32000/rate);if(k<=1)return {s,rate};const out=new Int16Array(s.length*k);
+ for(let i=0;i<s.length;i++){const a=s[i],b=s[Math.min(i+1,s.length-1)];for(let j=0;j<k;j++)out[i*k+j]=Math.round(a+(b-a)*j/k)}return {s:out,rate:rate*k}}
+function mp3(samples,rate){const up=upsample(samples,rate),enc=new Mp3Encoder(1,up.rate,KBPS),parts=[];
+ for(let i=0;i<up.s.length;i+=1152)parts.push(enc.encodeBuffer(up.s.subarray(i,i+1152)));parts.push(enc.flush());
+ const out=Buffer.concat(parts.map(p=>Buffer.from(p))),zeros=out.reduce((n,x)=>n+(x===0?1:0),0);
+ if(samples.length>rate/2&&zeros>out.length*0.5)throw new Error(`MP3 编码结果几乎全是空数据（${Math.round(zeros/out.length*100)}% 为 0），没有保存`);return out}
 
 const jobs=voices.flatMap(voice=>lines.map(text=>({voice,text,hash:hashOf(voice,text)}))),todo=jobs.filter(j=>!(index[j.hash]&&existsSync(join(OUT,j.hash+'.mp3')))).filter((_,i)=>!shard||i%shard[1]===shard[0]);
 console.log(`需要生成 ${todo.length} 句（已有 ${jobs.length-todo.length} 句）`);

@@ -119,3 +119,5 @@ a.ai-level.locked{opacity:.72}
 .ai-grade-error{margin:12px 0;padding:10px 14px;border-radius:10px;background:var(--alert-bg);color:var(--alert-ink);line-height:1.7}
 .ai-self-score{display:grid;gap:8px;margin-top:14px}.ai-self-score label{display:flex;align-items:flex-start;gap:10px;line-height:1.7;cursor:pointer}.ai-self-score label span{flex:1}.ai-self-score label i{font-style:normal;color:var(--quiet);white-space:nowrap}.ai-self-score input{margin-top:6px}.ai-self-score .button{justify-self:start}
 .ai-written-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:20px}.ai-written-actions small{flex-basis:100%;color:var(--quiet);font-size:13px;line-height:1.6}
+.ai-grade-answer{margin:12px 0 0;padding:10px 14px;border-radius:10px;background:var(--surface);border:1px dashed var(--line)}.ai-grade-answer summary{cursor:pointer;font-weight:650}
+.ai-grade-answer p{margin:8px 0 0;line-height:1.85;white-space:pre-line;color:var(--body-ink)}.ai-grade-answer pre{margin:8px 0 0;overflow:auto}

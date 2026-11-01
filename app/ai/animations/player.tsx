@@ -6,7 +6,7 @@ import {useI18n} from '../../components/i18n';
 import type {Animation} from './types';
 import {narrationDurations,narrationProgress,playCue,setNarrationRate,speak,stopSpeaking} from './sound';
 import {chunkAt,splitLine} from './subtitle';
-import {canRecord,recordElement,type Recording} from './record';
+import {canRecord,recordStage,type Recording} from './record';
 
 // PACE：关掉语音时按字数估的镜头时长再乘的系数；GAP：有录音时读完到下一镜的停顿；W×H：画布尺寸。
 const TICK=50,PACE=0.6,FADE=300,GAP=300,MIN_SCENE=1500,JUMP=10000,W=640,H=360,MAX_ZOOM=3;
@@ -116,11 +116,11 @@ export default function AnimationPlayer({animation,onEnd}:{animation:Animation;o
  const [rec,setRec]=useState<Recording|null>(null),[msg,setMsg]=useState(''),recRef=useRef<Recording|null>(null);
  useEffect(()=>{if(!msg)return;const t=setTimeout(()=>setMsg(''),8000);return()=>clearTimeout(t)},[msg]);
  const download=async()=>{if(rec){rec.stop();return}
-  if(!canRecord()){setMsg(L('录制视频需要电脑版 Chrome 或 Edge 浏览器（需要“区域截取”功能），当前浏览器不支持。','Recording needs desktop Chrome or Edge (Region Capture); this browser does not support it.'));return}
+  if(!canRecord()){setMsg(L('当前浏览器不支持录制视频，请换用电脑版 Chrome、Edge 或 Firefox。','This browser cannot record video; try desktop Chrome, Edge or Firefox.'));return}
   if(document.fullscreenElement)await document.exitFullscreen().catch(()=>{});setFull(false);setView({z:1,x:0,y:0});
-  try{const r=await recordElement(stage.current!,animation.title,ok=>{recRef.current=null;setRec(null);setMsg(ok?L('视频已保存到下载文件夹。','Saved to your downloads.'):L('没有录到内容。','Nothing was recorded.'))});
-   recRef.current=r;setRec(r);setMsg(L('录制中：请保持这个标签页在前台，播完会自动保存。','Recording: keep this tab in front; it saves when playback ends.'));dispatch({type:'replay'})}
-  catch(e){setMsg((e as Error)?.message==='crop'?L('请在弹窗里选择“此标签页”再开始录制。','Choose “This tab” in the share dialog.'):L('已取消录制。','Recording cancelled.'))}};
+  try{const r=recordStage(stage.current!,animation.title,ok=>{recRef.current=null;setRec(null);setMsg(ok?L('视频已保存到下载文件夹。','Saved to your downloads.'):L('没有录到内容。','Nothing was recorded.'))});
+   recRef.current=r;setRec(r);setMsg(L('录制中：从头播放一遍，请保持这个标签页在前台，播完会自动保存。','Recording: plays once from the start; keep this tab in front, it saves when playback ends.'));dispatch({type:'replay'})}
+  catch{setMsg(L('录制没有启动，请重试。','Recording could not start. Please try again.'))}};
  useEffect(()=>{if(!done||!rec)return;const t=setTimeout(()=>rec.stop(),800);return()=>clearTimeout(t)},[done,rec]);
  useEffect(()=>()=>recRef.current?.stop(),[]);
 
@@ -147,7 +147,7 @@ export default function AnimationPlayer({animation,onEnd}:{animation:Animation;o
     <button className="an-zoom" onClick={()=>setView({z:1,x:0,y:0})} disabled={view.z<=1} title={L('还原大小','Reset zoom')}>{view.z.toFixed(1).replace(/\.0$/,'')}×</button>
     <button onClick={()=>setView(v=>zoomTo(v,v.z+0.5))} disabled={view.z>=MAX_ZOOM} title={L('放大（放大后可拖动画面）','Zoom in (drag to pan)')} aria-label={L('放大','Zoom in')}><ZoomIn size={15}/></button></span>
    <span className="an-speed an-icons"><button onClick={toggleFull} title={full?L('退出全屏','Exit full screen'):L('全屏','Full screen')} aria-label={full?L('退出全屏','Exit full screen'):L('全屏','Full screen')}>{full?<Minimize size={15}/>:<Maximize size={15}/>}</button>
-    <button className={rec?'on rec':''} onClick={()=>void download()} title={rec?L('停止录制并保存','Stop and save'):L('下载视频：从头播放并录制（电脑版 Chrome / Edge）','Download video: replays and records (desktop Chrome / Edge)')} aria-label={rec?L('停止录制','Stop recording'):L('下载视频','Download video')}>{rec?<Square size={15}/>:<Download size={15}/>}</button></span>
+    <button className={rec?'on rec':''} onClick={()=>void download()} title={rec?L('停止录制并保存','Stop and save'):L('下载视频：从头播放一遍并录制成视频文件','Download video: plays once from the start and records it')} aria-label={rec?L('停止录制','Stop recording'):L('下载视频','Download video')}>{rec?<Square size={15}/>:<Download size={15}/>}</button></span>
   </div>
   {msg&&<p className="an-msg" role="status">{msg}</p>}
  </div>

@@ -8,18 +8,22 @@ function audio(){if(typeof window==='undefined')return null;
  if(!ctx){const C=window.AudioContext??(window as unknown as {webkitAudioContext?:typeof AudioContext}).webkitAudioContext;if(!C)return null;ctx=new C()}
  if(ctx.state==='suspended')void ctx.resume();return ctx}
 
+// 所有声音（音效、录音旁白）都先汇到 out 再到扬声器；录视频时从 out 再接一路到录制流。
+let out:GainNode|null=null,tap:MediaStreamAudioDestinationNode|null=null,narrSrc:MediaElementAudioSourceNode|null=null;
+const output=(c:AudioContext)=>out??=(()=>{const g=c.createGain();g.connect(c.destination);return g})();
+
 type Note={at:number;freq:number;to?:number;dur:number;type?:OscillatorType;vol?:number};
 function note(c:AudioContext,{at,freq,to,dur,type='sine',vol=0.06}:Note){const o=c.createOscillator(),g=c.createGain(),t=c.currentTime+at;
  o.type=type;o.frequency.setValueAtTime(freq,t);if(to)o.frequency.exponentialRampToValueAtTime(to,t+dur);
  g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(vol,t+0.015);g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
- o.connect(g).connect(c.destination);o.start(t);o.stop(t+dur+0.05)}
+ o.connect(g).connect(output(c));o.start(t);o.stop(t+dur+0.05)}
 
 // 传递时的“嗖”：一段白噪声经过扫频的带通滤波。
 function whoosh(c:AudioContext,at:number,vol=0.05,dur=0.4){const len=Math.floor(c.sampleRate*dur),buf=c.createBuffer(1,len,c.sampleRate),d=buf.getChannelData(0);for(let i=0;i<len;i++)d[i]=Math.random()*2-1;
  const src=c.createBufferSource(),f=c.createBiquadFilter(),g=c.createGain(),t=c.currentTime+at;src.buffer=buf;f.type='bandpass';f.Q.value=1.2;
  f.frequency.setValueAtTime(400,t);f.frequency.exponentialRampToValueAtTime(2600,t+dur);
  g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(vol,t+dur*0.4);g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
- src.connect(f).connect(g).connect(c.destination);src.start(t);src.stop(t+dur+0.05)}
+ src.connect(f).connect(g).connect(output(c));src.start(t);src.stop(t+dur+0.05)}
 
 // 按分镜里发生的事件安排音效；没有事件描述的手绘动画只在换镜头时轻响一下。倍速越快，音效排得越紧。
 export function playCue(cue:Cue|undefined,speed=1){const c=audio();if(!c)return;const k=1/speed;
@@ -65,6 +69,12 @@ function pickVoice(){const all=speechSynthesis.getVoices(),zh=all.filter(v=>/^zh
 
 // 同一个 <audio> 反复使用：手机浏览器在第一次点击播放后才允许出声，复用元素能一直保持这个许可。
 let player:HTMLAudioElement|null=null,token=0,playing='';
+const narrator=()=>player??=new Audio();
+// 录视频用的声音：音效和录音旁白（语音合成的声音浏览器不让录，没有录音的台词在视频里是静音）。
+export function recordingAudio():MediaStream|null{const c=audio();if(!c)return null;const o=output(c);
+ if(!narrSrc){narrSrc=c.createMediaElementSource(narrator());narrSrc.connect(o)}
+ tap=c.createMediaStreamDestination();o.connect(tap);return tap.stream}
+export function stopRecordingAudio(){if(out&&tap)out.disconnect(tap);tap=null}
 let current:SpeechSynthesisUtterance|null=null; // 保留引用，避免 Chrome 回收后不触发 onend
 // 语音合成读到了哪里：text 是这句台词，全文按 spoken() 整理后共 len 个字，从第 from 个字开始读。
 // char/at 是最近一次“读到某个词”事件的位置和时间；有的浏览器（Chrome 的 Google 语音）不发这个事件，就按语速估算。
@@ -84,7 +94,7 @@ export function speak(text:string,rate:number,onEnd:()=>void,offset=0,frac=0){st
  pending={text,frac}; // 录音或语音还没真正开始时，字幕先停在起读的位置
  void (async()=>{const h=await ttsHash(text).catch(()=>''),ms=h?(await ttsIndex())[h]:undefined;if(my!==token)return;
   if(!ms){playing='';return webSpeech(text,rate*1.15,startChar(spoken(text),frac),done)}
-  const a=player??=new Audio();a.src=`/tts/${h}.mp3`;playing=text;a.preservesPitch=true;(a as unknown as {webkitPreservesPitch:boolean}).webkitPreservesPitch=true;
+  const a=narrator();a.src=`/tts/${h}.mp3`;playing=text;a.preservesPitch=true;(a as unknown as {webkitPreservesPitch:boolean}).webkitPreservesPitch=true;
   a.playbackRate=rate;a.currentTime=Math.min(offset,ms)/1000;a.onended=done;
   const fail=()=>{if(my===token)playing='';done()};a.onerror=fail; // 加载失败时字幕改按时间估算进度
   a.play().then(()=>{a.playbackRate=rate}).catch(fail)})()}

@@ -52,7 +52,7 @@ export default function QuestionCard({item,label,result,last,onAnswer,onNext}:{i
  else if(isWritten(q))input=<div className="ai-written"><textarea className={q.type!=='short'?'code':''} ref={q.type!=='short'?codeEditing:undefined} rows={q.type==='code'?9:5} value={text} disabled={revealed} spellCheck={q.type!=='code'} placeholder={q.type==='code'?L('在这里写代码（可以只写关键部分），提交后 AI 按得分点评分','Write your code (key parts are enough); AI scores it against the key points'):L('用自己的话写下答案，提交后 AI 按得分点评分','Write your answer; AI scores it against the key points')} onChange={e=>setText(e.target.value)}/>
   {!revealed&&<div className="ai-written-actions"><button className="button primary" disabled={grading||!text.trim()} onClick={()=>void submitWritten()}><Sparkles size={16}/>{grading?L('AI 正在按得分点评分…','AI is grading…'):L('提交，AI 评分','Submit for AI grading')}</button>
    <button className="button secondary" disabled={grading} onClick={()=>setRevealed(true)}><Eye size={16}/>{L('不会写，直接看参考答案','Show the reference')}</button><small>{quotaHint}</small></div>}
-  {graded&&<GradeBreakdown result={graded.result} remaining={graded.remaining}/>}
+  {graded&&<GradeBreakdown result={graded.result} remaining={graded.remaining} code={q.type!=='short'}/>}
   {gradeError&&<p className="ai-grade-error">{gradeError}</p>}
   {revealed&&referenceHidden&&<p className="ai-ref-hidden">{L('参考答案已遮住，写完后再对照。','The reference is hidden until you finish.')}</p>}
   {revealed&&!referenceHidden&&<div className="ai-reference"><strong>{L('参考答案','Reference answer')}</strong>{q.type==='code'?<pre><code>{q.reference}</code></pre>:<p><KeywordText text={q.reference}/></p>}<strong>{L('评分要点','Key points')}</strong><ul>{q.points.map(p=><li key={p}>{p}</li>)}</ul>
@@ -68,7 +68,7 @@ export default function QuestionCard({item,label,result,last,onAnswer,onNext}:{i
    <textarea className={q.type!=='short'?'code':''} ref={q.type!=='short'?codeEditing:undefined} rows={q.type==='code'?9:5} autoFocus value={retry} disabled={checked} spellCheck={q.type!=='code'} placeholder={L('凭理解重新写一遍，再和参考答案逐条对照','Rewrite it from memory, then compare point by point')} onChange={e=>setRetry(e.target.value)}/>
    {!checked?<div className="ai-written-actions"><button className="button primary" disabled={retryGrading||!retry.trim()} onClick={()=>void gradeRetry()}><Sparkles size={16}/>{retryGrading?L('AI 正在按得分点评分…','AI is grading…'):L('写完了，AI 评分','Done — AI grading')}</button>
     <button className="button secondary" disabled={retryGrading||!retry.trim()} onClick={()=>setChecked(true)}><Eye size={16}/>{L('自己对照参考答案','Compare myself')}</button><small>{quotaHint}</small></div>:<div className="ai-retry-check">
-    {retryGraded&&<GradeBreakdown result={retryGraded} remaining={left??undefined}/>}
+    {retryGraded&&<GradeBreakdown result={retryGraded} remaining={left??undefined} code={q.type!=='short'}/>}
     {retryError&&<p className="ai-grade-error">{retryError}</p>}
     <p>{retryGraded?L('看看这次还差哪个得分点。这道题已经在错题本里，之后复习时还会再遇到。','See which key points are still missing. This question stays in your mistake book for later review.'):L('对照上面的参考答案和评分要点，逐条看看这次是否都写到了。这道题已经在错题本里，之后复习时还会再遇到。','Compare with the reference and key points above. This question stays in your mistake book for later review.')}</p>
     <button className="button secondary" onClick={()=>{setRetry('');setChecked(false);setRetryGraded(null);setRetryError('')}}><RotateCcw size={16}/>{L('再练一遍','Practice again')}</button></div>}</>}</div>}
