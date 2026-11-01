@@ -6,6 +6,7 @@ import {useI18n} from '../../components/i18n';
 import {paperLoaders} from '@/content/papers';
 import {paperSections,PAPER_MINUTES,PAPER_TOTAL,type Paper} from '@/content/papers/types';
 import {requestGrade} from '../grade-client';
+import type {GradeResult} from '@/lib/grade-types';
 import PaperQuestion from './paper-question';
 import {PaperPrint} from './paper-print';
 import {answered,isWrittenQuiz,paperLayout,paperScore,type PaperAnswer,type PaperRecord} from './paper-score';
@@ -23,6 +24,8 @@ export default function PaperExam({examId,title,passRate,storageKey,onScored}:{e
  const key=storageKey+'paper:'+examId;
  const [paper,setPaper]=useState<Paper|null|'error'>(null),[record,setRecordState]=useState<PaperRecord|null>(null),[now,setNow]=useState(0),[grading,setGrading]=useState(false),[pdf,setPdf]=useState('');
  const [printing,setPrinting]=useState<'paper'|'answers'|null>(null);
+ // AI 阅卷时正在流式写出的各题评分（只用于显示，不存进答卷）。
+ const [live,setLive]=useState<Record<string,GradeResult>>({});
  const printRef=useRef<HTMLDivElement>(null),scored=useRef(onScored);useEffect(()=>{scored.current=onScored});
  const setRecord=(r:PaperRecord|null)=>{setRecordState(r);write(key,r)};
  useEffect(()=>{let live=true;const load=paperLoaders[examId];if(!load){setPaper('error');return}
@@ -38,7 +41,7 @@ export default function PaperExam({examId,title,passRate,storageKey,onScored}:{e
   const items=layout.filter(x=>isWrittenQuiz(x.q)&&done.answers[x.q.id]?.text?.trim()).map(x=>{const w=x.q as Extract<typeof x.q,{reference:string}>;return {id:w.id,kind:w.type,q:w.q,code:w.code,reference:w.reference,points:w.points,scores:w.scores,max:x.max,answer:done.answers[w.id].text!}});
   const blank=Object.fromEntries(layout.filter(x=>isWrittenQuiz(x.q)&&!done.answers[x.q.id]?.text?.trim()).map(x=>[x.q.id,{kind:'self' as const,score:0,got:[]}]));
   if(!items.length){const next={...done,written:blank};setRecord(next);scored.current(paperScore(paper,next).total);return}
-  setGrading(true);const res=await requestGrade(items);setGrading(false);
+  setGrading(true);setLive({});const res=await requestGrade(items,p=>setLive(Object.fromEntries(p.map(r=>[r.id,r]))));setGrading(false);setLive({});
   const next:PaperRecord=res.ok?{...done,gradeNote:undefined,written:{...done.written,...blank,...Object.fromEntries(res.results.map(g=>[g.id,{kind:'ai' as const,result:g}]))}}:{...done,written:{...done.written,...blank},gradeNote:res.message};
   setRecord(next);if(res.ok)scored.current(paperScore(paper,next).total)}
  useEffect(()=>{if(answering&&now>=deadline&&record)void submit(record)},[now]); // eslint-disable-line react-hooks/exhaustive-deps -- 时间到自动交卷
@@ -82,7 +85,7 @@ export default function PaperExam({examId,title,passRate,storageKey,onScored}:{e
    {pending>0&&!grading&&<button className="button secondary paper-regrade" onClick={()=>void grade(record)}><RotateCcw size={16}/>{L('重新请求 AI 评分','Retry AI grading')}</button>}</section>
   {paperSections.map((s,si)=>{const rows=score.rows.map((x,i)=>({...x,no:i+1})).filter(x=>x.section===si);
    return <section key={s.type} className="paper-section"><h2>{L(`${cn[si+1]}、${s.title}（${rows.reduce((n,x)=>n+x.got,0)} / ${rows.reduce((n,x)=>n+x.max,0)} 分）`,`${s.titleEn}`)}</h2>
-    {rows.map(x=><PaperQuestion key={x.q.id} q={x.q} no={x.no} max={x.max} answer={record.answers[x.q.id]} order={record.orders?.[x.q.id]} review={{got:x.got,written:record.written?.[x.q.id],onSelfScore:isWrittenQuiz(x.q)?selfScore(x.q.id):undefined}}/>)}</section>})}
+    {rows.map(x=><PaperQuestion key={x.q.id} q={x.q} no={x.no} max={x.max} answer={record.answers[x.q.id]} order={record.orders?.[x.q.id]} review={{got:x.got,written:record.written?.[x.q.id],live:grading&&isWrittenQuiz(x.q)&&record.answers[x.q.id]?.text?.trim()?live[x.q.id]??null:undefined,onSelfScore:isWrittenQuiz(x.q)&&!grading?selfScore(x.q.id):undefined}}/>)}</section>})}
  </div>
   <div className="ai-result-actions paper-actions"><button className="button primary" disabled={!!printing} onClick={()=>download('answers')}><Download size={16}/>{L('下载答案与解析（PDF）','Download answers (PDF)')}</button>
    <button className="button secondary" disabled={!!printing} onClick={()=>download('paper')}><FileText size={16}/>{L('下载试卷（PDF）','Download the paper (PDF)')}</button>

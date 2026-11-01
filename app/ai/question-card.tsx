@@ -7,7 +7,7 @@ import {InterviewItem} from './interview-reading';
 import {aiQuizTypes,fillMatches,type AiQuiz} from '@/content/journey';
 import type {GradeResult} from '@/lib/grade-types';
 import {gradeQuota,isWritten,PRACTICE_MAX,requestGrade,toGradeItem} from './grade-client';
-import {GradeBreakdown,SelfScore} from './grade-view';
+import {GradeBreakdown,GradeWaiting,SelfScore} from './grade-view';
 import {codeEditing} from './code-input';
 
 export type Result={correct:boolean;given:string};
@@ -26,18 +26,19 @@ export function answerText(q:AiQuiz,L:(zh:string,en:string)=>string){switch(q.ty
 export default function QuestionCard({item,label,result,last,onAnswer,onNext}:{item:Item;label?:string;result:Result|null;last:boolean;onAnswer:(r:Result)=>void;onNext:()=>void}){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
  const q=item.quiz,type=q.type??'single',done=result!==null;
  const [chosen,setChosen]=useState<number[]>([]),[text,setText]=useState(''),[revealed,setRevealed]=useState(false);
+ const [live,setLive]=useState<GradeResult|null>(null),[retryLive,setRetryLive]=useState<GradeResult|null>(null); // AI 正在流式写出的评分
  const [grading,setGrading]=useState(false),[graded,setGraded]=useState<{result:GradeResult;remaining:number}|null>(null),[gradeError,setGradeError]=useState('');
  // 今天剩余的 AI 评分次数，显示在提交按钮旁边，让人一眼知道写完可以交给 AI 评分。
  const [left,setLeft]=useState<number|null>(null);
  useEffect(()=>{if(isWritten(q))void gradeQuota().then(setLeft)},[q]);
  const submitWritten=async()=>{if(!isWritten(q)||!text.trim())return;
-  setGrading(true);const r=await requestGrade([toGradeItem(q,text)]);setGrading(false);setRevealed(true);
+  setGrading(true);setLive(null);const r=await requestGrade([toGradeItem(q,text)],p=>setLive(p[0]));setGrading(false);setLive(null);setRevealed(true);
   if(r.ok){const result=r.results[0];setGraded({result,remaining:r.remaining});setLeft(r.remaining);onAnswer({correct:result.score>=0.6*result.max,given:text.trim()})}else{setGradeError(r.message);if(r.quota)setLeft(0)}};
  // 简答 / 代码题没答好之后，可以遮住参考答案再写一遍巩固，写完同样交给 AI 评分（不改变本题记分，题目仍留在错题本）。
  const [practising,setPractising]=useState(false),[retry,setRetry]=useState(''),[hideRef,setHideRef]=useState(true),[checked,setChecked]=useState(false);
  const [retryGrading,setRetryGrading]=useState(false),[retryGraded,setRetryGraded]=useState<GradeResult|null>(null),[retryError,setRetryError]=useState('');
  const gradeRetry=async()=>{if(!isWritten(q)||!retry.trim())return;
-  setRetryGrading(true);const r=await requestGrade([toGradeItem(q,retry)]);setRetryGrading(false);setChecked(true);
+  setRetryGrading(true);setRetryLive(null);const r=await requestGrade([toGradeItem(q,retry)],p=>setRetryLive(p[0]));setRetryGrading(false);setRetryLive(null);setChecked(true);
   if(r.ok){setRetryGraded(r.results[0]);setLeft(r.remaining)}else{setRetryError(r.message);if(r.quota)setLeft(0)}};
  const quotaHint=left===null?L('写完后 AI 按得分点逐条打分','AI scores each key point once you submit'):left>0?L(`写完后 AI 按得分点逐条打分 · 今天还剩 ${left} 次`,`AI scores each key point · ${left} left today`):L('今天的 AI 评分次数已用完，提交后可对照得分点自评','No AI grading left today; you can self-check against the key points');
  const referenceHidden=practising&&hideRef&&!checked;
@@ -52,6 +53,7 @@ export default function QuestionCard({item,label,result,last,onAnswer,onNext}:{i
  else if(isWritten(q))input=<div className="ai-written"><textarea className={q.type!=='short'?'code':''} ref={q.type!=='short'?codeEditing:undefined} rows={q.type==='code'?9:5} value={text} disabled={revealed} spellCheck={q.type!=='code'} placeholder={q.type==='code'?L('在这里写代码（可以只写关键部分），提交后 AI 按得分点评分','Write your code (key parts are enough); AI scores it against the key points'):L('用自己的话写下答案，提交后 AI 按得分点评分','Write your answer; AI scores it against the key points')} onChange={e=>setText(e.target.value)}/>
   {!revealed&&<div className="ai-written-actions"><button className="button primary" disabled={grading||!text.trim()} onClick={()=>void submitWritten()}><Sparkles size={16}/>{grading?L('AI 正在按得分点评分…','AI is grading…'):L('提交，AI 评分','Submit for AI grading')}</button>
    <button className="button secondary" disabled={grading} onClick={()=>setRevealed(true)}><Eye size={16}/>{L('不会写，直接看参考答案','Show the reference')}</button><small>{quotaHint}</small></div>}
+  {grading&&(live?<GradeBreakdown result={live} live code={q.type!=='short'}/>:<GradeWaiting/>)}
   {graded&&<GradeBreakdown result={graded.result} remaining={graded.remaining} code={q.type!=='short'}/>}
   {gradeError&&<p className="ai-grade-error">{gradeError}</p>}
   {revealed&&referenceHidden&&<p className="ai-ref-hidden">{L('参考答案已遮住，写完后再对照。','The reference is hidden until you finish.')}</p>}
@@ -67,7 +69,8 @@ export default function QuestionCard({item,label,result,last,onAnswer,onNext}:{i
    <label className="ai-hide-ref"><input type="checkbox" checked={hideRef} disabled={checked} onChange={e=>setHideRef(e.target.checked)}/>{L('写的时候遮住参考答案','Hide the reference while writing')}</label>
    <textarea className={q.type!=='short'?'code':''} ref={q.type!=='short'?codeEditing:undefined} rows={q.type==='code'?9:5} autoFocus value={retry} disabled={checked} spellCheck={q.type!=='code'} placeholder={L('凭理解重新写一遍，再和参考答案逐条对照','Rewrite it from memory, then compare point by point')} onChange={e=>setRetry(e.target.value)}/>
    {!checked?<div className="ai-written-actions"><button className="button primary" disabled={retryGrading||!retry.trim()} onClick={()=>void gradeRetry()}><Sparkles size={16}/>{retryGrading?L('AI 正在按得分点评分…','AI is grading…'):L('写完了，AI 评分','Done — AI grading')}</button>
-    <button className="button secondary" disabled={retryGrading||!retry.trim()} onClick={()=>setChecked(true)}><Eye size={16}/>{L('自己对照参考答案','Compare myself')}</button><small>{quotaHint}</small></div>:<div className="ai-retry-check">
+    <button className="button secondary" disabled={retryGrading||!retry.trim()} onClick={()=>setChecked(true)}><Eye size={16}/>{L('自己对照参考答案','Compare myself')}</button><small>{quotaHint}</small>
+    {retryGrading&&(retryLive?<GradeBreakdown result={retryLive} live code={q.type!=='short'}/>:<GradeWaiting/>)}</div>:<div className="ai-retry-check">
     {retryGraded&&<GradeBreakdown result={retryGraded} remaining={left??undefined} code={q.type!=='short'}/>}
     {retryError&&<p className="ai-grade-error">{retryError}</p>}
     <p>{retryGraded?L('看看这次还差哪个得分点。这道题已经在错题本里，之后复习时还会再遇到。','See which key points are still missing. This question stays in your mistake book for later review.'):L('对照上面的参考答案和评分要点，逐条看看这次是否都写到了。这道题已经在错题本里，之后复习时还会再遇到。','Compare with the reference and key points above. This question stays in your mistake book for later review.')}</p>

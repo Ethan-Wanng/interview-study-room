@@ -3,13 +3,15 @@ import {Check,X} from 'lucide-react';
 import {useI18n} from '../../components/i18n';
 import KeywordText from '../../components/keyword-text';
 import {answerText} from '../question-card';
-import {GradeBreakdown,SelfScore} from '../grade-view';
+import {GradeBreakdown,GradeWaiting,SelfScore} from '../grade-view';
+import type {GradeResult} from '@/lib/grade-types';
 import {codeEditing} from '../code-input';
 import type {AiQuiz} from '@/content/journey';
 import {isWrittenQuiz,type PaperAnswer,type WrittenScore} from './paper-score';
 
 const letters='ABCDEFGH';
-type Review={got:number;written?:WrittenScore;onSelfScore?:(score:number,got:boolean[])=>void};
+// live：AI 阅卷中，这道题正在写出的评分（null：还没写到这道题）。
+type Review={got:number;written?:WrittenScore;live?:GradeResult|null;onSelfScore?:(score:number,got:boolean[])=>void};
 
 // 试卷里的一道题。作答时只有输入，没有任何对错提示；交卷后（review）显示得分、正确答案、每个错误选项的解释和解析。
 // order：选项的显示顺序（原始下标），字母按显示位置排；答案里记的始终是原始下标。
@@ -36,6 +38,7 @@ export default function PaperQuestion({q,no,max,answer,order,onChange,review}:{q
   <h3>{q.q}</h3>{q.code&&<pre className="ai-snippet"><code>{q.code}</code></pre>}{body}
   {review&&<div className="paper-review">
    {!written&&<p className="ai-answer">{L('正确答案：','Answer: ')}{type==='single'||type==='multi'?(type==='multi'?(q as Extract<AiQuiz,{type:'multi'}>).answers:[(q as Extract<AiQuiz,{answer:number}>).answer]).map(i=>letters[(order??[]).indexOf(i)>=0?(order??[]).indexOf(i):i]).sort().join('、')+'  ':''}{answerText(q,L)}</p>}
+   {written&&!review.written&&review.live!==undefined&&(review.live?<GradeBreakdown result={review.live} live code={q.type!=='short'}/>:<GradeWaiting/>)}
    {written&&review.written?.kind==='ai'&&<GradeBreakdown result={review.written.result} code={q.type!=='short'}/>}
    {written&&!review.written&&review.onSelfScore&&<SelfScore points={written.points} scores={written.scores} max={max} onDone={review.onSelfScore}/>}
    {written&&review.written?.kind==='self'&&<p className="paper-self">{L(`自评 ${review.written.score} / ${max} 分`,`Self-scored ${review.written.score} / ${max}`)}</p>}

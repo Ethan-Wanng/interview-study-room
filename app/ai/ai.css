@@ -121,3 +121,8 @@ a.ai-level.locked{opacity:.72}
 .ai-written-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:20px}.ai-written-actions small{flex-basis:100%;color:var(--quiet);font-size:13px;line-height:1.6}
 .ai-grade-answer{margin:12px 0 0;padding:10px 14px;border-radius:10px;background:var(--surface);border:1px dashed var(--line)}.ai-grade-answer summary{cursor:pointer;font-weight:650}
 .ai-grade-answer p{margin:8px 0 0;line-height:1.85;white-space:pre-line;color:var(--body-ink)}.ai-grade-answer pre{margin:8px 0 0;overflow:auto}
+.ai-caret{display:inline-block;width:.5em;height:1.05em;margin-left:2px;vertical-align:-.15em;background:var(--primary);animation:ai-caret 1s steps(1) infinite}
+@keyframes ai-caret{50%{opacity:0}}
+.ai-grade.live{border-color:color-mix(in srgb,var(--primary) 45%,var(--line))}.ai-grade li.wait{color:var(--quiet)}.ai-grade li.wait svg,.ai-spin{animation:ai-spin 1s linear infinite}
+@keyframes ai-spin{to{transform:rotate(360deg)}}.ai-grade-hint{color:var(--quiet)}
+.ai-written-actions .ai-grade{flex-basis:100%;margin:4px 0 0}
