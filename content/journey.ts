@@ -1,6 +1,11 @@
 // 闯关学习的通用数据结构（AI 开发、Go 开发等学科共用）。
 // 每道题都有固定 id（错题本按 id 记录），新增题目请使用新的 id，不要修改或复用已有 id。
-export type AiLesson={title:string;body:string;code?:string};
+// explain：代码讲解，逐段说明 code 在做什么。at 是这一段第一行里的一段原文（用来定位行号），to 是最后一行里的原文（只有一行时省略）。
+// 写讲解时引用代码原文而不是行号，代码改动后不会错位；scripts/check-lesson-code.mjs 会检查每段原文都能在代码里找到。
+export type CodeNote={at:string;to?:string;text:string};
+// practice：“动手试试”卡片，让学习者在自己的电脑上操作：steps 是按顺序做的步骤，code 是要运行的代码，expect 是应该看到的输出。
+export type Practice={steps:string[];expect?:string};
+export type AiLesson={title:string;body:string;code?:string;explain?:CodeNote[];practice?:Practice};
 // single 单选（默认）· multi 多选（全对才算对）· judge 判断 · fill 填空（任一可接受答案即对）· short 简答 / code 代码 / design 综合（AI 按得分点评分，额度用完时对照参考答案自评）
 // interview：关联的面试题 id，答完题后可以展开对照。
 // why：与 options 一一对应，说明每个错误选项其实是什么、用来干什么（正确选项写空字符串）。

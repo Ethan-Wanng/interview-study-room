@@ -1,8 +1,10 @@
 'use client';
 import {useRef,useState} from 'react';
-import {ArrowLeft,ArrowRight} from 'lucide-react';
+import {ArrowLeft,ArrowRight,Laptop} from 'lucide-react';
 import {useI18n} from '../components/i18n';
 import KeywordText from '../components/keyword-text';
+import CodeExplain from './code-explain';
+import Tutor from './tutor';
 import type {AiLesson} from '@/content/journey';
 
 // 关卡学习卡片：一次只看一张，左右切换（按钮、圆点、方向键或滑动），最后一张之后开始答题。
@@ -15,7 +17,12 @@ export default function LessonCards({lessons,quizCount,need,onStart}:{lessons:Ai
   <div className="lc-head"><span>{L(`第 ${index+1} / ${lessons.length} 张`,`Card ${index+1} of ${lessons.length}`)}</span><div className="lc-bar"><i style={{width:(index+1)/lessons.length*100+'%'}}/></div></div>
   <section key={index} className={'ai-card ai-lesson lc-card '+dir}>
    <h2><span>{String(index+1).padStart(2,'0')}</span>{lesson.title}</h2>
-   <p><KeywordText text={lesson.body}/></p>{lesson.code&&<pre><code>{lesson.code}</code></pre>}
+   {lesson.practice&&<span className="lc-practice-tag"><Laptop size={15}/>{L('动手试试 · 在你自己的电脑上操作','Try it on your own computer')}</span>}
+   <p><KeywordText text={lesson.body}/></p>
+   {lesson.practice&&<ol className="lc-steps">{lesson.practice.steps.map((s,i)=><li key={i}><KeywordText text={s}/></li>)}</ol>}
+   {lesson.code&&<CodeExplain code={lesson.code} notes={lesson.explain}/>}
+   {lesson.practice?.expect&&<div className="lc-expect"><strong>{L('应该看到的输出','Expected output')}</strong><pre><code>{lesson.practice.expect}</code></pre></div>}
+   {lesson.practice&&<Tutor key={lesson.title} lesson={{title:lesson.title,body:lesson.body,steps:lesson.practice.steps,code:lesson.code,expect:lesson.practice.expect}}/>}
   </section>
   <div className="lc-nav">
    <button className="button secondary" disabled={index===0} onClick={()=>go(index-1)}><ArrowLeft size={16}/>{L('上一张','Previous')}</button>

@@ -4,7 +4,7 @@ import type {AiLevel} from '../journey';
 export const fePerf:AiLevel={id:'fe-perf',title:'性能优化：指标、首屏与长列表',summary:'Core Web Vitals、首屏优化、图片优化和虚拟列表',lessons:[
  {title:'用指标说话',body:'LCP（最大内容出现时间）≤ 2.5 秒，INP（交互响应延迟）≤ 200 毫秒，CLS（布局偏移）≤ 0.1。Lighthouse 是实验室数据，真实用户监控（RUM）反映线上情况；优化前先测量，优化后对比同样的指标。'},
  {title:'首屏优化',body:'减少关键路径：按路由分割 JS、删除无用依赖、关键 CSS 内联、脚本 defer；网络层：CDN、压缩、长期缓存、preconnect；首屏主图 preload 并设 fetchpriority="high"；SSR / SSG 让首屏直接有内容；骨架屏改善感知。'},
- {title:'图片与字体',body:'照片用 WebP / AVIF，按显示尺寸用 srcset 提供多种分辨率；非首屏图片 loading="lazy"；所有图片写 width / height 或 aspect-ratio 避免布局跳动。字体子集化，font-display: swap 先显示系统字体。',code:'<img src="p-800.webp" srcset="p-400.webp 400w, p-800.webp 800w" sizes="(max-width: 600px) 100vw, 800px" width="800" height="600" loading="lazy" alt="商品图">'},
+ {title:'图片与字体',body:'照片用 WebP / AVIF，按显示尺寸用 srcset 提供多种分辨率；非首屏图片 loading="lazy"；所有图片写 width / height 或 aspect-ratio 避免布局跳动。字体子集化，font-display: swap 先显示系统字体。',code:'<img src="p-800.webp" srcset="p-400.webp 400w, p-800.webp 800w" sizes="(max-width: 600px) 100vw, 800px" width="800" height="600" loading="lazy" alt="商品图">',explain:[{at:'<img src="p-800.webp"',text:'src 是默认图片；srcset 列出 400 和 800 像素宽的两种版本，sizes 说明显示宽度：屏幕不超过 600px 时占满屏宽，否则显示 800px，浏览器据此挑最合适的文件下载。width、height 预留宽高比避免加载时布局跳动；loading="lazy" 让图片快滚动到时才加载；alt 是图片的文字说明。'}]},
  {title:'长列表和长任务',body:'上万条数据用虚拟列表，只渲染可视区域；长任务拆分（scheduler.yield、setTimeout 分片），重计算放 Web Worker；React 中非紧急更新用 useTransition。用 Performance 面板找出长任务和强制同步布局。'},
 ],quiz:[
  {id:'fe-perf-1',q:'LCP 衡量的是什么？',options:['服务器首个字节到达浏览器的时间','最大图片或文本块渲染完成的时间','用户点击后界面给出响应的延迟','页面元素在加载中意外跳动的程度'],why:['首字节时间是 TTFB，反映服务器响应速度。','','交互响应延迟是 INP。','布局跳动程度是 CLS。'],answer:1,explain:'目标 2.5 秒以内。',interview:'fe-q-web-vitals'},
@@ -22,7 +22,7 @@ export const fePerf:AiLevel={id:'fe-perf',title:'性能优化：指标、首屏�
 export const feArch:AiLevel={id:'fe-arch',title:'前端安全与工程架构',summary:'XSS、CSRF、权限、监控、大文件上传、微前端和组件设计',lessons:[
  {title:'XSS 和 CSRF',body:'XSS：恶意脚本被注入页面执行。防御：输出转义，不用 innerHTML 渲染不可信内容（必要时 DOMPurify），配置 CSP，凭证 Cookie 设 HttpOnly。CSRF：恶意网站借用户的 Cookie 发请求。防御：SameSite Cookie、CSRF Token、校验 Origin，修改数据不用 GET。'},
  {title:'权限和监控',body:'前端根据权限生成路由、菜单和按钮，只是为了体验，真正的权限校验必须在后端。监控采集错误（onerror、unhandledrejection、资源错误）、性能（Web Vitals）和行为，用 sendBeacon 上报，上传 source map 还原报错位置，按版本聚合告警。'},
- {title:'大文件上传',body:'用 file.slice 分片，在 Web Worker 中计算内容哈希作为标识；上传前询问服务端已有哪些分片，实现秒传和断点续传；控制并发、失败重试、可暂停取消；服务端合并并校验。',code:"const chunks = [];\nfor (let start = 0; start < file.size; start += SIZE) {\n  chunks.push(file.slice(start, start + SIZE));\n}"},
+ {title:'大文件上传',body:'用 file.slice 分片，在 Web Worker 中计算内容哈希作为标识；上传前询问服务端已有哪些分片，实现秒传和断点续传；控制并发、失败重试、可暂停取消；服务端合并并校验。',code:"const chunks = [];\nfor (let start = 0; start < file.size; start += SIZE) {\n  chunks.push(file.slice(start, start + SIZE));\n}",explain:[{at:'const chunks = [];',text:'准备一个数组存放切好的分片。'},{at:'for (let start = 0; start < file.size; start += SIZE)',text:'从文件开头每次前进 SIZE 字节（比如 5MB），直到覆盖整个文件。'},{at:'chunks.push(file.slice(start, start + SIZE));',text:'file.slice 切出一段 Blob，只是引用原文件的这一段，不会把文件读进内存；最后一片不足 SIZE 时会自动截到文件末尾。之后逐片上传，失败的分片单独重传即可。'}]},
  {title:'组件库和微前端',body:'通用组件要设计好 API（受控 / 非受控、可定制渲染）、键盘与 ARIA、弹层定位、大数据性能，并有文档和测试。微前端让多个团队独立开发部署子应用，但带来样式隔离、依赖重复和通信的成本，团队规模小时模块化单体更合适。'},
 ],quiz:[
  {id:'fe-arch-1',q:'评论内容要支持部分 HTML 格式，渲染时最安全的做法是？',options:['直接赋值给 innerHTML','先用 DOMPurify 等库净化再渲染','用 eval 解析后再插入页面','把内容放进 script 标签里'],why:['直接渲染不可信的 HTML 会执行其中的脚本和事件属性，造成 XSS。','','eval 会把内容当代码执行，危险性更大。','放进 script 标签同样会被当作代码执行。'],answer:1,explain:'不可信 HTML 必须先净化；纯文本直接用 textContent。',interview:'fe-q-xss'},

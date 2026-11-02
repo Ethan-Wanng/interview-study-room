@@ -3,7 +3,7 @@ import type {AiLevel} from '../journey';
 // 进阶：MySQL 的日志、复制和分库分表。
 export const beLog:AiLevel={id:'be-log',title:'MySQL 日志、主从复制与分库分表',summary:'redo、undo、binlog 各管什么，复制延迟和数据拆分怎么处理',lessons:[
  {title:'三本日志各管一件事',body:'undo log 记录修改前的旧值，用来回滚事务，也给 MVCC 提供旧版本。redo log 是 InnoDB 的物理日志，记录“哪个页改成了什么”，先写日志再慢慢刷数据页（WAL），崩溃后靠它恢复已提交的数据；它是固定大小、循环写的。binlog 是 Server 层的逻辑日志，记录数据变更事件，用于主从复制和按时间点恢复，按文件追加。'},
- {title:'两阶段提交和刷盘',body:'为了让 redo 和 binlog 一致，提交时先写 redo（prepare），再写 binlog，最后把 redo 标记为 commit。innodb_flush_log_at_trx_commit=1 每次提交都把 redo 刷盘；sync_binlog=1 每次提交都 fsync binlog。两个都设成 1（“双 1”）最安全，代价是更多磁盘同步。',code:'-- 查看当前设置\nSHOW VARIABLES LIKE \'innodb_flush_log_at_trx_commit\';\nSHOW VARIABLES LIKE \'sync_binlog\';'},
+ {title:'两阶段提交和刷盘',body:'为了让 redo 和 binlog 一致，提交时先写 redo（prepare），再写 binlog，最后把 redo 标记为 commit。innodb_flush_log_at_trx_commit=1 每次提交都把 redo 刷盘；sync_binlog=1 每次提交都 fsync binlog。两个都设成 1（“双 1”）最安全，代价是更多磁盘同步。',code:'-- 查看当前设置\nSHOW VARIABLES LIKE \'innodb_flush_log_at_trx_commit\';\nSHOW VARIABLES LIKE \'sync_binlog\';',explain:[{at:'SHOW VARIABLES LIKE \'innodb_flush_log_at_trx_commit\'',text:'查看 redo log 的刷盘策略：1 表示每次事务提交都把 redo 写入并刷到磁盘，断电也不丢已提交的事务；0 和 2 性能更好，但可能丢最近约 1 秒的数据。'},{at:'SHOW VARIABLES LIKE \'sync_binlog\'',text:'查看 binlog 的刷盘策略：1 表示每次提交都 fsync binlog；0 交给操作系统决定，N 表示每 N 次提交刷一次。两个都为 1 就是“双 1”配置。'}]},
  {title:'主从复制和延迟',body:'主库写 binlog，从库的 I/O 线程拉取并写入 relay log，SQL 线程重放。默认是异步复制，主库提交不等从库。大事务、从库配置低、单线程重放都会导致延迟。处理：拆小事务、开启并行复制；“写完马上读”的请求走主库，或等从库追上指定位置再读。'},
  {title:'分库分表',body:'单表太大、单库扛不住写入时才考虑拆。先做索引优化、读写分离、归档冷数据。分片键选“查询最常带、分布均匀、几乎不变”的字段，比如订单按 user_id。不带分片键的查询用冗余表或搜索引擎；全局唯一 ID 用号段或雪花算法；扩容要做数据迁移和校验。'},
 ],quiz:[

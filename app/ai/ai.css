@@ -126,3 +126,28 @@ a.ai-level.locked{opacity:.72}
 .ai-grade.live{border-color:color-mix(in srgb,var(--primary) 45%,var(--line))}.ai-grade li.wait{color:var(--quiet)}.ai-grade li.wait svg,.ai-spin{animation:ai-spin 1s linear infinite}
 @keyframes ai-spin{to{transform:rotate(360deg)}}.ai-grade-hint{color:var(--quiet)}
 .ai-written-actions .ai-grade{flex-basis:100%;margin:4px 0 0}
+/* 学习卡片里的代码：行号 + 逐段讲解，移到讲解上时高亮对应行。 */
+.code-explain{margin-top:16px}.code-lines{margin:0;padding:14px 0;counter-reset:none}.code-lines span{display:block;padding:0 16px 0 0;transition:background .15s}
+.code-lines i{display:inline-block;width:2.6em;margin-right:12px;text-align:right;font-style:normal;color:#8b95a7;opacity:.6;user-select:none}
+.code-lines span.lit{background:color-mix(in srgb,var(--primary) 30%,transparent)}.code-lines span.lit i{opacity:1;color:#fff}
+.code-notes{margin-top:14px;padding:14px 16px;border-radius:12px;background:var(--surface-soft);border:1px solid var(--line)}.code-notes>strong{display:block;margin-bottom:8px;font-size:15px}
+.code-notes ol{margin:0;padding:0;list-style:none;display:grid;gap:6px}.code-notes li{display:flex;gap:10px;align-items:baseline;padding:6px 8px;border-radius:8px;cursor:pointer;line-height:1.8;color:var(--body-ink)}
+.code-notes li b{flex:none;min-width:5.6em;font-size:13px;color:var(--primary)}.code-notes li.on,.code-notes li:hover{background:color-mix(in srgb,var(--primary) 12%,transparent)}
+@media(max-width:767px){.code-notes li{flex-direction:column;gap:2px}}
+.code-box{position:relative}.code-copy{position:absolute;top:8px;right:8px;display:inline-flex;align-items:center;gap:4px;padding:4px 9px;border:1px solid #ffffff30;border-radius:7px;background:#ffffff14;color:#e6ebf3;font-size:12.5px;cursor:pointer}.code-copy:hover{background:#ffffff28}
+.lc-practice-tag{display:inline-flex;align-items:center;gap:6px;margin:0 0 10px;padding:4px 10px;border-radius:999px;background:color-mix(in srgb,var(--notice) 16%,transparent);color:var(--notice);font-size:13px;font-weight:650}
+.lc-steps{margin:12px 0 0;padding-left:22px;display:grid;gap:6px;color:var(--body-ink);line-height:1.85}
+.lc-expect{margin-top:14px}.lc-expect strong{display:block;margin-bottom:6px;font-size:14px}.lc-expect pre{margin:0}
+.ai-lesson p{white-space:pre-line}
+/* 动手试试里的 AI 老师 */
+.tutor-open{margin-top:16px}
+.tutor{margin-top:16px;border:1px solid color-mix(in srgb,var(--primary) 40%,var(--line));border-radius:14px;background:var(--surface);overflow:hidden}
+.tutor header{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--surface-soft)}.tutor header small{color:var(--quiet)}
+.tutor-reset{margin-left:auto;display:inline-flex;align-items:center;gap:4px;border:0;background:none;color:var(--primary);cursor:pointer;font-size:13px}
+.tutor-log{max-height:460px;overflow:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+.tutor-msg{max-width:92%;padding:10px 13px;border-radius:12px;line-height:1.8;font-size:15px}.tutor-msg p{margin:0 0 6px;white-space:pre-wrap}.tutor-msg p:last-child{margin-bottom:0}
+.tutor-msg.user{align-self:flex-end;background:color-mix(in srgb,var(--primary) 16%,transparent)}.tutor-msg.model{align-self:flex-start;background:var(--surface-soft)}
+.tutor-msg pre{margin:6px 0;font-size:13.5px;white-space:pre-wrap;word-break:break-word}.tutor-msg code{font-family:ui-monospace,Consolas,monospace}
+.tutor-wait{display:flex;align-items:center;gap:6px;color:var(--quiet)}
+.tutor-input{display:flex;gap:8px;align-items:flex-end;padding:10px 14px;border-top:1px solid var(--line)}.tutor-input textarea{flex:1;resize:vertical;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--surface-soft);color:var(--ink);font:inherit;line-height:1.6}
+.tutor-left{margin:0;padding:0 14px 10px;color:var(--quiet);font-size:12.5px}

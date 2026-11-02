@@ -2,10 +2,10 @@ import type {AiLevel} from '../journey';
 
 // 前端入门（一）：HTML 与网页基础。
 export const feHtml:AiLevel={id:'fe-html',title:'HTML 与网页基础',summary:'网页由什么组成，常用标签、语义化和脚本加载',lessons:[
- {title:'网页的三件套',body:'一个网页由三部分组成：HTML 负责结构和内容（这里有标题、段落、图片），CSS 负责样式（颜色、大小、位置），JavaScript 负责交互（点击后发生什么）。浏览器下载这些文件，把它们变成你看到的页面。',code:'<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n  <meta charset="UTF-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1">\n  <title>我的第一个网页</title>\n</head>\n<body>\n  <h1>你好，前端</h1>\n  <p>这是一个段落。</p>\n</body>\n</html>'},
+ {title:'网页的三件套',body:'一个网页由三部分组成：HTML 负责结构和内容（这里有标题、段落、图片），CSS 负责样式（颜色、大小、位置），JavaScript 负责交互（点击后发生什么）。浏览器下载这些文件，把它们变成你看到的页面。',code:'<!DOCTYPE html>\n<html lang="zh-CN">\n<head>\n  <meta charset="UTF-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1">\n  <title>我的第一个网页</title>\n</head>\n<body>\n  <h1>你好，前端</h1>\n  <p>这是一个段落。</p>\n</body>\n</html>',explain:[{at:'<!DOCTYPE html>',text:'声明这是 HTML5 文档，让浏览器按标准模式渲染。'},{at:'<html lang="zh-CN">',text:'整个页面的根元素，lang 告诉浏览器和读屏软件页面语言是简体中文。'},{at:'<head>',to:'</head>',text:'head 里放给浏览器看的信息，不直接显示：charset 指定 UTF-8 编码防止乱码；viewport 让手机按设备宽度显示、不缩小；title 是浏览器标签页上的标题。'},{at:'<body>',to:'</body>',text:'body 里是页面上真正看得到的内容：h1 是一级标题，p 是段落。'},{at:'</html>',text:'结束 html 根元素。HTML 标签大多成对出现，开始标签和结束标签之间就是它的内容。'}]},
  {title:'常用标签',body:'标题 h1～h6，段落 p，链接 a（href 写地址），图片 img（src 写地址，alt 写描述），列表 ul/ol + li，表格 table，表单 form + input + label + button。块级元素（div、p、h1）独占一行；行内元素（span、a、strong）在一行里排列。'},
  {title:'语义化',body:'用能表达含义的标签组织页面：header 页眉、nav 导航、main 主要内容、article 文章、aside 侧栏、footer 页脚。点击用 button，跳转用 a。好处：读屏软件能理解结构，搜索引擎更懂内容，代码也更清楚。'},
- {title:'脚本放在哪里',body:'浏览器从上往下解析 HTML，遇到普通 script 会停下来下载并执行。所以脚本加 defer：下载不阻塞解析，等 HTML 解析完再按顺序执行；独立的统计脚本用 async，下载完就执行。CSS 用 link 放在 head 里。',code:'<link rel="stylesheet" href="style.css">\n<script src="app.js" defer></script>'},
+ {title:'脚本放在哪里',body:'浏览器从上往下解析 HTML，遇到普通 script 会停下来下载并执行。所以脚本加 defer：下载不阻塞解析，等 HTML 解析完再按顺序执行；独立的统计脚本用 async，下载完就执行。CSS 用 link 放在 head 里。',code:'<link rel="stylesheet" href="style.css">\n<script src="app.js" defer></script>',explain:[{at:'<link rel="stylesheet"',text:'引入外部样式表。放在 head 里，浏览器先拿到样式再渲染，页面不会先无样式闪一下。'},{at:'<script src="app.js" defer>',text:'defer：脚本在后台下载，不阻塞 HTML 解析，等整个文档解析完再按顺序执行，这时页面元素都已经存在，可以放心操作 DOM。'}]},
 ],quiz:[
  {id:'fe-html-1',q:'网页中负责“点击按钮后弹出提示”的通常是？',options:['HTML 标签结构','CSS 样式规则','JavaScript 脚本','图片资源文件'],why:['HTML 负责页面的结构和内容，本身不会响应点击去执行逻辑。','CSS 负责外观和布局，可以改变样式，但不能执行“弹出提示”这样的逻辑。','','图片只是被展示的资源，不具备任何交互能力。'],answer:2,explain:'HTML 管结构，CSS 管样式，JavaScript 管交互。'},
  {id:'fe-html-2',q:'img 标签的 alt 属性有什么用？',options:['设置图片在页面上显示的宽和高','图片无法显示或读屏时提供文字描述','给图片加上一圈指定颜色的边框','让图片变成一个可以点击的链接'],why:['图片尺寸用 width、height 属性或 CSS 设置。','','边框属于样式，用 CSS 的 border 设置。','让图片可点击要用 a 标签包裹或绑定点击事件，alt 没有这个作用。'],answer:1,explain:'alt 对可访问性和图片加载失败都很重要。',interview:'fe-q-a11y'},
@@ -21,7 +21,7 @@ export const feHtml:AiLevel={id:'fe-html',title:'HTML 与网页基础',summary:'
 
 export const feCss:AiLevel={id:'fe-css',title:'CSS 基础：选择器、盒模型与定位',summary:'选中元素、理解盒子的大小、把元素放到想要的位置',lessons:[
  {title:'选择器和优先级',body:'元素选择器 p、类选择器 .btn、ID 选择器 #main、属性选择器 [type="text"]、伪类 :hover。多条规则冲突时比优先级：内联样式 > ID > 类/属性/伪类 > 元素；相同时后写的覆盖先写的。尽量用类选择器，少用 ID 和 !important。'},
- {title:'盒模型',body:'每个元素都是盒子：content → padding → border → margin。默认 width 只算内容；box-sizing: border-box 让 width 包含 padding 和 border，更好计算。上下相邻的 margin 会合并。',code:'*, *::before, *::after { box-sizing: border-box; }\n.card { width: 300px; padding: 16px; border: 1px solid #ddd; margin-bottom: 12px; }'},
+ {title:'盒模型',body:'每个元素都是盒子：content → padding → border → margin。默认 width 只算内容；box-sizing: border-box 让 width 包含 padding 和 border，更好计算。上下相邻的 margin 会合并。',code:'*, *::before, *::after { box-sizing: border-box; }\n.card { width: 300px; padding: 16px; border: 1px solid #ddd; margin-bottom: 12px; }',explain:[{at:'box-sizing: border-box',text:'给所有元素（包括伪元素）设置 border-box：width 包含 padding 和 border，写多少宽就是多少宽，布局更好算。'},{at:'.card {',text:'卡片宽 300px，在 border-box 下这已经包含 16px 内边距和 1px 边框，内容区实际是 300−32−2=266px；margin-bottom 让卡片之间留出 12px 间距。'}]},
  {title:'定位',body:'relative 相对自身偏移、仍占原位；absolute 脱离文档流，相对最近的定位祖先；fixed 相对视口；sticky 滚动到阈值时吸附。z-index 控制叠放，但只在同一个层叠上下文里比较。'},
  {title:'隐藏元素和颜色单位',body:'display: none 不渲染不占位；visibility: hidden 占位不可见；opacity: 0 占位且仍可点击。颜色可以用 #3366ff、rgb()、hsl()；长度单位 px 固定，rem 相对根字号，% 相对父元素。'},
 ],quiz:[

@@ -1,5 +1,6 @@
 import {env} from 'cloudflare:workers';
 import {pointScores,type GradeItem,type GradeResult} from './grade-types';
+import type {TutorLesson,TutorMessage} from './tutor-types';
 
 // 用 Gemini 按得分点给简答、代码和综合题打分，并写一份示范回答。密钥来自 Worker 的 GEMINI_API_KEY 密钥。
 // 用流式接口：模型边生成边把文字交给 onText，页面上能看到评语和示范回答一点点写出来。
@@ -52,3 +53,32 @@ export async function gradeStream(items:GradeItem[],onText:(t:string)=>void,onRe
   try{const raw=await stream(model,key,items,t=>{wrote=true;onText(t)});return {results:normalize(items,raw),model}}
   catch(e){last=e;if(wrote)onReset()}}
  throw last instanceof Error?last:new GradeError('grading failed')}
+
+// ---- AI 老师：在“动手试试”卡片里一步步带新手在自己电脑上操作，纯文字流式输出 ----
+const tutorSystem=`你是“面试自习室”的 AI 编程老师，正在带一位完全没有基础的学生，在他自己的电脑上完成一个动手练习（内容见下）。
+要求：
+- 用简体中文，语气亲切、耐心，句子简短，不要堆专业名词；用到新名词时顺便用一句大白话解释。
+- 一次只讲一步：说清楚这一步做什么、为什么这样做、具体要输入什么（命令或代码放在 Markdown 代码块里），然后请学生回复看到的结果，再继续下一步。不要一次把所有步骤都说完。
+- 不确定学生用的是 Windows 还是 Mac 时，先问清楚；两种系统操作不同时要分别说明。
+- 学生贴出报错或输出时，先用大白话解释它是什么意思，再给出最可能的一两个解决办法。不要编造命令、输出或网址。
+- 学生偏离练习内容提问时，简单回答后把他带回练习。
+- 全部步骤完成后，帮学生对照“应该看到的输出”确认结果，再用两三句话总结这次学到了什么。`;
+
+const lessonText=(l:TutorLesson)=>[`练习标题：${l.title}`,`练习说明：${l.body}`,'操作步骤：',...l.steps.map((s,i)=>`${i+1}. ${s}`),l.code?`要运行的代码：\n\`\`\`\n${l.code}\n\`\`\``:'',l.expect?`应该看到的输出：\n${l.expect}`:''].filter(Boolean).join('\n');
+
+async function tutorOnce(model:string,key:string,lesson:TutorLesson,messages:TutorMessage[],onText:(t:string)=>void){const ctl=new AbortController();let timer=setTimeout(()=>ctl.abort(),FIRST),text='';
+ try{const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,{method:'POST',signal:ctl.signal,headers:{'content-type':'application/json','x-goog-api-key':key},
+   body:JSON.stringify({systemInstruction:{parts:[{text:tutorSystem+'\n\n'+lessonText(lesson)}]},contents:messages.map(m=>({role:m.role,parts:[{text:m.text}]})),generationConfig:{temperature:0.5}})});
+  if(!res.ok)throw new GradeError(`${model} ${res.status}`);
+  for await(const ev of events(res))for(const p of ev.candidates?.[0]?.content?.parts??[])if(!p.thought&&p.text){
+   if(!text){clearTimeout(timer);timer=setTimeout(()=>ctl.abort(),TOTAL)}text+=p.text;onText(p.text)}
+  if(!text)throw new GradeError(`${model} empty`)}
+ finally{clearTimeout(timer)}}
+
+// AI 老师回复一条消息：文字实时交给 onText；换模型重试前调用 onReset。
+export async function tutorStream(lesson:TutorLesson,messages:TutorMessage[],onText:(t:string)=>void,onReset:()=>void){
+ const key=(env as unknown as Record<string,string|undefined>).GEMINI_API_KEY;if(!key)throw new GradeError('missing key');let last:unknown;
+ for(const model of MODELS){let wrote=false;
+  try{await tutorOnce(model,key,lesson,messages,t=>{wrote=true;onText(t)});return model}
+  catch(e){last=e;if(wrote)onReset()}}
+ throw last instanceof Error?last:new GradeError('tutor failed')}
