@@ -4,9 +4,9 @@ import type {TutorLesson,TutorMessage} from './tutor-types';
 
 // 用 Gemini 按得分点给简答、代码和综合题打分，并写一份示范回答。密钥来自 Worker 的 GEMINI_API_KEY 密钥。
 // 用流式接口：模型边生成边把文字交给 onText，页面上能看到评语和示范回答一点点写出来。
-// 首选 gemini-3.8-flash；它高峰期常常 503 或迟迟不出字，这时换 gemini-3.5-flash 重试。
+// 用 gemini-3.5-flash；它偶尔 503 或迟迟不出字时，换 gemini-2.5-flash 重试。（gemini-3.8-flash 实测一直不出字，已去掉。）
 // FIRST：等第一段文字的最长时间；TOTAL：开始出字后整段写完的最长时间（整份试卷一起评时内容很长）。
-const MODELS=['gemini-3.8-flash','gemini-3.5-flash'],FIRST=25000,TOTAL=120000;
+const MODELS=['gemini-3.5-flash','gemini-2.5-flash'],FIRST=25000,TOTAL=120000;
 export class GradeError extends Error{}
 
 const schema={type:'OBJECT',properties:{results:{type:'ARRAY',items:{type:'OBJECT',properties:{
