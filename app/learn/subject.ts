@@ -1,5 +1,6 @@
 import type {AiLevel,Exam,Rank,Tier} from '@/content/journey';
 import type {Animation} from '../ai/animations/types';
+import type {Stacks} from '../ai/stack';
 
 // 一个可以闯关学习的学科：关卡、难度分档、段位，以及每关关联的面试题。
 export type Subject={
@@ -16,4 +17,6 @@ export type Subject={
  interviewSubject:[string,string];        // 「面试」里对应的学科名
  exams:Exam[];                            // 阶段训练、阶段考试和最终考试
  animations:Animation[];                  // 动画课堂（按关卡关联，没有就传空数组）
+ links?:{href:string;icon:string;title:[string,string];summary:[string,string]}[]; // 关卡地图顶部的额外入口（比如英语的背单词）
+ stacks?:Stacks;                          // 项目实战：可选的后端语言和前端做法，学习卡片和代码题按选择显示对应版本
 };

@@ -151,3 +151,42 @@ a.ai-level.locked{opacity:.72}
 .tutor-wait{display:flex;align-items:center;gap:6px;color:var(--quiet)}
 .tutor-input{display:flex;gap:8px;align-items:flex-end;padding:10px 14px;border-top:1px solid var(--line)}.tutor-input textarea{flex:1;resize:vertical;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--surface-soft);color:var(--ink);font:inherit;line-height:1.6}
 .tutor-left{margin:0;padding:0 14px 10px;color:var(--quiet);font-size:12.5px}
+/* 常驻 AI 老师：右下角按钮 + 侧边对话面板（手机上是底部抽屉）。放在卡片容器里，全屏时也能用。 */
+.ai-dock-fab{position:fixed;right:22px;bottom:22px;z-index:60;display:inline-flex;align-items:center;gap:6px;padding:11px 16px;border:0;border-radius:999px;background:var(--primary);color:#fff;font-weight:650;box-shadow:0 8px 24px #0000002e;cursor:pointer}
+.ai-dock-fab:hover{filter:brightness(1.08)}
+.ai-dock{position:fixed;right:18px;bottom:18px;z-index:61;width:min(420px,calc(100vw - 36px));height:min(620px,calc(100vh - 36px));display:flex;flex-direction:column;border:1px solid var(--line);border-radius:16px;background:var(--surface);box-shadow:0 18px 50px #00000038;overflow:hidden}
+.ai-dock header{display:flex;align-items:center;gap:8px;padding:11px 12px 11px 14px;border-bottom:1px solid var(--line);background:var(--surface-soft)}.ai-dock header strong{flex:1}
+.ai-dock-icon{display:grid;place-items:center;width:30px;height:30px;border:0;border-radius:8px;background:none;color:var(--quiet);cursor:pointer}.ai-dock-icon:hover:not(:disabled){background:var(--surface);color:var(--ink)}
+.ai-dock-log{flex:1;overflow:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+.ai-dock-hello p{margin:0 0 10px;color:var(--body-ink);line-height:1.8}
+.ai-dock-prompts{display:flex;flex-wrap:wrap;gap:6px}.ai-dock-prompts button{padding:6px 11px;border:1px solid var(--line);border-radius:999px;background:var(--surface-soft);color:var(--ink);font-size:13.5px;cursor:pointer;text-align:left}
+.ai-dock-prompts button:hover{border-color:var(--primary);color:var(--primary)}.ai-dock-prompts.compact{padding:0 14px 8px}
+@media(max-width:767px){.ai-dock{right:0;bottom:0;width:100vw;height:72vh;border-radius:16px 16px 0 0}.ai-dock-fab{right:14px;bottom:14px}}
+/* 学习卡片放大阅读：点卡片弹出一层，卡片按所选倍数放大（CSS zoom，文字会重新换行），顶部工具条翻页、调倍数、关闭。 */
+.lc-head{position:relative}.lc-zoom-open{flex:none;display:grid;place-items:center;width:34px;height:34px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink);cursor:pointer}.lc-zoom-open:hover{border-color:var(--primary);color:var(--primary)}
+.lc-card{cursor:zoom-in}.lc-card :is(button,a,input,textarea,pre,li[tabindex]){cursor:auto}.lc-card :is(button,a,li[tabindex]){cursor:pointer}
+.lc-zoom{position:fixed;inset:0;z-index:55;display:flex;flex-direction:column;background:color-mix(in srgb,var(--bg,#0f1020) 82%,transparent);backdrop-filter:blur(6px);outline:none;animation:lc-zoom-in .18s ease-out}
+@keyframes lc-zoom-in{from{opacity:0}to{opacity:1}}
+.lc-zoom-bar{flex:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px max(14px,calc((100vw - 980px)/2));border-bottom:1px solid var(--line);background:var(--surface)}
+.lc-zoom-bar button{display:grid;place-items:center;min-width:34px;height:34px;padding:0 8px;border:1px solid var(--line);border-radius:9px;background:var(--surface-soft,var(--surface));color:var(--ink);cursor:pointer;font:inherit;font-size:13px}
+.lc-zoom-bar button:hover:not(:disabled){border-color:var(--primary);color:var(--primary)}.lc-zoom-bar button:disabled{opacity:.4;cursor:default}
+.lc-zoom-bar input[type=range]{width:min(200px,30vw);accent-color:var(--primary)}
+.lc-zoom-count{font-size:13px;color:var(--muted,var(--ink));margin-right:4px}.lc-zoom-gap{flex:1}.lc-zoom-pct{min-width:58px!important;font-variant-numeric:tabular-nums}
+.lc-zoom-scroll{flex:1;overflow:auto;padding:24px max(14px,calc((100vw - 980px)/2)) 90px}
+.lc-zoom-card{margin:0 auto;cursor:auto}
+@media(max-width:767px){.lc-zoom-bar{gap:6px;padding:8px 10px}.lc-zoom-gap{display:none}.lc-zoom-scroll{padding:14px 8px 90px}}
+.ai-hint-btn{float:right;display:inline-flex;align-items:center;gap:5px;margin:-2px 0 0 10px;padding:5px 11px;border:1px solid var(--line);border-radius:999px;background:var(--surface-soft);color:var(--body-ink);font-size:13.5px;cursor:pointer}.ai-hint-btn:hover{border-color:var(--primary);color:var(--primary)}
+.ai-ask-btn{margin:16px 10px 0 0}
+/* 项目实战：技术栈选择器、代码骨架标签和折叠的参考答案。 */
+.stack-picker{display:grid;gap:12px}.stack-picker.compact{padding:12px 16px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 18px}
+.stack-tip{margin:0;color:var(--muted);font-size:14px;line-height:1.7}
+.stack-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.stack-label{font-size:13px;font-weight:600;color:var(--muted);min-width:64px}
+.stack-options{display:flex;gap:8px;flex-wrap:wrap}
+.stack-option{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink);font:inherit;font-size:14px;cursor:pointer}
+.stack-option:hover{border-color:var(--primary)}.stack-option.on{border-color:var(--primary);background:color-mix(in srgb,var(--primary) 14%,var(--surface));color:var(--primary);font-weight:600}
+.stack-picker select{flex:1;min-width:0;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);font:inherit;font-size:14px}
+.lc-code-label{margin:14px 0 -4px!important;font-size:14px;font-weight:600;color:var(--primary)}
+.lc-solution{margin-top:16px;border:1px dashed var(--line);border-radius:12px;padding:10px 14px}
+.lc-solution>summary{cursor:pointer;font-weight:600;color:var(--muted)}.lc-solution[open]>summary{margin-bottom:10px;color:var(--ink)}
+/* 名词解释弹窗要盖在放大阅读层（z-index 55）上面，放大后点黄色关键词也能看到解释。 */
+.term-popup{z-index:65!important}

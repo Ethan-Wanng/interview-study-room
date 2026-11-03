@@ -1,6 +1,6 @@
 'use client';
 import {useEffect,useState} from 'react';
-import {ArrowRight,Check,Eye,RotateCcw,Sparkles,X} from 'lucide-react';
+import {ArrowRight,Bot,Check,Eye,Lightbulb,RotateCcw,Sparkles,X} from 'lucide-react';
 import {useI18n} from '../components/i18n';
 import KeywordText,{findTerms,termDefinition} from '../components/keyword-text';
 import {InterviewItem} from './interview-reading';
@@ -9,6 +9,8 @@ import type {GradeResult} from '@/lib/grade-types';
 import {gradeQuota,isWritten,PRACTICE_MAX,requestGrade,toGradeItem} from './grade-client';
 import {GradeBreakdown,GradeWaiting,SelfScore} from './grade-view';
 import {codeEditing} from './code-input';
+import AiDock,{type DockRequest} from './ai-dock';
+import {ListenButton,ReadingPassage} from '../components/speech-drill';
 
 export type Result={correct:boolean;given:string};
 export type Item={id:string;level:string;quiz:AiQuiz;order:number[]};
@@ -61,8 +63,13 @@ export default function QuestionCard({item,label,result,last,onAnswer,onNext}:{i
    {!done&&!graded&&<SelfScore points={q.points} scores={q.scores} max={PRACTICE_MAX} onDone={score=>onAnswer({correct:score>=0.6*PRACTICE_MAX,given:text.trim()})}/>}</div>}</div>;
  else{const s=q as Extract<AiQuiz,{answer:number}>;input=<div className="ai-options">{item.order.map((o,i)=>option(o,i,s.options[o],()=>{setChosen([o]);onAnswer({correct:o===s.answer,given:s.options[o]})}))}</div>}
  const self=isWritten(q);
+ // 常驻 AI 老师：答题前只给提示（不透露答案），答完后讲解这道题、可以追问；换题或答完时重新开始对话。
+ const [ask,setAsk]=useState<DockRequest>();
+ const tutorQuiz={type:aiQuizTypes[type],q:q.q,code:q.code,options:'options' in q?q.options:undefined,answer:answerText(q,L),explain:q.explain,given:result?.given,correct:result?.correct};
+ const dockPrompts=done?[L('为什么是这个答案？我哪里想错了？','Why is this the answer? Where did I go wrong?'),L('每个选项分别错在哪里？','What is wrong with each option?'),L('举个例子帮我理解','Give me an example')]
+  :[L('给我一点提示（不要告诉我答案）','Give me a hint (not the answer)'),L('这道题考的是什么知识点？','What concept is this testing?'),L('题目里的名词是什么意思？','What do the terms mean?')];
  const terms=done?findTerms(q.q,...('options' in q?q.options:[]),q.explain,q.type==='short'?q.reference:'',...(self?q.points:[])):[];
- return <section className="ai-card ai-question"><div className="ai-tags"><span className="ai-tag type">{aiQuizTypes[type]}</span>{label&&<span className="ai-tag">{label}</span>}</div><h2>{q.q}</h2>{q.code&&<pre className="ai-snippet"><code>{q.code}</code></pre>}{input}
+ return <section className="ai-card ai-question"><div className="ai-tags"><span className="ai-tag type">{aiQuizTypes[type]}</span>{label&&<span className="ai-tag">{label}</span>}</div>{!done&&<button type="button" className="ai-hint-btn" onClick={()=>setAsk({text:L('给我一点提示（不要告诉我答案）','Give me a hint (not the answer)'),n:Date.now()})}><Lightbulb size={15}/>{L('给我一点提示','Hint')}</button>}<h2>{q.q}</h2>{q.say&&<ListenButton text={q.say}/>}{q.passage&&<ReadingPassage text={q.passage}/>}{q.code&&<pre className="ai-snippet"><code>{q.code}</code></pre>}{input}
   {done&&<div className={'ai-explain '+(result.correct?'right':'wrong')}><strong>{result.correct?(self?L('已记为答对','Marked as correct'):L('回答正确','Correct')):(self?L('已加入错题本，之后再练一次','Added to the mistake book for another try'):L('回答错误，已加入错题本','Incorrect — added to the mistake book'))}</strong>{!result.correct&&!self&&<p className="ai-answer">{L('正确答案：','Answer: ')}{answerText(q,L)}</p>}<p><KeywordText text={q.explain}/></p>{terms.length>0&&<div className="ai-terms"><strong>{L('本题名词','Terms in this question')}</strong><dl>{terms.map(k=><div key={k}><dt>{k}</dt><dd>{termDefinition(k,locale)}</dd></div>)}</dl></div>}{q.interview&&<InterviewItem id={q.interview} label={L('延伸阅读 · 面试题','Further reading · interview')}/>}</div>}
   {done&&self&&!result.correct&&<div className="ai-retry">{!practising?<button className="button secondary" onClick={()=>setPractising(true)}><RotateCcw size={16}/>{L('再写一遍巩固','Write it again')}</button>:<>
    <strong>{L('再写一遍巩固','Write it again')}</strong>
@@ -75,4 +82,6 @@ export default function QuestionCard({item,label,result,last,onAnswer,onNext}:{i
     {retryError&&<p className="ai-grade-error">{retryError}</p>}
     <p>{retryGraded?L('看看这次还差哪个得分点。这道题已经在错题本里，之后复习时还会再遇到。','See which key points are still missing. This question stays in your mistake book for later review.'):L('对照上面的参考答案和评分要点，逐条看看这次是否都写到了。这道题已经在错题本里，之后复习时还会再遇到。','Compare with the reference and key points above. This question stays in your mistake book for later review.')}</p>
     <button className="button secondary" onClick={()=>{setRetry('');setChecked(false);setRetryGraded(null);setRetryError('')}}><RotateCcw size={16}/>{L('再练一遍','Practice again')}</button></div>}</>}</div>}
+  {done&&<button type="button" className="button secondary ai-ask-btn" onClick={()=>setAsk({text:L('我还是不太懂，为什么是这个答案？我哪里想错了？','I still do not get it — why this answer, and where did I go wrong?'),n:Date.now()})}><Bot size={16}/>{L('还是不懂？问 AI 老师','Still unsure? Ask the AI tutor')}</button>}
+  <AiDock key={item.id+(done?':explain':':hint')} context={{kind:done?'explain':'hint',quiz:tutorQuiz}} prompts={dockPrompts} request={ask}/>
   {done&&<button className="button primary ai-next" onClick={onNext}>{last?L('查看结果','See results'):L('下一题','Next')}<ArrowRight size={16}/></button>}</section>}

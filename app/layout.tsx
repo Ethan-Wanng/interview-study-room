@@ -4,6 +4,7 @@ import "./themes.css";
 import "./immersive.css";
 import {headers} from 'next/headers';
 import {I18nProvider} from './components/i18n';
+import StaleReloadListener from './components/stale-reload-listener';
 
 export const metadata: Metadata = {
   title: "面试自习室｜每日学习与复习",
@@ -25,7 +26,7 @@ export default async function RootLayout({
   const h=await headers();const cookie=h.get('cookie')?.match(/(?:^|;\s*)study-language=(zh|en)(?:;|$)/)?.[1];const locale=cookie==='en'||(!cookie&&h.get('accept-language')?.toLowerCase().startsWith('en'))?'en':'zh';
   return (
     <html lang={locale==='en'?'en':'zh-CN'} suppressHydrationWarning>
-      <body className="antialiased"><I18nProvider initialLocale={locale}>{children}</I18nProvider></body>
+      <body className="antialiased"><StaleReloadListener/><I18nProvider initialLocale={locale}>{children}</I18nProvider></body>
     </html>
   );
 }

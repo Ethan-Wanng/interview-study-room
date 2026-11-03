@@ -1,6 +1,6 @@
 import {env} from 'cloudflare:workers';
 import {pointScores,type GradeItem,type GradeResult} from './grade-types';
-import type {TutorLesson,TutorMessage} from './tutor-types';
+import type {TutorContext,TutorLesson,TutorMessage,TutorQuiz} from './tutor-types';
 
 // 用 Gemini 按得分点给简答、代码和综合题打分，并写一份示范回答。密钥来自 Worker 的 GEMINI_API_KEY 密钥。
 // 用流式接口：模型边生成边把文字交给 onText，页面上能看到评语和示范回答一点点写出来。
@@ -54,21 +54,45 @@ export async function gradeStream(items:GradeItem[],onText:(t:string)=>void,onRe
   catch(e){last=e;if(wrote)onReset()}}
  throw last instanceof Error?last:new GradeError('grading failed')}
 
-// ---- AI 老师：在“动手试试”卡片里一步步带新手在自己电脑上操作，纯文字流式输出 ----
-const tutorSystem=`你是“面试自习室”的 AI 编程老师，正在带一位完全没有基础的学生，在他自己的电脑上完成一个动手练习（内容见下）。
-要求：
-- 用简体中文，语气亲切、耐心，句子简短，不要堆专业名词；用到新名词时顺便用一句大白话解释。
-- 一次只讲一步：说清楚这一步做什么、为什么这样做、具体要输入什么（命令或代码放在 Markdown 代码块里），然后请学生回复看到的结果，再继续下一步。不要一次把所有步骤都说完。
-- 不确定学生用的是 Windows 还是 Mac 时，先问清楚；两种系统操作不同时要分别说明。
-- 学生贴出报错或输出时，先用大白话解释它是什么意思，再给出最可能的一两个解决办法。不要编造命令、输出或网址。
-- 学生偏离练习内容提问时，简单回答后把他带回练习。
-- 全部步骤完成后，帮学生对照“应该看到的输出”确认结果，再用两三句话总结这次学到了什么。`;
+// ---- AI 老师：常驻在学习卡片和题目旁边，纯文字流式输出 ----
+const tutorBase=`你是“面试自习室”的 AI 老师，学生是完全没有基础的新手。
+通用要求：用简体中文，语气亲切、耐心，句子简短；用到新名词时顺便用一句大白话解释，多用生活中的比喻和具体的小例子；
+代码和命令放在 Markdown 代码块里；不要编造事实、命令、输出或网址；回答尽量短，学生想深入再展开。`;
+const modeRule:Record<TutorContext['kind'],string>={
+ practice:`现在你在带学生在他自己的电脑上完成一个动手练习（内容见下）。
+- 一次只讲一步：说清楚这一步做什么、为什么、具体输入什么，然后请学生回复看到的结果，再继续下一步。不要一次把所有步骤都说完。
+- 不确定学生用的是 Windows 还是 Mac 时先问清楚；两种系统操作不同时分别说明。
+- 学生贴出报错或输出时，先用大白话解释它是什么意思，再给出最可能的一两个解决办法。
+- 全部完成后，帮学生对照“应该看到的输出”确认结果，再用两三句话总结学到了什么。`,
+ task:`学生正在自己动手写下面这个编程任务（项目实战）。目标是让他自己写出绝大部分代码，你是教练，不是代写的人。
+- 绝对不要给出完整的实现，也不要整段贴出参考答案；最多给一两行关键代码、伪代码，或者指出该用哪个函数、哪个库。
+- 学生卡住时，先问他写到哪一步了、具体卡在哪里，再给一个小提示，让他自己往下写；一次只推进一小步。
+- 学生贴出代码或报错时，指出问题在哪一行、为什么错、往什么方向改，让他自己动手改，不要直接把改好的完整代码写出来。
+- 学生明确说放弃或者已经写完想对照时，提醒他展开卡片上的“参考答案”自己对比，你可以帮他分析两者的差别。
+- 完成后提醒他运行这一关的验收脚本检查。`,
+ lesson:`学生正在看下面这张学习卡片，有地方没看懂。针对学生的问题讲解：先用一句话说核心意思，再用比喻或具体例子讲清楚；
+如果卡片里有代码，可以逐行解释学生问到的部分。学生问的和卡片无关时，简单回答后把他带回这张卡片。`,
+ hint:`学生正在做下面这道题，还没有作答，想要一点提示。
+- 绝对不要说出或暗示正确答案是哪一项、是对是错、要填什么；不要逐个分析选项。
+- 只给方向：提醒他该想到哪个概念、可以从什么角度思考、关键的判断依据是什么。两三句话即可。
+- 学生追问答案时，礼貌地鼓励他先自己作答，答完可以再问你讲解。`,
+ explain:`学生已经做完下面这道题（他的作答和对错见下），看了解析还是不太懂，想请你讲解。
+- 先用一两句话讲清楚为什么正确答案是对的，再说明他的选择错在哪里（答对了就确认他的思路对在哪里）。
+- 有选项时，逐个用一句话说明每个错误选项错在哪里、它其实对应什么场景。
+- 用比喻或具体例子帮他真正理解，最后用一句话总结要记住的要点。之后学生可以继续追问。`};
 
-const lessonText=(l:TutorLesson)=>[`练习标题：${l.title}`,`练习说明：${l.body}`,'操作步骤：',...l.steps.map((s,i)=>`${i+1}. ${s}`),l.code?`要运行的代码：\n\`\`\`\n${l.code}\n\`\`\``:'',l.expect?`应该看到的输出：\n${l.expect}`:''].filter(Boolean).join('\n');
+const lessonText=(l:TutorLesson,practice:boolean)=>[`${practice?'练习':'卡片'}标题：${l.title}`,`${practice?'练习说明':'卡片内容'}：${l.body}`,
+ ...(l.steps.length?['操作步骤：',...l.steps.map((s,i)=>`${i+1}. ${s}`)]:[]),l.code?`代码：\n\`\`\`\n${l.code}\n\`\`\``:'',l.expect?`应该看到的输出：\n${l.expect}`:'',
+ l.solution?`参考答案（只供你判断学生的代码对不对、该提示什么，绝对不能整段给学生）：\n\`\`\`\n${l.solution}\n\`\`\``:''].filter(Boolean).join('\n');
+const quizText=(q:TutorQuiz,withAnswer:boolean)=>[`题型：${q.type}`,`题目：${q.q}`,q.code?`题目代码：\n\`\`\`\n${q.code}\n\`\`\``:'',
+ ...(q.options?.length?['选项：',...q.options.map((o,i)=>`${'ABCDEFGH'[i]}. ${o}`)]:[]),
+ `正确答案：${q.answer}`,`官方解析：${q.explain}`,withAnswer&&q.given!==undefined?`学生的作答：${q.given||'（未作答）'}（${q.correct?'答对了':'答错了'}）`:''].filter(Boolean).join('\n');
+function contextText(c:TutorContext){if('lesson' in c)return lessonText(c.lesson,c.kind!=='lesson');
+ return quizText(c.quiz,c.kind==='explain')+(c.kind==='hint'?'\n（正确答案和解析只供你判断提示方向，绝对不能透露给学生。）':'')}
 
-async function tutorOnce(model:string,key:string,lesson:TutorLesson,messages:TutorMessage[],onText:(t:string)=>void){const ctl=new AbortController();let timer=setTimeout(()=>ctl.abort(),FIRST),text='';
+async function tutorOnce(model:string,key:string,context:TutorContext,messages:TutorMessage[],onText:(t:string)=>void){const ctl=new AbortController();let timer=setTimeout(()=>ctl.abort(),FIRST),text='';
  try{const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,{method:'POST',signal:ctl.signal,headers:{'content-type':'application/json','x-goog-api-key':key},
-   body:JSON.stringify({systemInstruction:{parts:[{text:tutorSystem+'\n\n'+lessonText(lesson)}]},contents:messages.map(m=>({role:m.role,parts:[{text:m.text}]})),generationConfig:{temperature:0.5}})});
+   body:JSON.stringify({systemInstruction:{parts:[{text:tutorBase+'\n\n'+modeRule[context.kind]+'\n\n'+contextText(context)}]},contents:messages.map(m=>({role:m.role,parts:[{text:m.text}]})),generationConfig:{temperature:0.5}})});
   if(!res.ok)throw new GradeError(`${model} ${res.status}`);
   for await(const ev of events(res))for(const p of ev.candidates?.[0]?.content?.parts??[])if(!p.thought&&p.text){
    if(!text){clearTimeout(timer);timer=setTimeout(()=>ctl.abort(),TOTAL)}text+=p.text;onText(p.text)}
@@ -76,9 +100,9 @@ async function tutorOnce(model:string,key:string,lesson:TutorLesson,messages:Tut
  finally{clearTimeout(timer)}}
 
 // AI 老师回复一条消息：文字实时交给 onText；换模型重试前调用 onReset。
-export async function tutorStream(lesson:TutorLesson,messages:TutorMessage[],onText:(t:string)=>void,onReset:()=>void){
+export async function tutorStream(context:TutorContext,messages:TutorMessage[],onText:(t:string)=>void,onReset:()=>void){
  const key=(env as unknown as Record<string,string|undefined>).GEMINI_API_KEY;if(!key)throw new GradeError('missing key');let last:unknown;
  for(const model of MODELS){let wrote=false;
-  try{await tutorOnce(model,key,lesson,messages,t=>{wrote=true;onText(t)});return model}
+  try{await tutorOnce(model,key,context,messages,t=>{wrote=true;onText(t)});return model}
   catch(e){last=e;if(wrote)onReset()}}
  throw last instanceof Error?last:new GradeError('tutor failed')}

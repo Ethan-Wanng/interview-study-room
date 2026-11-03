@@ -1,0 +1,41 @@
+/* 语言课的“听一听、跟着说”句子列表和听力题播放按钮（app/components/speech-drill.tsx）。 */
+.sd-list{display:grid;gap:10px;margin-top:16px}
+.sd-bar{display:flex;flex-wrap:wrap;gap:8px}.sd-bar .button.on{border-color:var(--primary);color:var(--primary)}
+.sd-row{display:flex;align-items:flex-start;gap:12px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--surface-soft);transition:border-color .2s,box-shadow .2s}
+.sd-row.active{border-color:var(--primary);box-shadow:inset 0 0 0 1px var(--primary)}
+.sd-row.mine{border-color:var(--notice);box-shadow:inset 0 0 0 1px var(--notice)}
+.sd-who{flex:none;min-width:30px;padding:2px 8px;border-radius:99px;background:var(--primary);color:var(--primary-foreground);font-size:13px;font-weight:700;text-align:center}
+.sd-text{flex:1;display:flex;flex-direction:column;gap:3px;min-width:0}
+.sd-text strong{font-size:17px;line-height:1.5;color:var(--ink)}
+.sd-text>span{color:var(--body-ink);font-size:14px}
+.sd-text>small{color:var(--quiet);font-size:13px;line-height:1.6}
+.sd-actions{flex:none;display:flex;gap:6px}
+.sd-actions button{display:grid;place-items:center;width:34px;height:34px;padding:0;border:1px solid var(--line);border-radius:50%;background:var(--surface);color:var(--primary);cursor:pointer}
+.sd-actions button:hover{border-color:var(--primary)}
+.sd-actions button.rec{background:var(--alert-bg);color:var(--alert-ink);border-color:var(--alert-ink);animation:sd-pulse 1s ease-in-out infinite}
+@keyframes sd-pulse{50%{transform:scale(1.1)}}
+.sd-score{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-top:6px;font-size:14px}
+.sd-score b{font-size:15px;padding:1px 8px;border-radius:99px;background:var(--surface)}
+.sd-score.good b{color:var(--notice)}.sd-score.ok b{color:var(--primary)}.sd-score.low b{color:var(--alert-ink)}
+.sd-words{display:inline-flex;flex-wrap:wrap;gap:4px}.sd-words span{padding:0 4px;border-radius:4px}
+.sd-words .hit{color:var(--notice)}.sd-words .miss{color:var(--alert-ink);background:var(--alert-bg);text-decoration:underline wavy}
+.sd-score small{flex-basis:100%;color:var(--quiet)}
+.sd-error{color:var(--alert-ink)!important}
+.sd-turn{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:4px;color:var(--notice);font-size:14px;font-weight:650}
+.sd-link{padding:0;border:0;background:none;color:var(--primary);font-size:13px;text-decoration:underline;cursor:pointer}
+.sd-hint{margin:2px 0 0;color:var(--quiet);font-size:13px;line-height:1.7}
+.sd-listen{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 16px}.sd-listen small{color:var(--quiet);font-size:13px}
+@media (max-width:560px){.sd-row{flex-wrap:wrap}.sd-actions{width:100%;justify-content:flex-end}}
+/* 单词表：例句、遮住中文自测 */
+.sd-list.words .sd-text strong{font-size:18px}
+.sd-ex{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;color:var(--body-ink)!important}.sd-ex i{font-style:normal;color:var(--ink)}
+.sd-mask{color:transparent!important;background:var(--line);border-radius:4px;cursor:pointer;user-select:none}
+/* 阅读短文 */
+.sd-passage{display:grid;gap:10px;margin-top:16px}.sd-passage.quiz{margin:0 0 16px}
+.sd-paper{padding:18px 20px;border:1px solid var(--line);border-radius:10px;background:var(--surface-soft);font-size:17px;line-height:1.9;color:var(--ink)}
+.sd-paper p{margin:0 0 12px}.sd-paper p:last-child{margin:0}
+.sd-sent{cursor:pointer;border-radius:4px;transition:background .2s}.sd-sent:hover{background:color-mix(in srgb,var(--primary) 10%,transparent)}
+.sd-sent.active{background:color-mix(in srgb,var(--primary) 22%,transparent)}
+.sd-paper.zh .sd-sent{display:block;margin-top:8px}.sd-zh{display:block;color:var(--body-ink);font-size:14px;line-height:1.7}
+/* 关卡地图顶部的额外入口（Subject.links，比如英语的背单词），和“随机练习”等卡片并排。 */
+.ai-mode-link{text-decoration:none;color:inherit;border-color:var(--primary);box-shadow:inset 0 0 0 1px var(--primary)}.ai-mode-icon{font-size:22px;line-height:1}

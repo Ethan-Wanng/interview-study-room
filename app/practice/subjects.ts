@@ -8,9 +8,11 @@ import {goExams} from '@/content/exams/go';
 import {aiExams} from '@/content/exams/ai';
 import {backendExams} from '@/content/exams/backend';
 import {frontendExams} from '@/content/exams/frontend';
+import {englishLevels,englishTiers} from '@/content/english-journey';
+import {englishExams} from '@/content/exams/english';
 import type {HubSubject} from './training-hub';
 
-const meta=(id:string,name:string,nameEn:string,icon:string,storageKey:string,levels:AiLevel[],tiers:Tier[],exams:Exam[]):HubSubject=>({id,name,nameEn,icon,href:`/learn/${id}`,storageKey,
+const meta=(id:string,name:string,nameEn:string,icon:string,storageKey:string,levels:AiLevel[],tiers:Tier[],exams:Exam[],space:HubSubject['space']='tech'):HubSubject=>({id,name,nameEn,icon,href:`/learn/${id}`,storageKey,space,
  exams:exams.map(e=>({id:e.id,kind:e.kind,title:e.title,summary:e.summary,count:examSize(e,levels,tiers),requires:e.requires,passRate:e.passRate})),
  requireNames:Object.fromEntries([...levels.map(l=>[l.id,l.title]),...exams.map(e=>[e.id,e.title])])});
 
@@ -19,4 +21,5 @@ export const practiceSubjects:HubSubject[]=[
  meta('ai','AI 开发','AI development','🤖','ai-journey:v1:',aiLevels,aiTiers,aiExams),
  meta('backend','后端通用','Backend fundamentals','🗄️','backend-journey:v1:',backendLevels,backendTiers,backendExams),
  meta('frontend','前端开发','Frontend development','🎨','frontend-journey:v1:',frontendLevels,frontendTiers,frontendExams),
+ meta('english','英语','English','🗣️','english-journey:v1:',englishLevels,englishTiers,englishExams,'language'),
 ];

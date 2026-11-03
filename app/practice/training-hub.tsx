@@ -8,9 +8,10 @@ import ThemeControl from '../components/theme-control';
 import AccountMenu from '../components/account-menu';
 import SiteNav from '../components/site-nav';
 import {PAPER_MINUTES,PAPER_TOTAL} from '@/content/papers/types';
+import {learnSpaces} from '../learn/subjects';
 
 export type HubExam={id:string;kind:'training'|'stage'|'final';title:string;summary:string;count:number;requires:string[];passRate:number};
-export type HubSubject={id:string;name:string;nameEn:string;icon:string;href:string;storageKey:string;exams:HubExam[];requireNames:Record<string,string>};
+export type HubSubject={id:string;name:string;nameEn:string;icon:string;href:string;storageKey:string;space:'tech'|'language';exams:HubExam[];requireNames:Record<string,string>};
 
 const subscribe=(notify:()=>void)=>{window.addEventListener('storage',notify);return()=>window.removeEventListener('storage',notify)};
 const read=(key:string)=>{try{return localStorage.getItem(key)??''}catch{return ''}};
@@ -31,12 +32,12 @@ export default function TrainingHub({username,subjects}:{username:string;subject
  return <Shell username={username}>
   <div className="ai-title"><span className="eyebrow">PRACTICE</span><h1>{L('选一门开始训练','Pick a subject to practice')}</h1><p>{L('选一门学科，直接开始阶段训练、阶段考试或最终考试，不需要先解锁；也可以用「懒人」随机测验，把几门学科的题混在一起练。','Pick a subject and start any training or exam right away, or use Lazy mode for a random mixed quiz.')}</p></div>
   <a href="/practice/lazy" className="ai-card lazy-entry"><span className="learn-icon"><Dices size={26}/></span><span className="lazy-entry-text"><strong>{L('懒人 · 随机测验','Lazy · random quiz')}</strong><span className="muted">{L('选学科、选难度（入门、进阶、高阶、专家或最终）、自定义题量，随机抽题，混在一起打乱顺序作答。','Pick subjects, a level and a count; questions are drawn at random and shuffled together.')}</span></span><b>{L('开始','Start')}<ArrowRight size={16}/></b></a>
-  <div className="learn-subjects">{subjects.map((s,i)=>{const {passed}=saved[i]??parse(''),done=s.exams.filter(e=>passed.has(e.id)).length,total=s.exams.length,questions=s.exams.reduce((n,e)=>n+e.count,0);
+  {learnSpaces.map(sp=><section key={sp.id} className="learn-space"><h2 className="an-group">{L(sp.name[0],sp.name[1])}</h2><div className="learn-subjects">{subjects.filter(s=>s.space===sp.id).map(s=>{const i=subjects.indexOf(s),{passed}=saved[i]??parse(''),done=s.exams.filter(e=>passed.has(e.id)).length,total=s.exams.length,questions=s.exams.reduce((n,e)=>n+e.count,0);
    const kinds=(k:HubExam['kind'])=>s.exams.filter(e=>e.kind===k).length;
    return <a key={s.id} href={`/practice/${s.id}`} className="ai-card learn-subject">
     <span className="learn-icon">{s.icon}</span><strong>{L(s.name,s.nameEn)}</strong>
     <span className="muted">{L(`${kinds('training')} 次阶段训练、${kinds('stage')} 次阶段考试、${kinds('final')} 次最终考试，共 ${questions} 道新题`,`${kinds('training')} trainings, ${kinds('stage')} stage exams and ${kinds('final')} final · ${questions} new questions`)}</span>
-    <Progress value={done/total*100}/><span className="learn-foot"><span>{L(`已通过 ${done} / ${total}`,`${done} / ${total} passed`)}</span><b>{done?L('继续训练','Continue'):L('进入训练','Open')}<ArrowRight size={16}/></b></span></a>})}</div>
+    <Progress value={done/total*100}/><span className="learn-foot"><span>{L(`已通过 ${done} / ${total}`,`${done} / ${total} passed`)}</span><b>{done?L('继续训练','Continue'):L('进入训练','Open')}<ArrowRight size={16}/></b></span></a>})}</div></section>)}
   <p className="learn-hint">{L('训练和考试的成绩与「学习」共用，保存在本浏览器。','Scores are shared with “Learn” and saved in this browser.')}</p>
  </Shell>}
 

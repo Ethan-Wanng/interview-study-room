@@ -9,7 +9,7 @@ import type {AiQuiz} from '@/content/journey';
 import {Shell} from './training-hub';
 
 // sizes：入门、进阶、高阶、专家四个阶段训练题库和最终考试题库的题数，顺序与 lazyLevels 一致。
-export type LazySubject={id:string;name:string;nameEn:string;icon:string;sizes:number[]};
+export type LazySubject={id:string;name:string;nameEn:string;icon:string;space:'tech'|'language';sizes:number[]};
 export const lazyLevels:{name:string;nameEn:string;kind:string;kindEn:string}[]=[
  {name:'入门',nameEn:'Beginner',kind:'入门阶段训练题',kindEn:'beginner training'},
  {name:'进阶',nameEn:'Intermediate',kind:'进阶阶段训练题',kindEn:'intermediate training'},
@@ -30,6 +30,8 @@ const banks:Record<string,Bank[]>={
   ()=>import('@/content/exams/backend-tests').then(m=>m.beFinal)],
  frontend:[()=>import('@/content/exams/frontend-train1').then(m=>m.feTrain1),()=>import('@/content/exams/frontend-train2').then(m=>m.feTrain2),()=>import('@/content/exams/frontend-train34').then(m=>m.feTrain3),()=>import('@/content/exams/frontend-train34').then(m=>m.feTrain4),
   ()=>Promise.all([import('@/content/exams/frontend-final-a'),import('@/content/exams/frontend-final-b')]).then(([a,b])=>[...a.feFinalA,...b.feFinalB])],
+ // 英语还没有最终考试题库，最后一项为空。
+ english:[()=>import('@/content/exams/english-trainings').then(m=>m.englishTrainA1),()=>import('@/content/exams/english-trainings').then(m=>m.englishTrainA2),()=>import('@/content/exams/english-trainings').then(m=>m.englishTrainB1),()=>import('@/content/exams/english-trainings').then(m=>m.englishTrainIelts),()=>Promise.resolve([])],
 };
 const shuffle=<T,>(xs:T[])=>{const a=[...xs];for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a};
 const toItem=(subject:string,quiz:AiQuiz):Item=>({id:quiz.id,level:subject,quiz,order:'options' in quiz?shuffle(quiz.options.map((_,i)=>i)):[]});
@@ -46,7 +48,8 @@ type Stage={kind:'setup'}|{kind:'loading'}|{kind:'quiz';level:number;items:Item[
 
 // 「训练」里的懒人模式：选一门或多门学科、自定义题量，从各学科的最终考试里随机抽题，混在一起打乱顺序作答。
 export default function LazyQuiz({username,subjects}:{username:string;subjects:LazySubject[]}){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
- const [picked,setPicked]=useState<string[]>(subjects.map(s=>s.id)),[level,setLevel]=useState(lazyLevels.length-1),[count,setCount]=useState(20),[stage,setStage]=useState<Stage>({kind:'setup'}),[error,setError]=useState('');
+ // 语言类学科（英语）默认不选，避免和技术题混在一起。
+ const [picked,setPicked]=useState<string[]>(subjects.filter(s=>s.space==='tech').map(s=>s.id)),[level,setLevel]=useState(lazyLevels.length-1),[count,setCount]=useState(20),[stage,setStage]=useState<Stage>({kind:'setup'}),[error,setError]=useState('');
  const chosen=subjects.filter(s=>picked.includes(s.id)),caps=Object.fromEntries(chosen.map(s=>[s.id,s.sizes[level]??0])) as Record<string,number>;
  const max=Object.values(caps).reduce((a,b)=>a+b,0),n=Math.max(1,Math.min(count||1,max||1));
  const name=(id:string)=>{const s=subjects.find(x=>x.id===id);return s?`${s.icon} ${L(s.name,s.nameEn)}`:id};

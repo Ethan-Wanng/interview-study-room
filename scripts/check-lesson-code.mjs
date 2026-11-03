@@ -14,7 +14,10 @@ const comment=l=>/^\s*(\/\/|--|#|\/\*|\*|<!--)/.test(l)||!l.trim()||/^\s*[{}()[\
 let cards=0,missing=0,bad=0,uncovered=0;
 for(const f of files){const src=readFileSync(f,'utf8');if(!src.includes('code:'))continue;const sf=ts.createSourceFile(f,src,99,true);
  (function walk(n){if(ts.isObjectLiteralExpression(n)){const prop=k=>n.properties.find(p=>ts.isPropertyAssignment(p)&&p.name.getText(sf)===k)?.initializer;
-  if(prop('title')&&prop('body')&&prop('code')&&!prop('q')&&!prop('id')){cards++;const title=val(sf,prop('title')),code=val(sf,prop('code')),lines=code.split('\n'),notes=prop('explain')?val(sf,prop('explain')):null;
+  // 也检查按技术栈区分的卡片版本（variants 里的每个版本）和参考答案（solution）里的代码，标题用所在卡片的标题加上版本名。
+  const owner=()=>{let p=n.parent,path=[];while(p){if(ts.isPropertyAssignment(p))path.unshift(p.name.getText(sf));if(ts.isObjectLiteralExpression(p)){const t=p.properties.find(x=>ts.isPropertyAssignment(x)&&x.name.getText(sf)==='title'&&!ts.isObjectLiteralExpression(x.initializer));if(t)return val(sf,t.initializer)+' · '+path.join('.')}p=p.parent}return path.join('.')};
+  const nested=!prop('title')&&prop('code')&&(ts.isPropertyAssignment(n.parent)&&['solution'].includes(n.parent.name.getText(sf))||ts.isPropertyAssignment(n.parent)&&ts.isObjectLiteralExpression(n.parent.parent)&&ts.isPropertyAssignment(n.parent.parent.parent)&&n.parent.parent.parent.name.getText(sf)==='variants');
+  if((prop('title')&&prop('body')||nested)&&prop('code')&&!prop('q')&&!prop('id')){cards++;const title=nested?owner():val(sf,prop('title')),code=val(sf,prop('code')),lines=code.split('\n'),notes=prop('explain')?val(sf,prop('explain')):null;
    const where=`${f.replace(/\\/g,'/')} 「${title}」`;
    if(dump&&f.replace(/\\/g,'/').includes(dump)){console.log(`\n### ${title}\n${val(sf,prop('body'))}\n---\n${lines.map((l,i)=>String(i+1).padStart(2)+'| '+l).join('\n')}`);if(notes)for(const x of notes)console.log(`  * [${x.at}${x.to?' … '+x.to:''}] ${x.text}`)}
    if(!notes?.length){missing++;if(!dump)console.log(`缺少讲解：${where}`)}
