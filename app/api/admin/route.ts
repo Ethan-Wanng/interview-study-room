@@ -2,7 +2,7 @@ import {studyDb} from '@/db/study';
 import {catalog,asPractice} from '@/db/catalog';
 import {plans,planSubjectIds} from '@/db/practice-plans';
 import {shuffle} from '@/db/practice';
-import {AuthError,assertSameOrigin,hashToken,rateLimit} from '@/lib/site-auth';
+import {AuthError,assertSameOrigin,hashToken,rateLimit,sessionUser} from '@/lib/site-auth';
 import {newKey,requireAdmin,currentAdmin,canEdit,requireScope,adminCookie,adminToken,clearAdminCookie,bootstrapHash,type Administrator} from '@/lib/admin-auth';
 import {nameKey,textValue,questionInput} from '@/lib/admin-validation';
 export const dynamic='force-dynamic';
@@ -25,7 +25,9 @@ export async function POST(req:Request){try{assertSameOrigin(req);const raw=awai
   if(p.action==='inspectInvite')return json({subjects:c.subjects.filter(s=>invite.allow_new||allowed.includes(s.id)),allowNew:!!invite.allow_new});
   const name=textValue(p.name,60,true),names=textValue(p.subjectNames,1000,true).split(/[,，;；\n]/).map(s=>s.trim()).filter(Boolean);if(!names.length||names.length>20)throw new AuthError('请填写 1–20 个负责学科，用逗号或换行分隔。');
   const selected=new Map<string,{id:string;name:string;nameEn:string;fresh:boolean}>();for(const name of names){const found=c.subjects.find(s=>nameKey(s.name)===nameKey(name)||nameKey(s.nameEn)===nameKey(name)||(s.id==='go'&&nameKey(name)==='go 语言'));if(found){if(!invite.allow_new&&!allowed.includes(found.id))throw new AuthError('填写的学科超出了邀请授权范围。',403);selected.set(found.id,{...found,fresh:false})}else{if(!invite.allow_new)throw new AuthError('填写的学科超出了邀请授权范围。',403);textValue(name,80,true);const normalized=nameKey(name);if(![...selected.values()].some(s=>nameKey(s.name)===normalized))selected.set(normalized,{id:'s-'+crypto.randomUUID(),name,nameEn:name,fresh:true})}}
-  const id=crypto.randomUUID(),loginKey=newKey(),scopes=[...selected.values()].map(s=>s.id);const batch=[db.prepare('UPDATE admin_invites SET used_by=? WHERE id=? AND used_by IS NULL AND revoked=0 AND expires_at>? AND EXISTS(SELECT 1 FROM administrators WHERE administrators.id=admin_invites.creator_id AND administrators.enabled=1) RETURNING id').bind(id,invite.id,now),db.prepare("INSERT INTO administrators(id,name,key_hash,role,subjects,enabled,created_by,created_at) SELECT ?,?,?,'editor',?,1,?,? WHERE EXISTS(SELECT 1 FROM admin_invites WHERE id=? AND used_by=?)").bind(id,name,hashToken(loginKey),JSON.stringify(scopes),invite.creator_id,now,invite.id,id)];
+  // 已登录网站账号（非游客）时接受邀请，管理员身份同时绑定到这个账号，以后登录网站就能直接进后台。
+  const user=await sessionUser(req.headers),accountId=user&&!user.is_guest&&!await db.prepare('SELECT 1 FROM administrators WHERE account_id=?').bind(user.id).first()?user.id:null;
+  const id=crypto.randomUUID(),loginKey=newKey(),scopes=[...selected.values()].map(s=>s.id);const batch=[db.prepare('UPDATE admin_invites SET used_by=? WHERE id=? AND used_by IS NULL AND revoked=0 AND expires_at>? AND EXISTS(SELECT 1 FROM administrators WHERE administrators.id=admin_invites.creator_id AND administrators.enabled=1) RETURNING id').bind(id,invite.id,now),db.prepare("INSERT INTO administrators(id,name,key_hash,role,subjects,enabled,created_by,created_at,account_id) SELECT ?,?,?,'editor',?,1,?,?,? WHERE EXISTS(SELECT 1 FROM admin_invites WHERE id=? AND used_by=?)").bind(id,name,hashToken(loginKey),JSON.stringify(scopes),invite.creator_id,now,accountId,invite.id,id)];
   for(const subject of selected.values())if(subject.fresh)batch.push(db.prepare('INSERT INTO subjects(id,name,name_en,name_key,created_by) SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM admin_invites WHERE id=? AND used_by=?)').bind(subject.id,subject.name,subject.nameEn,nameKey(subject.name),id,invite.id,id));
   const results=await db.batch(batch);if(!results[0].results.length)throw new AuthError('邀请密钥无效、已使用或已过期。',409);return json({ok:true,key:loginKey},await adminCookie(id));
  }

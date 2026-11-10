@@ -2,7 +2,7 @@
 import {useEffect,useRef,useState} from 'react';
 import {ArrowLeft,ArrowRight,Bot,Laptop,Minus,Plus,X,ZoomIn} from 'lucide-react';
 import {useI18n} from '../components/i18n';
-import KeywordText from '../components/keyword-text';
+import KeywordText,{EnWords} from '../components/keyword-text';
 import CodeExplain from './code-explain';
 import AiDock,{type DockRequest} from './ai-dock';
 import PhraseList from '../components/speech-drill';
@@ -16,8 +16,9 @@ const savedZoom=()=>{try{const z=Number(localStorage.getItem(ZOOM_KEY));return z
 // 点在按钮、代码、输入框上是在操作卡片内容，不弹放大层；选中文字时也不弹。
 const interactive='button,a,input,textarea,select,label,pre,summary,li[tabindex],[role=button]';
 
-export default function LessonCards({lessons,quizCount,need,onStart}:{lessons:AiLesson[];quizCount:number;need:number;onStart:()=>void}){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
- const [index,setIndex]=useState(0),[dir,setDir]=useState<'next'|'prev'>('next'),touch=useRef<number|null>(null);
+// start：一进来先显示第几张（从 0 开始），从搜索结果、题目的“对应卡片”或 AI 老师给的链接进来时用。
+export default function LessonCards({lessons,quizCount,need,onStart,start=0}:{lessons:AiLesson[];quizCount:number;need:number;onStart:()=>void;start?:number}){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
+ const [index,setIndex]=useState(()=>Math.min(Math.max(0,start),lessons.length-1)),[dir,setDir]=useState<'next'|'prev'>('next'),touch=useRef<number|null>(null);
  const last=lessons.length-1,lesson=lessons[index];
  const go=(i:number)=>{if(i<0||i>last||i===index)return;setDir(i>index?'next':'prev');setIndex(i)};
  const deck=useRef<HTMLDivElement>(null),layer=useRef<HTMLDivElement>(null),[ask,setAsk]=useState<DockRequest>();
@@ -37,7 +38,7 @@ export default function LessonCards({lessons,quizCount,need,onStart}:{lessons:Ai
   :practice?[L('我准备好了，带我从第一步开始','I am ready, start with step one'),L('我卡住了，下一步该做什么？','I am stuck, what next?'),L('这个报错是什么意思？','What does this error mean?')]
   :[L('用大白话再讲一遍这张卡片','Explain this card in plain words'),L('举个生活中的例子','Give me an everyday example'),lesson.code?L('代码每一行在做什么？','What does each line of code do?'):L('面试会怎么问这个知识点？','How is this asked in interviews?')];
  const content=<>
-   <h2><span>{String(index+1).padStart(2,'0')}</span>{lesson.title}</h2>
+   <h2><span>{String(index+1).padStart(2,'0')}</span><EnWords text={lesson.title}/></h2>
    {lesson.practice&&<span className="lc-practice-tag"><Laptop size={15}/>{task?L('自己动手写 · 写完用验收脚本检查','Build it yourself · then run the check'):L('动手试试 · 在你自己的电脑上操作','Try it on your own computer')}</span>}
    <p><KeywordText text={lesson.body}/></p>
    {lesson.phrases&&<PhraseList key={lesson.title} phrases={lesson.phrases}/>}

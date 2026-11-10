@@ -1,6 +1,6 @@
 .ai-shell{min-height:100svh;color:var(--ink)}
-.ai-header{min-height:78px;padding:16px max(24px,calc((100vw - 980px)/2));display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;background:var(--surface);border-bottom:1px solid var(--line)}
-.ai-brand{display:flex;align-items:center;gap:12px;font-size:19px;font-weight:700;color:var(--ink);text-decoration:none}.ai-brand small{display:block;font-size:12px;font-weight:500;color:var(--quiet)}
+.ai-header{min-height:78px;padding:16px max(24px,calc((100vw - 980px)/2));display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:var(--surface);border-bottom:1px solid var(--line)}
+.ai-brand{display:flex;align-items:center;gap:8px;font-size:19px;font-weight:700;color:var(--ink);text-decoration:none}.ai-brand small{display:block;font-size:12px;font-weight:500;color:var(--quiet)}
 .ai-main{max-width:980px;margin:auto;padding:34px 24px 72px}
 .ai-card{background:var(--surface);border:1px solid var(--line);border-radius:14px;color:var(--ink)}
 .ai-title{margin-bottom:26px}.ai-title h1{font-size:32px;font-weight:750;margin:6px 0 10px}.ai-title p{color:var(--body-ink);line-height:1.85;margin:0 0 14px}
@@ -152,16 +152,19 @@ a.ai-level.locked{opacity:.72}
 .tutor-input{display:flex;gap:8px;align-items:flex-end;padding:10px 14px;border-top:1px solid var(--line)}.tutor-input textarea{flex:1;resize:vertical;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--surface-soft);color:var(--ink);font:inherit;line-height:1.6}
 .tutor-left{margin:0;padding:0 14px 10px;color:var(--quiet);font-size:12.5px}
 /* 常驻 AI 老师：右下角按钮 + 侧边对话面板（手机上是底部抽屉）。放在卡片容器里，全屏时也能用。 */
-.ai-dock-fab{position:fixed;right:22px;bottom:22px;z-index:60;display:inline-flex;align-items:center;gap:6px;padding:11px 16px;border:0;border-radius:999px;background:var(--primary);color:#fff;font-weight:650;box-shadow:0 8px 24px #0000002e;cursor:pointer}
+.ai-dock-fab{position:fixed;right:22px;bottom:22px;z-index:60;display:inline-flex;align-items:center;gap:6px;padding:11px 16px 11px 12px;border:0;border-radius:999px;background:var(--primary);color:#fff;font-weight:650;box-shadow:0 8px 24px #0000002e;cursor:grab;touch-action:none;user-select:none}
 .ai-dock-fab:hover{filter:brightness(1.08)}
-.ai-dock{position:fixed;right:18px;bottom:18px;z-index:61;width:min(420px,calc(100vw - 36px));height:min(620px,calc(100vh - 36px));display:flex;flex-direction:column;border:1px solid var(--line);border-radius:16px;background:var(--surface);box-shadow:0 18px 50px #00000038;overflow:hidden}
-.ai-dock header{display:flex;align-items:center;gap:8px;padding:11px 12px 11px 14px;border-bottom:1px solid var(--line);background:var(--surface-soft)}.ai-dock header strong{flex:1}
+.ai-dock-fab.dragging,.ai-dock.dragging .ai-dock-drag{cursor:grabbing}
+.ai-dock-grip{opacity:.7;flex:none}
+.ai-dock-badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;margin-left:5px;padding:0 5px;border-radius:999px;background:#ffffff2e;font-style:normal;font-size:11.5px;font-weight:700}
+.ai-dock{position:fixed;right:18px;bottom:18px;z-index:61;width:min(420px,calc(100vw - 16px));height:min(620px,calc(100vh - 16px));display:flex;flex-direction:column;border:1px solid var(--line);border-radius:16px;background:var(--surface);box-shadow:0 18px 50px #00000038;overflow:hidden}
+.ai-dock header{display:flex;align-items:center;gap:8px;padding:11px 12px 11px 10px;border-bottom:1px solid var(--line);background:var(--surface-soft);cursor:grab;touch-action:none;user-select:none}.ai-dock header strong{flex:1}
 .ai-dock-icon{display:grid;place-items:center;width:30px;height:30px;border:0;border-radius:8px;background:none;color:var(--quiet);cursor:pointer}.ai-dock-icon:hover:not(:disabled){background:var(--surface);color:var(--ink)}
 .ai-dock-log{flex:1;overflow:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
 .ai-dock-hello p{margin:0 0 10px;color:var(--body-ink);line-height:1.8}
 .ai-dock-prompts{display:flex;flex-wrap:wrap;gap:6px}.ai-dock-prompts button{padding:6px 11px;border:1px solid var(--line);border-radius:999px;background:var(--surface-soft);color:var(--ink);font-size:13.5px;cursor:pointer;text-align:left}
 .ai-dock-prompts button:hover{border-color:var(--primary);color:var(--primary)}.ai-dock-prompts.compact{padding:0 14px 8px}
-@media(max-width:767px){.ai-dock{right:0;bottom:0;width:100vw;height:72vh;border-radius:16px 16px 0 0}.ai-dock-fab{right:14px;bottom:14px}}
+@media(max-width:767px){.ai-dock{right:8px;bottom:8px;width:calc(100vw - 16px);height:min(72vh,calc(100vh - 16px));border-radius:16px}.ai-dock-fab{right:14px;bottom:14px}}
 /* 学习卡片放大阅读：点卡片弹出一层，卡片按所选倍数放大（CSS zoom，文字会重新换行），顶部工具条翻页、调倍数、关闭。 */
 .lc-head{position:relative}.lc-zoom-open{flex:none;display:grid;place-items:center;width:34px;height:34px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink);cursor:pointer}.lc-zoom-open:hover{border-color:var(--primary);color:var(--primary)}
 .lc-card{cursor:zoom-in}.lc-card :is(button,a,input,textarea,pre,li[tabindex]){cursor:auto}.lc-card :is(button,a,li[tabindex]){cursor:pointer}
@@ -175,8 +178,13 @@ a.ai-level.locked{opacity:.72}
 .lc-zoom-scroll{flex:1;overflow:auto;padding:24px max(14px,calc((100vw - 980px)/2)) 90px}
 .lc-zoom-card{margin:0 auto;cursor:auto}
 @media(max-width:767px){.lc-zoom-bar{gap:6px;padding:8px 10px}.lc-zoom-gap{display:none}.lc-zoom-scroll{padding:14px 8px 90px}}
-.ai-hint-btn{float:right;display:inline-flex;align-items:center;gap:5px;margin:-2px 0 0 10px;padding:5px 11px;border:1px solid var(--line);border-radius:999px;background:var(--surface-soft);color:var(--body-ink);font-size:13.5px;cursor:pointer}.ai-hint-btn:hover{border-color:var(--primary);color:var(--primary)}
+.ai-hint-row{display:flex;align-items:center;margin:-4px 0 14px}
+.ai-hint-btn{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border:1px solid var(--line);border-radius:999px;background:var(--surface-soft);color:var(--body-ink);font-size:13.5px;cursor:pointer}.ai-hint-btn:hover{border-color:var(--primary);color:var(--primary)}
 .ai-ask-btn{margin:16px 10px 0 0}
+.ai-nav-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:16px}
+.ai-nav-row .ai-next,.ai-nav-row .ai-prev{margin-top:0}
+.ai-say-transcript{margin:8px 0!important;padding:8px 12px;border-radius:10px;background:var(--surface-soft);border-left:3px solid var(--primary);color:var(--ink)}
+.ai-feedback-link{display:inline-flex;align-items:center;gap:4px;margin-left:auto;padding:3px 9px;border-radius:999px;font-size:12.5px;color:var(--muted);text-decoration:none;border:1px solid transparent}.ai-feedback-link:hover{color:var(--primary);border-color:var(--line);background:var(--surface-soft)}
 /* 项目实战：技术栈选择器、代码骨架标签和折叠的参考答案。 */
 .stack-picker{display:grid;gap:12px}.stack-picker.compact{padding:12px 16px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 18px}
 .stack-tip{margin:0;color:var(--muted);font-size:14px;line-height:1.7}
@@ -190,3 +198,159 @@ a.ai-level.locked{opacity:.72}
 .lc-solution>summary{cursor:pointer;font-weight:600;color:var(--muted)}.lc-solution[open]>summary{margin-bottom:10px;color:var(--ink)}
 /* 名词解释弹窗要盖在放大阅读层（z-index 55）上面，放大后点黄色关键词也能看到解释。 */
 .term-popup{z-index:65!important}
+.ai-option.is-done{cursor:default}
+.ai-option:hover:not(:disabled):not(.is-done){border-color:var(--primary)}
+/* 题目搜索面板 & 错题本完整列表（question-browser.tsx） */
+.qb-search-panel{padding:16px 18px;margin-bottom:18px;display:flex;flex-direction:column;gap:12px}
+.qb-search-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.qb-search-input{flex:1;min-width:220px;display:flex;align-items:center;gap:9px;padding:9px 13px;border:1px solid var(--line);border-radius:10px;background:var(--surface-soft);color:var(--ink);transition:border-color .15s}
+.qb-search-input:focus-within{border-color:var(--primary)}
+.qb-search-input svg{color:var(--quiet);flex:none}
+.qb-search-input input{flex:1;min-width:0;border:0;background:transparent;color:var(--ink);font:inherit;font-size:15px;outline:none}
+.qb-clear{display:grid;place-items:center;width:24px;height:24px;border:0;border-radius:50%;background:transparent;color:var(--quiet);cursor:pointer;padding:0}
+.qb-clear:hover{background:var(--line);color:var(--ink)}
+.qb-type-chips{display:flex;flex-wrap:wrap;gap:8px}
+.qb-toolbar{padding:18px 20px;margin-bottom:16px;display:flex;flex-direction:column;gap:12px}
+.qb-toolbar-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding-top:4px}
+.qb-toolbar-btns{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.qb-search-results{display:flex;flex-direction:column;gap:12px;padding-top:6px;border-top:1px solid var(--line)}
+.qb-list{display:grid;gap:14px}
+.qb-item{padding:20px 24px;display:flex;flex-direction:column;gap:12px}
+.qb-item-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.qb-item-head .ai-tag{margin:0}
+.qb-num{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;font-weight:700;color:var(--primary);padding:2px 8px;border-radius:6px;background:color-mix(in srgb,var(--primary) 12%,transparent)}
+.qb-item-actions{margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.qb-btn{padding:6px 11px!important;font-size:13px!important;border-radius:8px!important;gap:5px!important}
+.qb-remove:hover{border-color:var(--alert-ink)!important;color:var(--alert-ink)!important}
+.qb-question{font-size:17.5px;font-weight:650;line-height:1.7;margin:0;color:var(--ink)}
+.qb-options{list-style:none;padding:0;margin:0;display:grid;gap:8px}
+.qb-option{display:flex;align-items:flex-start;gap:11px;padding:10px 13px;border:1px solid var(--line);border-radius:9px;background:var(--surface-soft);font-size:15px;line-height:1.65;color:var(--ink)}
+.qb-option b{min-width:24px;height:24px;display:grid;place-items:center;border-radius:50%;background:var(--surface);border:1px solid var(--line);font-size:12.5px;flex:none;margin-top:1px}
+.qb-option span{flex:1;min-width:0}
+.qb-option.right{border-color:var(--notice);box-shadow:inset 0 0 0 1px var(--notice);background:color-mix(in srgb,var(--notice) 8%,var(--surface-soft))}
+.qb-option.right svg{color:var(--notice);flex:none;margin-top:3px}
+.qb-toggle-ans{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border:1px dashed var(--line);border-radius:8px;background:transparent;color:var(--primary);font-size:13.5px;font-weight:600;cursor:pointer}
+.qb-toggle-ans:hover{border-color:var(--primary);background:var(--surface-soft)}
+.qb-explain{padding:13px 16px;border-radius:10px;background:var(--surface-soft);border-left:4px solid var(--notice);display:flex;flex-direction:column;gap:6px}
+.qb-explain p{margin:0;line-height:1.8;color:var(--body-ink)}
+.qb-explain .ai-review-ref{margin:4px 0 0}
+.qb-empty{padding:40px 20px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:10px}
+.qb-empty svg{color:var(--primary)}
+.qb-more{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:6px}
+@media(max-width:767px){.qb-item{padding:16px}.qb-item-actions{width:100%;margin-left:0}}
+/* AI 模型与专属 API 设置面板（ai-settings.tsx） & AI 客服演练场（sandbox-client.tsx） */
+.ai-dock-prov{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:11px;font-weight:600;background:color-mix(in srgb,var(--primary) 14%,var(--surface));color:var(--primary);vertical-align:middle}
+.ai-dock-icon.active{color:var(--primary);background:color-mix(in srgb,var(--primary) 14%,var(--surface))}
+.ai-cfg-box{display:flex;flex-direction:column;gap:12px;font-size:13.5px;line-height:1.6;color:var(--ink)}
+.ai-cfg-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+.ai-cfg-head strong{display:inline-flex;align-items:center;gap:6px;font-size:14.5px}
+.ai-cfg-owner{margin:0;padding:7px 10px;border-radius:8px;background:color-mix(in srgb,var(--notice) 10%,var(--surface-soft));color:var(--body-ink);font-size:12.5px;display:flex;align-items:center;gap:6px}
+.ai-cfg-guest{padding:10px 12px;border-radius:10px;background:var(--surface-soft);border:1px solid var(--line)}
+.ai-cfg-guest p{margin:0 0 6px}
+.ai-cfg-toggle{display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer;padding:6px 10px;border-radius:8px;background:var(--surface-soft);border:1px solid var(--line)}
+.ai-cfg-field{display:flex;flex-direction:column;gap:6px}
+.ai-cfg-label{font-weight:600;font-size:13px;color:var(--body-ink);display:flex;align-items:center;justify-content:space-between;gap:8px}
+.ai-cfg-saved{font-style:normal;font-size:12px;color:var(--notice);font-weight:500}
+.ai-cfg-providers,.ai-cfg-models,.ai-cfg-inline{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.ai-cfg-prov,.ai-cfg-chip{padding:5px 11px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink);font:inherit;font-size:12.5px;cursor:pointer;transition:all .15s}
+.ai-cfg-prov:hover,.ai-cfg-chip:hover{border-color:var(--primary);color:var(--primary)}
+.ai-cfg-prov.on,.ai-cfg-chip.on{border-color:var(--primary);background:color-mix(in srgb,var(--primary) 15%,var(--surface));color:var(--primary);font-weight:600}
+.ai-cfg-input{width:100%;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface-soft);color:var(--ink);font:inherit;font-size:13.5px}
+.ai-cfg-inline .ai-cfg-input{width:90px}
+.ai-cfg-limits{padding:10px 12px;border-radius:10px;background:var(--surface-soft);border:1px solid var(--line);display:flex;flex-direction:column;gap:10px}
+.ai-cfg-grid{display:grid;gap:10px}
+.ai-cfg-grid label{display:flex;flex-direction:column;gap:5px;font-size:13px}
+.ai-cfg-scenes{display:flex;flex-direction:column;gap:6px;padding-top:4px;border-top:1px dashed var(--line)}
+.ai-cfg-scenes label{display:flex;align-items:center;gap:7px;cursor:pointer;font-size:13px}
+.ai-cfg-msg{margin:0;padding:8px 10px;border-radius:8px;font-size:13px}
+.ai-cfg-msg.ok{background:color-mix(in srgb,var(--notice) 12%,var(--surface-soft));color:var(--notice)}
+.ai-cfg-msg.err{background:color-mix(in srgb,var(--alert-ink) 12%,var(--surface-soft));color:var(--alert-ink)}
+.ai-cfg-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:4px}
+.cs-sandbox-bar{padding:14px 18px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.cs-sandbox-grid{display:grid;grid-template-columns:1fr 1.15fr;gap:16px;align-items:start}
+@media(max-width:960px){.cs-sandbox-grid{grid-template-columns:1fr}}
+.cs-sandbox-cfg,.cs-sandbox-chat{padding:20px;display:flex;flex-direction:column;gap:14px}
+.cs-sandbox-cfg h2,.cs-sandbox-chat h2{margin:0;font-size:17px;display:inline-flex;align-items:center;gap:7px}
+.cs-field{display:flex;flex-direction:column;gap:6px}
+.cs-field span{font-size:13px;font-weight:600;color:var(--body-ink)}
+.cs-field textarea{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:var(--surface-soft);color:var(--ink);font:inherit;font-size:13.5px;line-height:1.6;resize:vertical}
+.cs-chat-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.cs-prompts{display:flex;flex-direction:column;gap:7px;padding:10px 12px;border-radius:10px;background:var(--surface-soft);border:1px solid var(--line)}
+.cs-chat-log{min-height:300px;max-height:460px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:12px;border-radius:10px;background:var(--surface-soft);border:1px solid var(--line)}
+.cs-chat-empty{margin:auto;text-align:center;color:var(--muted);max-width:420px;font-size:14px;line-height:1.7}
+.cs-msg-role{font-size:11.5px;font-weight:600;color:var(--muted);margin-bottom:4px;display:inline-flex;align-items:center;gap:4px}
+
+
+/* AI 对话输入区：输入框空着或一行时和发送按钮同高（40px），多行时向上长高；附图按钮、待发送图片、排队消息。 */
+.tutor-input{align-items:flex-end}
+.tutor-input textarea{resize:none;box-sizing:border-box;height:40px;min-height:40px;max-height:160px;padding:8px 10px;line-height:22px;overflow-y:auto}
+.tutor-input .tutor-send{flex:none;width:40px;height:40px;min-height:40px;padding:0;display:inline-flex;align-items:center;justify-content:center}
+.tutor-attach-btn{flex:none;width:40px;height:40px;display:grid;place-items:center;border:1px solid var(--line);border-radius:10px;background:var(--surface-soft);color:var(--quiet);cursor:pointer}
+.tutor-attach-btn:hover:not(:disabled){color:var(--primary);border-color:var(--primary)}
+.tutor-attach-btn:disabled{opacity:.45;cursor:not-allowed}
+.tutor-attach{display:flex;gap:8px;padding:8px 14px 0;flex-wrap:wrap}
+.tutor-attach span{position:relative}
+.tutor-attach img{width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
+.tutor-attach button{position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:999px;display:grid;place-items:center;background:var(--ink);color:var(--surface);border:0;cursor:pointer}
+.tutor-imgs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+.tutor-imgs img{max-width:140px;max-height:140px;border-radius:8px;cursor:zoom-in;object-fit:cover}
+.tutor-imgs img.big{max-width:100%;max-height:none;cursor:zoom-out}
+.tutor-msg.queued{opacity:.75}
+.tutor-queued{display:block;margin-top:4px;font-size:12px;color:var(--quiet)}
+.tutor-input textarea::placeholder{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* AI 老师顶栏的模型选择 */
+.ai-dock-model{max-width:150px;padding:3px 6px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--primary);font-size:12px;font-weight:600;cursor:pointer}
+.ai-dock header strong{flex:0 1 auto;white-space:nowrap}
+.ai-dock header .ai-dock-model{margin-right:auto}
+/* 卡片底部的“上一张 / 进度点 / 下一张”：按钮不换行不被挤；进度点放不下就换行；手机上只留按钮（顶部已有“第 x / y 张”和进度条）。 */
+.lc-nav>.button{flex:none;white-space:nowrap}
+.lc-dots{flex:1 1 auto;min-width:0;flex-wrap:wrap;justify-content:center;row-gap:8px}
+@media(max-width:640px){.lc-dots{display:none}}
+
+.code-ref-tabs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}.code-ref-tabs button{padding:4px 12px;border-radius:999px;border:1px solid var(--line,#ddd);background:transparent;color:var(--body-ink);font-size:13px;cursor:pointer}.code-ref-tabs button.on{background:var(--primary);border-color:var(--primary);color:#fff}.ai-reference .code-ref-note{font-size:13px;opacity:.75;margin:-4px 0 12px}
+
+/* 题型标签和单选 / 多选提示：反馈说原来的标签太小不明显 */
+.ai-tags .ai-tag.type{font-size:14px;font-weight:700;padding:4px 12px;letter-spacing:.02em}
+.ai-tags .ai-tag.type.t-multi{background:#d9480f;color:#fff}
+.ai-choice-hint{display:flex;align-items:center;gap:8px;margin:0 0 12px;padding:8px 12px;border-radius:9px;font-size:14px;font-weight:600;line-height:1.6;background:color-mix(in srgb,var(--primary) 10%,transparent);color:var(--ink);border-left:4px solid var(--primary)}
+.ai-choice-hint.multi{background:color-mix(in srgb,#d9480f 12%,transparent);border-left-color:#d9480f}
+/* 屏幕够宽时顶栏放一行：品牌、导航、右侧按钮不换行（内容区放宽到 1240px）。 */
+@media(min-width:1280px){.ai-header{flex-wrap:nowrap;padding-left:max(24px,calc((100vw - 1240px)/2));padding-right:max(24px,calc((100vw - 1240px)/2))}.ai-header .top-actions{flex-wrap:nowrap}.ai-header .ai-brand{flex-shrink:0}}
+/* 题干里的换行照常显示（规则、例子分行写） */
+.ai-question h2,.paper-q h3{white-space:pre-line}
+/* 代码题作答框：选语言 + 提示 */
+.code-answer .code-ref-tabs{align-items:center;margin-bottom:8px}
+.code-answer-label{font-size:13px;color:var(--quiet);margin-right:4px}
+.code-answer-hint{margin:0 0 8px;font-size:13px;color:var(--quiet)}
+.code-answer textarea{width:100%}
+
+/* AI 评分折叠 */
+.ai-grade-head small+.ai-grade-fold{margin-left:0}.ai-grade-fold{margin-left:auto;display:inline-flex;align-items:center;gap:3px;padding:3px 9px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--quiet);font:inherit;font-size:12.5px;cursor:pointer}.ai-grade-fold:hover{color:var(--primary);border-color:var(--primary)}
+/* AI 老师：思考过程小框、站内链接 */
+.tutor-think{margin:0 0 8px;padding:7px 10px;border:1px dashed var(--line);border-radius:9px;background:var(--surface);font-size:12.5px;line-height:1.65;color:var(--quiet)}
+.tutor-think summary,.tutor-think-head{display:flex;align-items:center;gap:5px;cursor:pointer;font-weight:600;list-style:none}.tutor-think summary::-webkit-details-marker{display:none}.tutor-think-head{cursor:default}
+.tutor-think-tail{max-height:4.95em;margin-top:4px;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere;-webkit-mask-image:linear-gradient(#0000,#000 40%);mask-image:linear-gradient(#0000,#000 40%)}
+.tutor-think ol{max-height:132px;margin:6px 0 0;padding-left:20px;overflow:auto}.tutor-think li{margin:2px 0}
+.tutor-link{color:var(--primary);font-weight:600;text-decoration:underline;text-underline-offset:3px}
+/* 背题模式 */
+.rc-bar{display:flex;align-items:center;gap:10px 16px;flex-wrap:wrap;padding:12px 16px;font-size:14px}.rc-bar select{max-width:100%;padding:6px 10px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink);font:inherit}
+.rc-bar label{display:inline-flex;align-items:center;gap:6px;color:var(--body-ink);cursor:pointer}.rc-bar input{accent-color:var(--primary)}
+.rc-card{margin-top:14px}.rc-count{margin-left:auto;color:var(--quiet);font-size:13px;font-variant-numeric:tabular-nums}.rc-known{display:inline-flex;align-items:center;gap:3px;color:#23876a}
+.rc-toggle{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;margin-top:16px;padding:11px;border:1px dashed var(--line);border-radius:10px;background:var(--surface-soft);color:var(--primary);font:inherit;font-weight:650;cursor:pointer}.rc-toggle:hover{border-color:var(--primary)}
+.rc-ref{margin-top:10px}.rc-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.rc-actions .button:last-child{margin-left:auto}.rc-empty{padding:24px;text-align:center}
+.ai-en-tag{margin-left:8px;padding:0 6px;border-radius:999px;background:color-mix(in srgb,var(--primary) 14%,var(--surface));color:var(--primary);font-style:normal;font-size:11px;font-weight:700;vertical-align:middle}
+
+/* AI 老师并排停靠：电脑上是右侧一栏，页面和放大阅读层向左收窄；手机上是底部半屏抽屉 */
+body.ai-docked{--dock-w:min(420px,38vw);--dock-h:52vh}
+.ai-dock header{cursor:default}
+@media(min-width:768px){
+ body.ai-docked{padding-right:var(--dock-w)}
+ body.ai-docked .lc-zoom{right:var(--dock-w)}
+ .ai-dock{top:0;right:0;bottom:0;width:var(--dock-w);height:auto;border-width:0 0 0 1px;border-radius:0;box-shadow:-8px 0 30px #0000001f}
+ body.ai-docked .lc-zoom-bar,body.ai-docked .lc-zoom-scroll{padding-left:14px;padding-right:14px}
+}
+@media(max-width:767px){
+ body.ai-docked{padding-bottom:var(--dock-h)}
+ body.ai-docked .lc-zoom{bottom:var(--dock-h)}
+ .ai-dock{left:0;right:0;bottom:0;width:100%;height:var(--dock-h);border-width:1px 0 0;border-radius:16px 16px 0 0}
+}

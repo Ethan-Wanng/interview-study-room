@@ -55,3 +55,23 @@
 .pp-answer{margin:6px 0 0 22px;padding:8px 12px;border-left:3px solid var(--primary);background:var(--surface-soft)}.pp-answer p{margin:2px 0}
 .pp-key b,.pp-explain b{color:var(--ink)}.pp-ref{white-space:pre-line;color:var(--body-ink)}.pp-explain{color:var(--body-ink)}
 .pp-points{margin:0;padding-left:20px}.pp-points em{margin-left:8px;font-style:normal;color:var(--quiet)}
+.paper-actions.top{margin-top:0}
+/* 参考答案不能撑出屏幕：综合题的答案以文字为主，自动换行；代码在框内横向滚动。 */
+.paper-sheet,.paper-section,.paper .ai-reference{min-width:0;max-width:100%}
+.paper .ai-reference pre{max-width:100%;overflow-x:auto}
+.paper .ai-reference pre.ref-wrap{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
+
+/* 暂停和出错 */
+.paper-pause{min-height:36px;padding:0 12px}
+.paper-bar .paper-pause{margin-left:auto}
+.paper-bar .paper-pause+button{margin-left:0}
+.paper-paused,.paper-crash{display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;padding:40px 24px}
+.paper-paused>svg{color:var(--primary)}
+.paper-paused h2,.paper-crash h2{font-size:22px;margin:0}
+.paper-paused p,.paper-crash p{margin:0;line-height:1.8}
+
+/* 结果页：全部题目 / 只看错题 */
+.paper-filter{display:inline-flex;gap:4px;padding:4px;margin:4px auto 0;border:1px solid var(--line);border-radius:999px;background:var(--surface-soft);align-self:center}
+.paper-filter button{padding:6px 14px;border-radius:999px;font-size:14px;font-weight:600;color:var(--quiet)}
+.paper-filter button.on{background:var(--primary);color:var(--primary-foreground,#fff)}
+@media print{.paper-filter{display:none}}

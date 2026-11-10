@@ -9,7 +9,7 @@ import ThemeControl from '../../../components/theme-control';
 import AccountMenu from '../../../components/account-menu';
 import SiteNav from '../../../components/site-nav';
 import {allWords,wordBooks} from '@/content/english-words';
-import {answer,isDue,KNOWN,loadStore,MASTERED,saveStore,today,type Store} from './srs';
+import {answer,isDue,KNOWN,loadStore,MASTERED,saveStore,storeKey,today,type Store} from './srs';
 import WordQuestion,{makeItem,shuffle,type WordItem} from './word-question';
 import WordBrowser from './word-browser';
 
@@ -21,7 +21,10 @@ const TEST_PER_BOOK=10;
 // 背单词：每天复习到期的词 + 学一批新词（间隔重复），可以测词汇量、浏览词书。进度保存在本浏览器。
 export default function WordsClient({username}:{username:string}){const {locale,t}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
  const [store,setStore]=useState<Store|null>(null),[view,setView]=useState<View>({kind:'home'});
- useEffect(()=>{const id=setTimeout(()=>setStore(loadStore(username)));return()=>clearTimeout(id)},[username]);
+ useEffect(()=>{const id=setTimeout(()=>setStore(loadStore(username)));
+  // 云同步从服务器取回了更新的单词进度时重新读取。
+  const onStorage=(e:StorageEvent)=>{if(e.key===storeKey(username))setStore(loadStore(username))};window.addEventListener('storage',onStorage);
+  return()=>{clearTimeout(id);window.removeEventListener('storage',onStorage)}},[username]);
  useEffect(()=>{window.scrollTo({top:0})},[view.kind]);
  const update=(f:(s:Store)=>Store)=>setStore(s=>{if(!s)return s;const next=f(s);saveStore(username,next);return next});
  const header=<header className="ai-header"><a href="/learn/english" className="ai-brand"><BookOpen size={23}/><span>{t('面试自习室')}<small>{L('英语 · 背单词','English · Vocabulary')}</small></span></a><SiteNav active="learn"/><div className="top-actions"><LanguageControl/><ThemeControl/><AccountMenu username={username}/></div></header>;

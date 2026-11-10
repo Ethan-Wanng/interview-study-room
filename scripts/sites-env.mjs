@@ -21,10 +21,21 @@ for (const directory of [
   mkdirSync(directory, { recursive: true });
 }
 
-// 本地预览用的 Gemini 密钥：从项目外的 ../1.txt 读出，写进构建目录里的 .dev.vars（wrangler dev 会读取它；dist/ 不提交）。
-// 线上用 `wrangler secret put GEMINI_API_KEY` 设置，不经过这里。
+// 本地预览用的 AI 密钥：从项目外的 ../2.txt（DeepSeek）和 ../1.txt（Gemini）读出，写进构建目录里的 .dev.vars（wrangler dev 会读取它；dist/ 不提交）。
+// 线上用 `wrangler secret put DEEPSEEK_API_KEY` 设置。
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-const keyFile = path.join(projectRoot, "../1.txt"), devVars = path.join(projectRoot, "dist/server/.dev.vars");
-if (!process.env.GEMINI_API_KEY && existsSync(keyFile) && existsSync(path.dirname(devVars))) {
-  writeFileSync(devVars, `GEMINI_API_KEY=${readFileSync(keyFile, "utf8").trim()}\n`);
+const dsKeyFile = path.join(projectRoot, "../2.txt");
+const gmKeyFile = path.join(projectRoot, "../1.txt");
+const devVars = path.join(projectRoot, "dist/server/.dev.vars");
+if (existsSync(path.dirname(devVars))) {
+  const lines = [];
+  if (!process.env.DEEPSEEK_API_KEY && existsSync(dsKeyFile)) {
+    lines.push(`DEEPSEEK_API_KEY=${readFileSync(dsKeyFile, "utf8").trim()}`);
+  }
+  if (!process.env.GEMINI_API_KEY && existsSync(gmKeyFile)) {
+    lines.push(`GEMINI_API_KEY=${readFileSync(gmKeyFile, "utf8").trim()}`);
+  }
+  if (lines.length) {
+    writeFileSync(devVars, lines.join("\n") + "\n");
+  }
 }

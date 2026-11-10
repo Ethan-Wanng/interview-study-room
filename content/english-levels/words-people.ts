@@ -14,7 +14,7 @@ export const enWordsPeople:AiLevel={id:'en-words-people',title:'词汇一：人�
 ],quiz:[
  {id:'en-words-people-1',q:'cousin 指的是？',options:['堂表兄弟姐妹','叔叔或舅舅','侄子或外甥','邻居家的孩子'],why:['','叔叔、舅舅是 uncle。','侄子、外甥是 nephew。','邻居是 neighbor。'],answer:0,explain:'英语不分父亲那边还是母亲那边，所有的堂/表兄弟姐妹都叫 cousin。'},
  {id:'en-words-people-2',type:'fill',q:'child 的复数是＿。',accepted:['children'],explain:'child → children，是不规则复数。类似的还有 man → men、woman → women、foot → feet。'},
- {id:'en-words-people-3',q:'听录音，选出你听到的单词。',say:'daughter',options:['daughter','doctor','water','dollar'],why:['','doctor（医生）开头是 dok，有 c 的 /k/ 音。','water（水）开头是 w。','dollar（美元）结尾是 lar。'],answer:0,explain:'daughter 读 /ˈdɔːtər/，gh 不发音。'},
+ {id:'en-words-people-3',q:'听录音，选出你在句子中听到的家庭成员单词。',say:'My daughter is seven years old.',options:['daughter','doctor','water','dollar'],why:['','doctor（医生）开头是 dok，有 c 的 /k/ 音。','water（水）开头是 w。','dollar（美元）结尾是 lar。'],answer:0,explain:'听力原句：“My daughter is seven years old.”（我女儿七岁了。）daughter 读 /ˈdɔːtər/，gh 不发音。'},
  {id:'en-words-people-4',q:'“我好无聊”应该说？',options:['I’m bored.','I’m boring.','I’m bore.','I’m boredom.'],why:['','I’m boring 是“我是个无趣的人”。','bore 是动词或名词，不能这样直接接在 I’m 后面。','boredom 是名词“无聊感”，不能这样用。'],answer:0,explain:'-ed 形容词说人的感受（bored），-ing 形容词说事物的特点（boring）。'},
  {id:'en-words-people-5',type:'multi',q:'下面哪些词是复数形式？（多选）',options:['feet','women','people','teeth'],why:['','','',''],answers:[0,1,2,3],explain:'feet（foot 的复数）、women（woman 的复数）、people（人们）、teeth（tooth 的复数）都是复数。'},
  {id:'en-words-people-6',q:'My nose is running. 的意思是？',options:['我在流鼻涕','我的鼻子在跑','我在跑步','我鼻子很大'],why:['','直译是这样，但实际意思是流鼻涕。','跑步是 I’m running，主语是“我”不是鼻子。','鼻子大会说 I have a big nose。'],answer:0,explain:'英语有很多这样的固定说法，要整句记。'},

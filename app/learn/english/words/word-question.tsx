@@ -26,12 +26,12 @@ export default function WordQuestion({item,listen,again,onAnswer,onNext}:{item:W
   window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key)});
  const state=(i:number)=>!done?'':options[i]===word.zh?'right':i===picked?'wrong':'';
  return <section className="ai-card wq">
-  <div className="wq-word">{listen&&!done?<button type="button" className="wq-big-play" onClick={()=>play()} aria-label={L('再听一遍','Play again')}><Volume2 size={40}/></button>:<><strong lang="en">{word.en}</strong><small>{word.pos}</small></>}
+  <div className="wq-word">{listen&&!done?<button type="button" className="wq-big-play" onClick={()=>play()} aria-label={L('再听一遍','Play again')}><Volume2 size={40}/></button>:<><strong lang="en" role="button" tabIndex={0} className="en-word" title={L('点击朗读单词','Click to pronounce')} onClick={()=>play()}>{word.en}</strong><small>{word.pos}</small></>}
    <span className="wq-audio"><button type="button" onClick={()=>play()} aria-label={L('听','Listen')} title={L('听（R）','Listen (R)')}><Volume2 size={18}/></button><button type="button" onClick={()=>play(0.55)} aria-label={L('慢速听','Slowly')} title={L('慢速听','Slowly')}><Turtle size={18}/></button></span></div>
   <div className="ai-options">{options.map((o,i)=><button key={i} type="button" className={'ai-option '+state(i)} disabled={done} onClick={()=>choose(i)}><b>{i+1}</b><span>{o}</span>{state(i)==='right'&&<Check size={18}/>}{state(i)==='wrong'&&<X size={18}/>}</button>)}</div>
   {!done&&<button type="button" className="wq-unknown" onClick={()=>choose(-1)}>{L('不认识，直接看答案（0）','I don’t know (0)')}</button>}
   {done&&<div className={'wq-feedback '+(right?'right':'wrong')}>
-   <p><strong>{right?L('答对了！','Correct!'):L('记住它：','Remember:')}</strong> <b lang="en">{word.en}</b> <small>{word.pos}</small> {word.zh}</p>
+   <p><strong>{right?L('答对了！','Correct!'):L('记住它：','Remember:')}</strong> <b lang="en" role="button" tabIndex={0} className="en-word" title={L('点击朗读单词','Click to pronounce')} onClick={()=>play()}>{word.en}</b> <small>{word.pos}</small> {word.zh}</p>
    {!right&&again&&<small>{L('这个词过一会儿还会再出现一次。','You’ll see this word again shortly.')}</small>}
    <button type="button" className="button primary" onClick={next}>{L('下一个','Next')}<ArrowRight size={16}/></button></div>}
  </section>}

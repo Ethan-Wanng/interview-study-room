@@ -8,7 +8,9 @@ if(!file||!levelId||!parts.length){console.error('用法：node scripts/replace-
 const lessons=parts.flatMap(p=>JSON.parse(readFileSync(p,'utf8')));
 const src=readFileSync(file,'utf8'),sf=ts.createSourceFile(file,src,99,true);
 const str=v=>"'"+v.replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n')+"'";
-const lit=v=>typeof v==='string'?str(v):Array.isArray(v)?'['+v.map(lit).join(',')+']':'{'+Object.entries(v).filter(([,x])=>x!==undefined).map(([k,x])=>k+':'+lit(x)).join(',')+'}';
+// 键名不是合法标识符时（比如 template-go）要加引号。
+const key=k=>/^[A-Za-z_$][\w$]*$/.test(k)?k:str(k);
+const lit=v=>typeof v==='string'?str(v):Array.isArray(v)?'['+v.map(lit).join(',')+']':'{'+Object.entries(v).filter(([,x])=>x!==undefined).map(([k,x])=>key(k)+':'+lit(x)).join(',')+'}';
 // 代码用模板字符串，保持源码里多行可读。
 const tpl=v=>'`'+v.replace(/\\/g,'\\\\').replace(/`/g,'\\`').replace(/\$\{/g,'\\${')+'`';
 const lesson=l=>'\n  {'+Object.entries(l).filter(([,x])=>x!==undefined).map(([k,x])=>k+':'+(k==='code'?tpl(x):lit(x))).join(',')+'}';

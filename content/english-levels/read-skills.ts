@@ -18,5 +18,5 @@ export const enReadSkills:AiLevel={id:'en-read-skills',title:'阅读三：略读
  {id:'en-read-skills-7',passage:'Not everyone agrees with this idea, though. Some parents worry that a later start will make it difficult for them to get to work on time.',type:'judge',q:'判断：所有家长都支持推迟上课时间。',answer:false,explain:'Not everyone agrees… Some parents worry…：有些家长担心会影响上班。'},
  {id:'en-read-skills-8',q:'英语段落里，概括段落中心意思的主题句通常在哪里？',options:['段落的第一句','段落的中间','括号里面','每段都在最后一个词'],why:['','中间的句子通常是例子和细节。','括号里一般是补充信息。','中心意思是一个完整的句子，不会只是一个词。'],answer:0,explain:'大多数段落是“总—分”结构，第一句是主题句。'},
  {id:'en-read-skills-9',passage:'Even so, many experts believe that schools should think carefully about their start times.',q:'这句话表达了专家什么样的观点？',options:['学校应认真考虑上课时间','学校应马上取消早课','家长的担心没有道理','学生应该早点睡觉'],why:['','think carefully 是“认真考虑”，没有说马上取消。','Even so 只是“即便如此”，没有说家长没道理。','文中没有这样建议。'],answer:0,explain:'should think carefully about their start times：应该认真考虑上课时间。'},
- {id:'en-read-skills-10',type:'fill',q:'In addition, coffee can help you focus. 这里的信号词 In addition 表示＿（填“转折”“因果”或“递进”）。',accepted:['递进'],explain:'in addition、also、moreover 表示递进：再补充一点。'},
+ {id:'en-read-skills-10',type:'fill',q:'阅读中表示“此外、再补充一点”的递进信号词：In ＿, coffee can help you focus.（填一个英文词）',accepted:['addition','Addition'],explain:'in addition、also、moreover 表示递进：再补充一点。'},
 ]};

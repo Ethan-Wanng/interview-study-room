@@ -45,10 +45,11 @@ export const examKindNames:Record<ExamKind,[string,string]>={training:['阶段�
 // 按固定规则搭出一个学科的 4 次阶段训练、2 次阶段考试和 1 次最终考试（学科必须是 4 个难度分档）。
 export function buildExams(o:{prefix:string;subject:string;levels:AiLevel[];tiers:Tier[];trainings:AiQuiz[][];stages:[AiQuiz[],AiQuiz[]];final:AiQuiz[]}):Exam[]{
  const ids=(t:number)=>o.levels.slice(o.tiers[t].from,o.tiers[t].to+1).map(l=>l.id);
- const train=(t:number):Exam=>({id:`${o.prefix}-train-${t+1}`,kind:'training',title:`${o.tiers[t].name}阶段训练`,summary:`${o.tiers[t].name}阶段全部通关后解锁，全新的综合题，比关卡更难`,tiers:[t],after:t,requires:ids(t),passRate:0.65,quiz:o.trainings[t]??[]});
+ const train=(t:number):Exam=>({id:`${o.prefix}-train-${t+1}`,kind:'training',title:`${o.tiers[t].name}阶段训练`,summary:`${o.tiers[t].name}阶段全部通关后解锁，全新的综合题，比关卡更难；得分 80% 以上直接解锁下一阶段的关卡`,tiers:[t],after:t,requires:ids(t),passRate:0.65,quiz:o.trainings[t]??[]});
  const stage=(n:0|1):Exam=>{const a=n*2,b=a+1;return {id:`${o.prefix}-exam-${n+1}`,kind:'stage',title:`阶段考试${n?'二':'一'}：${o.tiers[a].name} + ${o.tiers[b].name}`,summary:`通过「${o.tiers[a].name}」「${o.tiers[b].name}」两次阶段训练后解锁，150 分正式试卷，限时 120 分钟，包含所有题型`,tiers:[a,b],after:b,requires:[`${o.prefix}-train-${a+1}`,`${o.prefix}-train-${b+1}`],passRate:0.65,quiz:o.stages[n]}};
  return [train(0),train(1),stage(0),train(2),train(3),stage(1),{id:`${o.prefix}-final`,kind:'final',title:`${o.subject}最终考试`,summary:'两次阶段考试都通过后解锁，150 分正式试卷，限时 120 分钟，覆盖全部关卡，难度最高',tiers:[0,1,2,3],after:3,requires:[`${o.prefix}-exam-1`,`${o.prefix}-exam-2`],passRate:0.7,quiz:o.final}];
 }
-// 一次训练或考试实际出多少题：训练 = 覆盖阶段的关卡题目总数 ÷ 2（向上取整），不超过题库里写好的题数；阶段考试和最终考试是固定 44 题的试卷。
+// 一次训练或考试实际出多少题：训练 = 覆盖阶段的关卡题目总数 ÷ 2（向上取整），且不超过训练题库的 2/3（每次只抽一部分，下一次优先出没做过的题，题目会轮换）；阶段考试和最终考试是固定 44 题的试卷。
 export const PAPER_QUESTIONS=44;
-export const examSize=(e:Exam,levels:AiLevel[],tiers:Tier[])=>e.kind==='training'?Math.min(e.quiz.length,Math.ceil(e.tiers.flatMap(t=>levels.slice(tiers[t].from,tiers[t].to+1)).reduce((n,l)=>n+l.quiz.length,0)/2)):PAPER_QUESTIONS;
+export const trainingCap=(bank:number)=>Math.max(1,Math.ceil(bank*2/3));
+export const examSize=(e:Exam,levels:AiLevel[],tiers:Tier[])=>e.kind==='training'?Math.min(trainingCap(e.quiz.length),Math.ceil(e.tiers.flatMap(t=>levels.slice(tiers[t].from,tiers[t].to+1)).reduce((n,l)=>n+l.quiz.length,0)/2)):PAPER_QUESTIONS;

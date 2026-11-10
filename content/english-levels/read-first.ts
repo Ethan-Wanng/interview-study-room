@@ -19,5 +19,5 @@ export const enReadFirst:AiLevel={id:'en-read-first',title:'阅读一：看懂�
  {id:'en-read-first-7',passage:'On Sundays, we have dinner at my grandmother’s house. She makes the best noodles in the world!',q:'读短文，判断：Lucy 一家每个星期天在奶奶家吃午饭。',type:'judge',answer:false,explain:'原文是 have dinner（吃晚饭），不是午饭（lunch）。读细节时要看清每个词。'},
  {id:'en-read-first-8',type:'multi',q:'下面哪些是好的阅读习惯？（多选）',options:['第一遍先读完，抓大意','遇到生词先根据上下文猜','选能看懂九成左右的材料','每遇到一个生词就停下来查'],why:['','','','每个词都停下来查，读不完一篇，也练不到猜词能力。'],answers:[0,1,2],explain:'先抓大意、先猜再查、选难度合适的材料，阅读才能坚持下去。'},
  {id:'en-read-first-9',q:'菜名 steamed fish 是哪种做法？',options:['清蒸鱼','炸鱼','烤鱼','生鱼片'],why:['','炸是 fried。','烤是 grilled 或 roast。','生鱼片是 raw fish 或 sashimi。'],answer:0,explain:'steamed 蒸的，fried 炸的，grilled 烤的。'},
- {id:'en-read-first-10',type:'fill',q:'门上写着 PULL，你应该把门＿（填“推”或“拉”）。',accepted:['拉','往里拉','拉开'],explain:'PULL 拉，PUSH 推。'},
+ {id:'en-read-first-10',type:'fill',q:'商店门上写着 PULL 是“拉”，如果表示“推”，门上的英文标识是 ＿。',accepted:['PUSH','push','Push'],explain:'门上最常见的两个标识：PULL 拉，PUSH 推。'},
 ]};

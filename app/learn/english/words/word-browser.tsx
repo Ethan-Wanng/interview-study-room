@@ -17,6 +17,6 @@ export default function WordBrowser({book,store}:{book:WordBook;store:Store}){co
   <p className="muted">{L(`共 ${list.length} 个词`,`${list.length} words`)}</p>
   <ol className="wb-list">{list.slice(0,shown).map(w=>{const [cls,text]=status(w.en);return <li key={w.en}>
    <button type="button" onClick={()=>sayEnglish(w.en,0.85)} aria-label={L('听','Listen')}><Volume2 size={16}/></button>
-   <strong lang="en">{w.en}</strong><small>{w.pos}</small><span>{w.zh}</span><em className={'wb-status '+cls}>{text}</em></li>})}</ol>
+   <strong lang="en" role="button" tabIndex={0} className="en-word" title={L('点击朗读单词','Click to pronounce')} onClick={()=>sayEnglish(w.en,0.85)}>{w.en}</strong><small>{w.pos}</small><span>{w.zh}</span><em className={'wb-status '+cls}>{text}</em></li>})}</ol>
   {shown<list.length&&<button type="button" className="button secondary" onClick={()=>setShown(shown+PAGE)}>{L('再显示 100 个','Show 100 more')}</button>}
  </section>}

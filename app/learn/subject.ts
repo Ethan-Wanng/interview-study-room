@@ -18,5 +18,6 @@ export type Subject={
  exams:Exam[];                            // 阶段训练、阶段考试和最终考试
  animations:Animation[];                  // 动画课堂（按关卡关联，没有就传空数组）
  links?:{href:string;icon:string;title:[string,string];summary:[string,string]}[]; // 关卡地图顶部的额外入口（比如英语的背单词）
+ levelsEn?:Record<string,{title:string;summary:string;lessons:AiLevel['lessons']}>; // 英文版学习卡片（按关卡 id）：英文界面下替换标题、简介和卡片，卡片张数和顺序与中文版一致，这样“第几张”的链接两边通用
  stacks?:Stacks;                          // 项目实战：可选的后端语言和前端做法，学习卡片和代码题按选择显示对应版本
 };

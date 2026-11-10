@@ -1,0 +1,9 @@
+import {headers} from 'next/headers';
+import {redirect} from 'next/navigation';
+import {sessionUser} from '@/lib/site-auth';
+import bank from '@/content/questions.json';
+import RustJourney from './rust-journey';
+export const dynamic='force-dynamic';
+// 只把 Rust 章节的面试题（标题 + 参考回答）传给页面，供关卡底部和答题后对照阅读。题库里暂时还没有 Rust 面试题。
+const interviews=bank.questions.filter(q=>q.category==='Rust').map(q=>({id:q.id,title:q.title,blocks:q.blocks as {type:string;text:string}[]}));
+export default async function RustLearn(){const user=await sessionUser(new Headers(await headers()));if(!user)redirect('/login');return <RustJourney username={user.is_guest?'':user.username} interviews={interviews}/>}

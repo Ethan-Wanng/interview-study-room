@@ -4,6 +4,7 @@ import {useEffect,useRef,useState} from 'react';
 import {Fragment} from 'react';
 import {Eye,EyeOff,Languages,Mic,Play,Square,Turtle,Users,Volume2} from 'lucide-react';
 import {useI18n} from './i18n';
+import {EnWords} from './keyword-text';
 import type {Phrase} from '@/content/journey';
 
 // 语言课的“听一听、跟着说”：用浏览器自带的英文语音朗读，用语音识别听你跟读并按单词打分。
@@ -56,7 +57,7 @@ function errorText(code:string,L:(zh:string,en:string)=>string){
 const verdict=(s:number,L:(zh:string,en:string)=>string)=>s>=90?L('很棒！每个词都说清楚了','Great — every word was clear'):s>=70?L('不错！红色的词再练一两遍','Good! Practise the red words again'):L('再来一次：先点慢速听，再一个词一个词跟着说','Try again: listen slowly, then repeat word by word');
 
 function ScoreView({s}:{s:Score}){const L=useL();
- return <div className={'sd-score '+(s.score>=90?'good':s.score>=70?'ok':'low')}><b>{s.score}%</b><span className="sd-words">{s.words.map((w,i)=><span key={i} className={s.hits[i]?'hit':'miss'}>{w}</span>)}</span><small>{L('我听到：','Heard: ')}{s.heard||'—'} · {verdict(s.score,L)}</small></div>}
+ return <div className={'sd-score '+(s.score>=90?'good':s.score>=70?'ok':'low')}><b>{s.score}%</b><span className="sd-words">{s.words.map((w,i)=><span key={i} role="button" tabIndex={0} title={L('点击朗读该单词','Click to pronounce')} className={(s.hits[i]?'hit':'miss')+' en-word'} onClick={()=>sayEnglish(w,0.85)}>{w}</span>)}</span><small>{L('我听到：','Heard: ')}{s.heard||'—'} · {verdict(s.score,L)}</small></div>}
 
 // 听力题的播放按钮：只放声音不显示原文。
 export function ListenButton({text}:{text:string}){const L=useL();
@@ -95,9 +96,9 @@ function SentenceList({phrases,words}:{phrases:Phrase[];words?:boolean}){const L
   {role&&<p className="sd-hint">{canRec?L(`电脑读其他人的台词；轮到 ${role} 时会自动开始听，你对着麦克风说出高亮的句子。`,`The computer reads the other lines; speak when your ${role} line lights up.`):L(`电脑读其他人的台词；轮到 ${role} 时你大声说出高亮的句子，说完点「下一句」。`,`Say your ${role} lines out loud, then press Next.`)}</p>}
   {phrases.map((p,i)=>{const s=scores[i],mine=waiting===i;return <div key={i} className={'sd-row'+(active===i?' active':'')+(mine?' mine':'')}>
    {dialog&&<span className="sd-who">{p.who}</span>}
-   <div className="sd-text"><strong lang="en">{p.en}</strong><span className={hidden(i)?'sd-mask':''} title={hidden(i)?L('点一下看中文','Tap to reveal'):undefined} onClick={()=>reveal(i)}>{p.zh}</span>
-    {p.ex&&<small className="sd-ex"><button type="button" className="sd-link" aria-label={L('听例句','Listen to the example')} onClick={()=>sayText(i,p.ex!)}><Volume2 size={14}/></button><i lang="en">{p.ex}</i>{p.exZh&&<span className={hidden(i)?'sd-mask':''} onClick={()=>reveal(i)}>{p.exZh}</span>}</small>}
-    {p.tip&&<small>{p.tip}</small>}
+   <div className="sd-text"><strong lang="en"><EnWords text={p.en} noSentenceHorn/></strong><span className={hidden(i)?'sd-mask':''} title={hidden(i)?L('点一下看中文','Tap to reveal'):undefined} onClick={()=>reveal(i)}>{p.zh}</span>
+    {p.ex&&<small className="sd-ex"><button type="button" className="sd-link" aria-label={L('听例句','Listen to the example')} onClick={()=>sayText(i,p.ex!)}><Volume2 size={14}/></button><i lang="en"><EnWords text={p.ex} noSentenceHorn/></i>{p.exZh&&<span className={hidden(i)?'sd-mask':''} onClick={()=>reveal(i)}>{p.exZh}</span>}</small>}
+    {p.tip&&<small><EnWords text={p.tip}/></small>}
     {s&&<ScoreView s={s}/>}{error?.i===i&&<small className="sd-error">{error.text}</small>}
     {mine&&<span className="sd-turn">{listening===i?L('正在听……请说出这句','Listening… say this line'):L('轮到你了','Your turn')}{listening!==i&&<>{canRec&&<button type="button" className="sd-link" onClick={()=>repeat(i,()=>next.current(i+1))}>{L('再说一次','Say it again')}</button>}<button type="button" className="sd-link" onClick={()=>{stopRec.current?.();setListening(null);next.current(i+1)}}>{canRec?L('跳过','Skip'):L('下一句','Next')}</button></>}</span>}</div>
    <div className="sd-actions">
@@ -113,8 +114,10 @@ const sentences=(text:string)=>text.replace(/\n+/g,' ').match(/[^.!?]+[.!?]+["�
 function sayAll(parts:string[],rate:number,token:{current:number},onEach:(i:number|null)=>void){const my=++token.current;
  const step=(i:number)=>{if(my!==token.current)return;if(i>=parts.length){onEach(null);return}onEach(i);sayEnglish(parts[i],rate,()=>setTimeout(()=>step(i+1),250))};step(0)}
 
-// 阅读短文：英文连成段落显示，点任意一句单独听；可以朗读全文、慢速朗读，读不懂时打开逐句中文对照。
-// phrases 里 p 为 true 的句子另起一段。
+// 阅读短文（文章点读 + 句子点读 + 单词点读）：
+// 1. 文章点读：上方按钮支持「朗读全文」「慢速朗读」，按句顺序朗读并高亮当前句；
+// 2. 句子点读：点每句末尾的小喇叭（或句子空白处）单独朗读该句并高亮；
+// 3. 单词点读：点句中任意单词单独朗读该单词。
 function Passage({phrases}:{phrases:Phrase[]}){const L=useL();
  const [zh,setZh]=useState(false),[active,setActive]=useState<number|null>(null),run=useRef(0);
  useEffect(()=>()=>{run.current++;stopSaying()},[]);
@@ -123,20 +126,34 @@ function Passage({phrases}:{phrases:Phrase[]}){const L=useL();
  const readOne=(i:number)=>{stop();setActive(i);const my=run.current;sayEnglish(phrases[i].en,0.85,()=>{if(my===run.current)setActive(null)})};
  const paras:number[][]=[];phrases.forEach((p,i)=>{if(!paras.length||p.p)paras.push([]);paras[paras.length-1].push(i)});
  return <div className="sd-passage">
-  <div className="sd-bar"><button type="button" className="button secondary" onClick={active!==null?stop:()=>readAll(0.9)}>{active!==null?<><Square size={15}/>{L('停止','Stop')}</>:<><Play size={15}/>{L('朗读全文','Read aloud')}</>}</button>
-   <button type="button" className="button secondary" onClick={()=>readAll(0.7)}><Turtle size={15}/>{L('慢速朗读','Slowly')}</button>
+  <div className="sd-bar"><button type="button" className="button secondary" onClick={active!==null?stop:()=>readAll(0.9)}>{active!==null?<><Square size={15}/>{L('停止','Stop')}</>:<><Play size={15}/>{L('文章点读 · 朗读全文','Read article aloud')}</>}</button>
+   <button type="button" className="button secondary" onClick={()=>readAll(0.7)}><Turtle size={15}/>{L('慢速读全文','Read article slowly')}</button>
    <button type="button" className={'button secondary'+(zh?' on':'')} onClick={()=>setZh(!zh)}><Languages size={15}/>{zh?L('隐藏中文','Hide Chinese'):L('逐句中文对照','Show Chinese')}</button></div>
-  <div className={'sd-paper'+(zh?' zh':'')} lang="en">{paras.map((idx,k)=><p key={k}>{idx.map(i=><Fragment key={i}><span className={'sd-sent'+(active===i?' active':'')} onClick={()=>readOne(i)}>{phrases[i].en}</span>{zh&&<span className="sd-zh" lang="zh">{phrases[i].zh}</span>}{' '}</Fragment>)}</p>)}</div>
-  <p className="sd-hint">{L('先不看中文完整读一遍，抓大意；再点不懂的句子单独听、打开中文对照。','Read it once without Chinese for the gist, then tap hard sentences to hear them and check the translation.')}</p>
+  <div className={'sd-paper'+(zh?' zh':'')} lang="en">{paras.map((idx,k)=><p key={k}>{idx.map(i=><Fragment key={i}><span className={'sd-sent'+(active===i?' active':'')} onClick={()=>readOne(i)}><EnWords text={phrases[i].en} noSentenceHorn/><i role="button" tabIndex={0} className="en-sent-horn sentence" title={L(`句子点读：${phrases[i].en}`,`Read sentence: ${phrases[i].en}`)} aria-label={L('句子点读','Read sentence')} onClick={e=>{e.stopPropagation();readOne(i)}} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();readOne(i)}}}><Volume2 size={13}/></i></span>{zh&&<span className="sd-zh" lang="zh">{phrases[i].zh}</span>}{' '}</Fragment>)}</p>)}</div>
+  <p className="sd-hint">{L('点读说明：点任意单词听「单词」· 点句末喇叭听「整句」· 点上方按钮听「整篇文章」。','Tap any word for word audio, the speaker at the end of a sentence for sentence audio, or the buttons above for full-article audio.')}</p>
  </div>}
 
-// 阅读题的原文：显示在题干下面，可以朗读。
-export function ReadingPassage({text}:{text:string}){const L=useL();const [on,setOn]=useState<number|null>(null),run=useRef(0);
+// 阅读题的原文：同样支持「文章点读（全文 / 慢速）」「句子点读（逐句喇叭 + 高亮）」「单词点读（点任意词）」。
+export function ReadingPassage({text}:{text:string}){const L=useL();const [active,setActive]=useState<number|null>(null),run=useRef(0);
  useEffect(()=>()=>{run.current++;stopSaying()},[]);
- return <div className="sd-passage quiz"><div className="sd-paper" lang="en">{text.split(/\n+/).filter(Boolean).map((t,i)=><p key={i}>{t}</p>)}</div>
-  <div className="sd-bar"><button type="button" className="button secondary" onClick={()=>{if(on!==null){run.current++;stopSaying();setOn(null)}else sayAll(sentences(text),0.9,run,setOn)}}>{on!==null?<><Square size={15}/>{L('停止','Stop')}</>:<><Volume2 size={15}/>{L('朗读原文','Read aloud')}</>}</button></div></div>}
+ const paras=text.split(/\n+/).filter(Boolean).map(p=>sentences(p));
+ const allSents=paras.flat();
+ const stop=()=>{run.current++;stopSaying();setActive(null)};
+ const readAll=(rate:number)=>{stopSaying();sayAll(allSents,rate,run,setActive)};
+ const readOne=(i:number)=>{stop();setActive(i);const my=run.current;sayEnglish(allSents[i],0.85,()=>{if(my===run.current)setActive(null)})};
+ let cursor=0;
+ return <div className="sd-passage quiz">
+  <div className="sd-bar">
+   <button type="button" className="button secondary" onClick={active!==null?stop:()=>readAll(0.9)}>{active!==null?<><Square size={15}/>{L('停止','Stop')}</>:<><Volume2 size={15}/>{L('文章点读 · 朗读全文','Read passage')}</>}</button>
+   <button type="button" className="button secondary" onClick={()=>readAll(0.7)}><Turtle size={15}/>{L('慢速读全文','Read slowly')}</button>
+   <small className="sd-hint">{L('点单词读单词 · 点句末喇叭读整句 · 点按钮读全文','Tap word / sentence speaker / full passage')}</small>
+  </div>
+  <div className="sd-paper" lang="en">{paras.map((sents,pIdx)=><p key={pIdx}>{sents.map(s=>{const idx=cursor++;return <Fragment key={idx}><span className={'sd-sent'+(active===idx?' active':'')} onClick={()=>readOne(idx)}><EnWords text={s} noSentenceHorn/><i role="button" tabIndex={0} className="en-sent-horn sentence" title={L(`句子点读：${s}`,`Read sentence: ${s}`)} aria-label={L('句子点读','Read sentence')} onClick={e=>{e.stopPropagation();readOne(idx)}} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();readOne(idx)}}}><Volume2 size={13}/></i></span>{' '}</Fragment>})}</p>)}</div>
+ </div>}
 
 // 卡片里的英文素材：按 kind 分成连续的几组，read 是阅读短文，word 是单词表，其余是句子（或对话）。
 export default function PhraseList({phrases}:{phrases:Phrase[]}){
  const groups:Phrase[][]=[];phrases.forEach((p,i)=>{if(!i||(p.kind??'say')!==(phrases[i-1].kind??'say'))groups.push([]);groups[groups.length-1].push(p)});
  return <>{groups.map((g,k)=>g[0].kind==='read'?<Passage key={k} phrases={g}/>:<SentenceList key={k} phrases={g} words={g[0].kind==='word'}/>)}</>}
+
+

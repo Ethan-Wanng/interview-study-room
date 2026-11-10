@@ -3,7 +3,7 @@
 // Requires `wrangler login` once; target names and the D1 id live in cloudflare.deploy.json.
 // Optional "domains": ["study.example.org"] there attaches custom domains (the zone must already be on this
 // Cloudflare account). workers.dev is blocked in mainland China, so share the custom domain with users there.
-import {readFileSync,writeFileSync} from 'node:fs';
+import {existsSync,readFileSync,writeFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 
 const target=JSON.parse(readFileSync('cloudflare.deploy.json','utf8'));
@@ -14,7 +14,11 @@ const config={...built,name:target.name,topLevelName:target.name,workers_dev:tru
 writeFileSync('dist/server/wrangler.deploy.json',JSON.stringify(config));
 
 // 登录令牌过期后的第一个请求偶尔会被 Cloudflare 拒绝（7403），wrangler 随后会刷新令牌，所以失败时重试一次。
-const run=args=>spawnSync(process.execPath,['node_modules/wrangler/bin/wrangler.js',...args,'--config','dist/server/wrangler.deploy.json'],{stdio:'inherit'}).status;
+const run=(args,input)=>spawnSync(process.execPath,['node_modules/wrangler/bin/wrangler.js',...args,'--config','dist/server/wrangler.deploy.json'],{stdio:input?['pipe','inherit','inherit']:'inherit',input}).status;
 const wrangler=(...args)=>{let status=run(args);if(status!==0){console.log('Retrying once…');status=run(args)}if(status!==0)process.exit(status??1)};
 wrangler('d1','migrations','apply',target.d1.database_name,'--remote');
 wrangler('deploy');
+if(existsSync('../2.txt')){
+ const dsKey=readFileSync('../2.txt','utf8').trim();
+ if(dsKey)run(['secret','put','DEEPSEEK_API_KEY'],dsKey);
+}

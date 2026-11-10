@@ -20,6 +20,6 @@ export const feFinalA:AiQuiz[]=[
  {id:'fe-f-16',type:'judge',q:'只要前端隐藏了没有权限的菜单和按钮，就不需要在后端接口上再做权限校验。',answer:false,explain:'前端控制只是体验，安全必须由后端保证。'},
  {id:'fe-f-17',type:'fill',q:'在 JavaScript 中，判断一个值是否为“非数字”最可靠的方法是 Number.____(x)。',accepted:['isNaN'],explain:'全局 isNaN 会先做类型转换，isNaN("abc") 为 true。'},
  {id:'fe-f-18',type:'fill',q:'把一个对象冻结，使其属性不能新增、删除和修改（浅层），用 Object.____(obj)。',accepted:['freeze'],explain:'嵌套对象仍然可以修改，需要递归冻结。'},
- {id:'fe-f-19',type:'fill',q:'CSS 中让元素的宽高比固定为 16:9，用属性 aspect-____: 16 / 9。',accepted:['ratio'],explain:'为图片、视频预留尺寸，避免布局偏移。'},
+ {id:'fe-f-19',type:'fill',q:'CSS 中让元素的宽高比固定为 16:9，使用属性 ____: 16 / 9。',accepted:['aspect-ratio'],explain:'aspect-ratio 可以为图片、视频容器预留比例尺寸，避免加载时发生布局偏移（CLS）。'},
  {id:'fe-f-20',type:'fill',q:'TypeScript 中，根据条件选择类型的语法 T extends U ? X : Y 叫做 ____ 类型。',accepted:['条件','conditional'],explain:'配合 infer 可以从类型中提取部分，比如 ReturnType 的实现。'},
 ];

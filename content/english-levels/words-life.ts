@@ -14,10 +14,10 @@ export const enWordsLife:AiLevel={id:'en-words-life',title:'词汇四：工作�
  {id:'en-words-life-2',type:'fill',q:'我们周末去游泳：We ＿ swimming on weekends.（填一个动词）',accepted:['go'],explain:'以 -ing 结尾的活动用 go：go swimming、go hiking、go shopping。'},
  {id:'en-words-life-3',q:'“犯错”的正确搭配是？',options:['make a mistake','do a mistake','take a mistake','have a mistake'],why:['','mistake 和 make 搭配，不和 do 搭配。','take 不和 mistake 搭配。','have 不和 mistake 搭配表示犯错。'],answer:0,explain:'make a mistake、make money、make a decision 都用 make。'},
  {id:'en-words-life-4',type:'multi',q:'下面哪些搭配是正确的？（多选）',options:['play tennis','play the piano','do yoga','go hiking'],why:['','','',''],answers:[0,1,2,3],explain:'球类用 play，乐器用 play the，-ing 活动用 go，其他用 do。'},
- {id:'en-words-life-5',q:'听录音，说话人想做什么？',say:'I’d like to return this jacket. Here’s the receipt.',options:['退掉这件夹克','买一件新夹克','换一个颜色','问夹克的价格'],why:['','buy 才是买。','换货是 exchange。','问价会说 How much…?'],answer:0,explain:'return 退货，receipt 收据。'},
+ {id:'en-words-life-5',q:'听录音，说话人想做什么？',say:'I’d like to return this jacket. Here’s the receipt.',options:['退掉这件夹克','买一件新夹克','换一个颜色','问夹克的价格'],why:['','buy 才是买。','换货是 exchange。','问价会说 How much…?'],answer:0,explain:'听力原句：“I’d like to return this jacket. Here’s the receipt.” return 退货，receipt 收据。'},
  {id:'en-words-life-6',type:'judge',q:'homework 是可数名词，可以说 three homeworks。',answer:false,explain:'homework 不可数，说“很多作业”用 a lot of homework。'},
  {id:'en-words-life-7',q:'I have a lot of ___ today.（我今天工作很多）',options:['work','job','jobs','a work'],why:['','job 是“一份工作”这个职位，不能表示工作量。','jobs 是好几份工作。','work 表示工作量时不可数，不加 a。'],answer:0,explain:'work 不可数，指要做的工作；job 可数，指一份职业。'},
  {id:'en-words-life-8',type:'fill',q:'It ＿ 20 dollars.（它花费 20 美元）',accepted:['costs'],explain:'主语 it 是第三人称单数，现在时加 s：It costs 20 dollars.'},
- {id:'en-words-life-9',q:'听录音，她最喜欢哪个科目？',say:'History is my favorite subject.',options:['历史','数学','科学','地理'],why:['','数学是 math。','科学是 science。','地理是 geography。'],answer:0,explain:'favorite subject 最喜欢的科目。'},
+ {id:'en-words-life-9',q:'听录音，她最喜欢哪个科目？',say:'History is my favorite subject.',options:['历史','数学','科学','地理'],why:['','数学是 math。','科学是 science。','地理是 geography。'],answer:0,explain:'听力原句：“History is my favorite subject.” favorite subject 最喜欢的科目。'},
  {id:'en-words-life-10',q:'下面哪个职业名不是“动词 + er/or”构成的？',options:['nurse','teacher','driver','actor'],why:['','teacher 来自 teach。','driver 来自 drive。','actor 来自 act。'],answer:0,explain:'teach → teacher、drive → driver、act → actor；nurse 本身就是职业名。'},
 ]};

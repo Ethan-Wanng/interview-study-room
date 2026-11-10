@@ -1,0 +1,38 @@
+/* 「面试」页：首页沿用「学习」首页的卡片样式，这里只补差异。 */
+.iv-subject{text-align:left;cursor:pointer;font:inherit;color:inherit;width:100%}
+.iv-add{border-style:dashed;text-decoration:none}
+.iv-add .learn-icon{display:flex;align-items:center;color:var(--primary)}
+.iv-today{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:4px 0 30px}
+.iv-today .ai-card{display:flex;flex-direction:column;gap:10px;padding:18px}
+.iv-today .ai-card>span{display:flex;align-items:center;gap:7px;color:var(--quiet);font-size:14px}
+.iv-today strong{font-size:28px;font-weight:750;color:var(--ink)}
+.iv-today strong small{font-size:14px;font-weight:500;color:var(--quiet)}
+.iv-link{align-self:flex-start;color:var(--primary);font-size:14px;text-decoration:underline;text-underline-offset:3px}
+.iv-error{max-width:980px;margin:16px auto 0}
+.iv-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:18px}
+.iv-bar .mode-select{margin-left:auto;min-width:150px}
+.iv-back{gap:6px}
+.iv-course{display:inline-flex;align-items:center;gap:6px;font-size:14px;color:var(--primary);text-decoration:none;padding:8px 10px;border-radius:8px}
+.iv-course:hover{background:var(--surface-soft)}
+.iv-level{display:inline-flex;align-items:center;gap:6px;margin:-6px 0 14px;padding:6px 12px;border-radius:999px;font-size:13px;line-height:1.5;color:var(--primary);background:color-mix(in srgb,var(--primary) 10%,transparent);text-decoration:none}
+.iv-level:hover{background:color-mix(in srgb,var(--primary) 18%,transparent)}
+.iv-pill{font-size:.76rem;color:var(--quiet);text-decoration:none;border:1px solid var(--line);border-radius:999px;padding:2px 9px}
+.iv-mine{background:var(--highlight)!important;color:var(--highlight-ink)!important}
+.iv-icon{display:inline-flex;align-items:center;padding:4px 6px;border-radius:6px;color:var(--quiet)}
+.iv-icon:hover{background:var(--surface-soft);color:var(--ink)}
+.iv-editor{max-height:90vh;overflow:auto}
+.iv-ways{margin:4px 0 6px;grid-template-columns:repeat(3,1fr)}
+.iv-field{display:flex;flex-direction:column;gap:6px;font-size:14px;color:var(--body-ink)}
+.iv-field input,.iv-field select,.iv-field textarea{padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface-soft);color:var(--ink);font-size:15px;font-family:inherit;line-height:1.6}
+.iv-field textarea{resize:vertical;min-height:120px}
+.iv-hint{font-size:13px;line-height:1.7;margin:-4px 0 0}
+.iv-drafts{display:flex;flex-direction:column;gap:8px;max-height:46vh;overflow:auto}
+.iv-draft{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--line);border-radius:8px}
+.iv-draft input{margin-top:5px}
+.iv-draft summary{cursor:pointer;font-weight:600;line-height:1.6}
+.iv-draft p{white-space:pre-wrap;font-size:14px;line-height:1.8;color:var(--body-ink);margin-top:8px}
+.iv-row{display:flex;gap:10px;justify-content:flex-end}
+@media(max-width:767px){.iv-today{grid-template-columns:1fr 1fr}.iv-today .ai-card:last-child{grid-column:span 2}.iv-bar .mode-select{margin-left:0}}
+/* 沉浸模式里，顶部这一行和下面的工具栏、题目卡片对齐（同样 920px 居中）。 */
+.focus-mode .iv-bar{max-width:920px;margin-left:auto;margin-right:auto}
+.focus-mode .notice{max-width:920px;margin-left:auto;margin-right:auto}

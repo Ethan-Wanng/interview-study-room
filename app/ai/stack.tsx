@@ -2,6 +2,7 @@
 import {useSyncExternalStore} from 'react';
 import {useI18n} from '../components/i18n';
 import type {AiLesson,AiLevel} from '@/content/journey';
+import {noteLocalWrite} from '@/app/components/cloud-sync';
 
 // 项目实战的技术栈选择：后端语言 + 前端做法。选择保存在本浏览器，学习卡片和代码题按选择显示对应版本。
 export type StackOption={id:string;icon:string;name:[string,string]};
@@ -32,7 +33,7 @@ export function useStack(storageKey:string,stacks?:Stacks):[StackChoice,(s:Stack
  let choice=fallback;
  try{const p=raw?JSON.parse(raw) as Partial<StackChoice>:{};
   choice={backend:stacks?.backend.some(o=>o.id===p.backend)?p.backend!:fallback.backend,frontend:stacks?.frontend.some(o=>o.id===p.frontend)?p.frontend!:fallback.frontend}}catch{/* 存坏了就用默认 */}
- const save=(s:StackChoice)=>{try{localStorage.setItem(key,JSON.stringify(s))}catch{/* 存不了就只在本次生效 */}window.dispatchEvent(new Event(changed))};
+ const save=(s:StackChoice)=>{try{localStorage.setItem(key,JSON.stringify(s))}catch{/* 存不了就只在本次生效 */}noteLocalWrite(key);window.dispatchEvent(new Event(changed))};
  return [choice,save]}
 
 // 技术栈选择器：两排按钮，后端语言一排、前端做法一排。compact 时只显示一行摘要和两个下拉框（放在学习卡片上方）。

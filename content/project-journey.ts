@@ -4,6 +4,20 @@
 import type {AiLevel,Rank,Tier} from './journey';
 import type {Stacks} from '../app/ai/stack';
 import {pjApi,pjOverview,pjSetup,pjStructure} from './project-levels/start';
+import {pjWeb} from './project-levels/web';
+import {pjDb} from './project-levels/database';
+import {pjQuery} from './project-levels/query';
+import {pjPages} from './project-levels/pages';
+import {pjAuth} from './project-levels/auth';
+import {pjStudy} from './project-levels/study';
+import {pjReview} from './project-levels/review';
+import {pjPractice} from './project-levels/practice';
+import {pjExam} from './project-levels/exam';
+import {pjAi} from './project-levels/ai';
+import {pjOauth} from './project-levels/oauth';
+import {pjAdmin} from './project-levels/admin';
+import {pjTest} from './project-levels/test';
+import {pjDeploy} from './project-levels/deploy';
 
 export const projectPassRate=0.65;
 export const projectTiers:Tier[]=[{name:'入门',nameEn:'Beginner',from:0,to:4},{name:'进阶',nameEn:'Intermediate',from:5,to:9},{name:'高阶',nameEn:'Advanced',from:10,to:13},{name:'专家',nameEn:'Expert',from:14,to:17}];
@@ -12,4 +26,4 @@ export const projectStacks:Stacks={
  backend:[{id:'go',icon:'🐹',name:['Go','Go']},{id:'java',icon:'☕',name:['Java（Spring Boot）','Java (Spring Boot)']},{id:'node',icon:'🟩',name:['Node.js（Express）','Node.js (Express)']},{id:'python',icon:'🐍',name:['Python（FastAPI）','Python (FastAPI)']}],
  frontend:[{id:'html',icon:'📄',name:['原生 HTML + JS','Plain HTML + JS']},{id:'react',icon:'⚛️',name:['React','React']},{id:'template',icon:'🧩',name:['后端模板渲染','Server-side templates']}]};
 
-export const projectLevels:AiLevel[]=[pjOverview,pjSetup,pjApi,pjStructure];
+export const projectLevels:AiLevel[]=[pjOverview,pjSetup,pjApi,pjStructure,pjWeb,pjDb,pjQuery,pjPages,pjAuth,pjStudy,pjReview,pjPractice,pjExam,pjAi,pjOauth,pjAdmin,pjTest,pjDeploy];

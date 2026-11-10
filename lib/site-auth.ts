@@ -1,4 +1,5 @@
-import {randomBytes,createHash} from 'node:crypto';
+import {randomBytes,createHash,scrypt,timingSafeEqual} from 'node:crypto';
+import {Buffer} from 'node:buffer';
 import {studyDb} from '@/db/study';
 export const SESSION_COOKIE='__Host-study-session';
 const AGE=60*60*24*30;
@@ -10,3 +11,7 @@ export async function createSession(id:string){const token=randomBytes(32).toStr
 export function clearCookie(){return `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`}
 export function assertSameOrigin(req:Request){const origin=req.headers.get('origin');if(req.headers.get('sec-fetch-site')==='cross-site'||(origin&&origin!==new URL(req.url).origin))throw new AuthError('请求来源无效，请从本站重试。',403);if(!req.headers.get('content-type')?.startsWith('application/json'))throw new AuthError('请求格式无效。',415)}
 export async function rateLimit(key:string,limit:number){const now=Date.now();const row=await studyDb().prepare('INSERT INTO auth_limits(key,count,reset_at) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=CASE WHEN reset_at<=? THEN 1 ELSE count+1 END,reset_at=CASE WHEN reset_at<=? THEN excluded.reset_at ELSE reset_at END RETURNING count').bind(hashToken(key),now+15*60*1000,now,now).first<{count:number}>();if(!row||row.count>limit)throw new AuthError('尝试次数过多，请 15 分钟后再试。',429)}
+// 邮箱账号的密码：scrypt 加盐哈希，存成 “方案$盐$哈希”。
+function derive(password:string,salt:string){return new Promise<Buffer>((resolve,reject)=>scrypt(password,salt,32,{N:16384,r:8,p:5,maxmem:32*1024*1024},(error,key)=>error?reject(error):resolve(key)))}
+export async function passwordHash(password:string){const salt=randomBytes(16).toString('hex');return `scrypt-16384-8-5$${salt}$${(await derive(password,salt)).toString('hex')}`}
+export async function passwordMatches(password:string,stored:string){const [scheme,salt,hash]=stored.split('$');if(scheme!=='scrypt-16384-8-5'||!salt||!/^[a-f0-9]{64}$/.test(hash??''))return false;return timingSafeEqual(await derive(password,salt),Buffer.from(hash,'hex'))}

@@ -1,6 +1,6 @@
 'use client';
 import {useEffect,useState} from 'react';
-import {Check,CircleDot,Loader2,X} from 'lucide-react';
+import {Check,ChevronDown,ChevronUp,CircleDot,Loader2,X} from 'lucide-react';
 import {useI18n} from '../components/i18n';
 import {pointScores,type GradeResult} from '@/lib/grade-types';
 
@@ -10,15 +10,20 @@ const Caret=()=><span className="ai-caret" aria-hidden/>;
 // AI 评分结果：总分、每个得分点拿了几分和点评、一句总评、AI 示范回答。练习题和试卷共用。
 // code：代码题、综合题的示范回答按代码排版。
 // live：AI 正在流式写出评分，文字一段段出现，正在写的地方有闪烁光标；还没写到的得分点显示“评估中”，总分显示“评分中”。
-export function GradeBreakdown({result,remaining,code,live}:{result:GradeResult;remaining?:number;code?:boolean;live?:boolean}){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
+// 评分写完后可以点右上角折叠（只留总分），不想被评语和示范回答“剧透”时用；fold 变成 true 时自动折叠（比如开始“再写一遍”并遮住参考答案时）。
+export function GradeBreakdown({result,remaining,code,live,fold}:{result:GradeResult;remaining?:number;code?:boolean;live?:boolean;fold?:boolean}){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
+ const [open,setOpen]=useState(!fold);
+ useEffect(()=>{if(fold)setOpen(false)},[fold]);
+ const shown=live||open;
  // 光标放在最后一个已经开始写的地方：示范回答 → 总评 → 最后一个有点评的得分点。
  const at=!live?'':result.answer?'answer':result.feedback?'feedback':'hit-'+result.hits.reduce((k,h,i)=>h.pending?k:i,-1);
  return <div className={'ai-grade'+(live?' live':'')} aria-busy={live}><div className="ai-grade-head"><strong>{live?L('AI 正在评分','AI is grading'):L('AI 评分','AI score')}</strong>
-   <b>{live?L('评分中…','…'):`${half(result.score)} / ${result.max}`}</b>{!live&&remaining!==undefined&&<small>{L(`今天还可以用 ${remaining} 次`,`${remaining} left today`)}</small>}</div>
-  <ul>{result.hits.map((h,i)=>h.pending?<li key={i} className="wait"><Loader2 size={16}/><span><b>{h.point}</b><em>{L('评估中…','Assessing…')}</em></span><i>… / {h.max}</i></li>
+   <b>{live?L('评分中…','…'):`${half(result.score)} / ${result.max}`}</b>{!live&&remaining!==undefined&&<small>{L(`今天还可以用 ${remaining} 次`,`${remaining} left today`)}</small>}
+   {!live&&<button type="button" className="ai-grade-fold" aria-expanded={open} onClick={()=>setOpen(v=>!v)}>{open?<>{L('折叠评分','Fold')}<ChevronUp size={15}/></>:<>{L('展开评分和示范回答','Show details')}<ChevronDown size={15}/></>}</button>}</div>
+  {shown&&<><ul>{result.hits.map((h,i)=>h.pending?<li key={i} className="wait"><Loader2 size={16}/><span><b>{h.point}</b><em>{L('评估中…','Assessing…')}</em></span><i>… / {h.max}</i></li>
    :<li key={i} className={h.got>=h.max?'full':h.got>0?'part':'none'}>{h.got>=h.max?<Check size={16}/>:h.got>0?<CircleDot size={16}/>:<X size={16}/>}<span><b>{h.point}</b>{(h.comment||at==='hit-'+i)&&<em>{h.comment}{at==='hit-'+i&&<Caret/>}</em>}</span><i>{half(h.got)} / {h.max}</i></li>)}</ul>
   {result.feedback&&<p>{result.feedback}{at==='feedback'&&<Caret/>}</p>}
-  {result.answer&&<details className="ai-grade-answer" open><summary>{L('AI 示范回答','AI model answer')}</summary>{code?<pre><code>{result.answer}{at==='answer'&&<Caret/>}</code></pre>:<p>{result.answer}{at==='answer'&&<Caret/>}</p>}</details>}</div>}
+  {result.answer&&<details className="ai-grade-answer" open><summary>{L('AI 示范回答','AI model answer')}</summary>{code?<pre><code>{result.answer}{at==='answer'&&<Caret/>}</code></pre>:<p>{result.answer}{at==='answer'&&<Caret/>}</p>}</details>}</>}</div>}
 
 // 等 AI 写出第一段文字之前显示：已经提交、正在读答案，并显示等了几秒，让人知道请求确实在进行。
 export function GradeWaiting(){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;const [s,setS]=useState(0);

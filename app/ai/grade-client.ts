@@ -1,3 +1,4 @@
+import {gradeQuestionText} from '@/content/code-starters';
 import type {AiQuiz} from '@/content/journey';
 import {pointScores,type GradeEvent,type GradeItem,type GradeResponse,type GradeResult} from '@/lib/grade-types';
 
@@ -5,7 +6,7 @@ type Written=Extract<AiQuiz,{type:'short'|'code'|'design'}>;
 export const isWritten=(q:AiQuiz):q is Written=>q.type==='short'||q.type==='code'||q.type==='design';
 // 练习题没有分值，按 10 分制评分；试卷题传入本题满分。
 export const PRACTICE_MAX=10;
-export const toGradeItem=(q:Written,answer:string,max=PRACTICE_MAX):GradeItem=>({id:q.id,kind:q.type,q:q.q,code:q.code,reference:q.reference,points:q.points,scores:q.scores,max,answer});
+export const toGradeItem=(q:Written,answer:string,max=PRACTICE_MAX):GradeItem=>({id:q.id,kind:q.type,q:gradeQuestionText(q.id,q.q),code:q.code,reference:q.reference,points:q.points,scores:q.scores,max,answer});
 
 // 今天还能用几次 AI 评分；查不到时返回 null（不影响作答）。
 export async function gradeQuota():Promise<number|null>{

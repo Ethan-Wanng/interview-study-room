@@ -4,6 +4,7 @@ import {useState} from 'react';
 import {ArrowLeft,Check,Dices,RotateCcw,Shuffle,Trophy} from 'lucide-react';
 import {Progress} from '@/components/ui/progress';
 import {useI18n} from '../components/i18n';
+import {EnWords} from '../components/keyword-text';
 import QuestionCard,{type Item,type Result} from '../ai/question-card';
 import type {AiQuiz} from '@/content/journey';
 import {Shell} from './training-hub';
@@ -70,6 +71,7 @@ export default function LazyQuiz({username,subjects}:{username:string;subjects:L
    <Progress value={(stage.index+(res?1:0))/stage.items.length*100}/>
    <QuestionCard key={stage.index+'-'+it.id} item={it} label={L(`${name(it.level)} · ${lazyLevels[stage.level].kind}`,`${name(it.level)} · ${lazyLevels[stage.level].kindEn}`)} result={res} last={last}
     onAnswer={r=>setStage(s=>s.kind==='quiz'?{...s,results:s.results.map((x,i)=>i===s.index?r:x)}:s)}
+    onPrev={stage.index>0?()=>setStage(s=>s.kind==='quiz'?{...s,index:s.index-1}:s):undefined}
     onNext={()=>setStage(s=>s.kind!=='quiz'?s:s.index<s.items.length-1?{...s,index:s.index+1}:{kind:'result',level:s.level,items:s.items,results:s.results.map(r=>r??{correct:false,given:''}),shares:s.shares})}/>
   </Shell>}
 
@@ -79,8 +81,8 @@ export default function LazyQuiz({username,subjects}:{username:string;subjects:L
   return <Shell username={username}>{back}
    <section className="ai-card ai-result"><Trophy size={40}/><h1>{L(`答对 ${right} / ${stage.items.length} 题`,`${right} / ${stage.items.length} correct`)}</h1><p>{L(`${lazyLevels[stage.level].name}难度，正确率 ${rate}%。`,`${levelName(stage.level)} · ${rate}% correct.`)}{rate>=70?L('状态很好，可以换一组新题继续。','Great — try a fresh set.'):L('错的题看看详解，再打乱顺序练一遍。','Review the explanations and try again shuffled.')}</p>
     <ul className="lazy-score">{by.map(b=><li key={b.id}><span>{name(b.id)}</span><b>{b.right} / {b.total}</b></li>)}</ul>
-    {wrong.length>0&&<details className="lazy-wrong"><summary>{L(`查看答错的 ${wrong.length} 题`,`Review ${wrong.length} missed`)}</summary><ol>{wrong.map(({x})=><li key={x.id}><small>{name(x.level)}</small>{x.quiz.q}<em>{x.quiz.explain}</em></li>)}</ol></details>}
-    <div className="ai-result-actions"><button className="button primary" onClick={()=>again(stage.level,stage.items,stage.shares)}><Shuffle size={16}/>{L('打乱顺序再练一次','Shuffle and retry')}</button><button className="button secondary" onClick={()=>void start()}><Dices size={16}/>{L('换一组新题','New set')}</button><button className="button secondary" onClick={()=>setStage({kind:'setup'})}><RotateCcw size={16}/>{L('重新选择','Change settings')}</button></div></section>
+    {wrong.length>0&&<details className="lazy-wrong"><summary>{L(`查看答错的 ${wrong.length} 题`,`Review ${wrong.length} missed`)}</summary><ol>{wrong.map(({x})=><li key={x.id}><small>{name(x.level)}</small><EnWords text={x.quiz.q}/>{x.quiz.say&&!x.quiz.explain.includes(x.quiz.say)&&<em lang="en">{L('听力原句：','Transcript: ')}<EnWords text={x.quiz.say}/></em>}<em><EnWords text={x.quiz.explain}/></em></li>)}</ol></details>}
+    <div className="ai-result-actions"><button className="button secondary" onClick={()=>setStage({kind:'quiz',level:stage.level,items:stage.items,index:stage.items.length-1,results:stage.results,shares:stage.shares})}><ArrowLeft size={16}/>{L('返回上一题','Back to last question')}</button><button className="button primary" onClick={()=>again(stage.level,stage.items,stage.shares)}><Shuffle size={16}/>{L('打乱顺序再练一次','Shuffle and retry')}</button><button className="button secondary" onClick={()=>void start()}><Dices size={16}/>{L('换一组新题','New set')}</button><button className="button secondary" onClick={()=>setStage({kind:'setup'})}><RotateCcw size={16}/>{L('重新选择','Change settings')}</button></div></section>
   </Shell>}
 
  const base=chosen.length?Math.floor(n/chosen.length):0,rest=chosen.length?n%chosen.length:0,short=chosen.filter(s=>caps[s.id]<Math.ceil(n/chosen.length));

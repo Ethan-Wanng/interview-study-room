@@ -1,7 +1,7 @@
 // 检查选择题的质量和试卷结构。
 // 选择题：选项长短不能一眼看出答案（不要「三短一长」「三长一短」），选项不用绝对化措辞，错误选项都有 why 解释；
 // 多选题的答案个数要有 2、3、4 个的混合。试卷：题型数量、15 个空、每题分值和总分 150。
-// 用法：node scripts/check-quiz-quality.mjs [--subject go|ai|backend|frontend|english] [--only <关卡或考试 id>] [--papers] [--strict] [--quiet]
+// 用法：node scripts/check-quiz-quality.mjs [--subject go|ai|backend|frontend|english|project|rust] [--only <关卡或考试 id>] [--papers] [--strict] [--quiet]
 //   --papers 只查试卷；--strict 有问题时退出码为 1；--quiet 只打印汇总。
 import {createRequire} from 'node:module';
 import {writeFileSync,mkdtempSync,existsSync} from 'node:fs';
@@ -10,9 +10,9 @@ import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 const require=createRequire(import.meta.url),{build}=createRequire(require.resolve('wrangler/package.json'))('esbuild');
 const arg=k=>{const i=process.argv.indexOf(k);return i<0?undefined:process.argv[i+1]},flag=k=>process.argv.includes(k);
-const subjects=[['go','./content/exams/go','goExams','./content/go-journey','goLevels'],['ai','./content/exams/ai','aiExams','./content/ai-journey','aiLevels'],['backend','./content/exams/backend','backendExams','./content/backend-journey','backendLevels'],['frontend','./content/exams/frontend','frontendExams','./content/frontend-journey','frontendLevels'],['english','./content/exams/english','englishExams','./content/english-journey','englishLevels']]
- .filter(([id,e])=>(!arg('--subject')||arg('--subject')===id)&&existsSync(e.replace('./','')+'.ts'));
-const entry=subjects.map(([,e,x,l,y],i)=>`export {${x} as e${i}} from '${e}';export {${y} as l${i}} from '${l}';`).join('')+`export {paperLoaders} from './content/papers/index';export {paperSections,questionMax,FILL_BLANKS,PAPER_TOTAL} from './content/papers/types';`;
+const subjects=[['go','./content/exams/go','goExams','./content/go-journey','goLevels'],['ai','./content/exams/ai','aiExams','./content/ai-journey','aiLevels'],['backend','./content/exams/backend','backendExams','./content/backend-journey','backendLevels'],['frontend','./content/exams/frontend','frontendExams','./content/frontend-journey','frontendLevels'],['english','./content/exams/english','englishExams','./content/english-journey','englishLevels'],['project',null,null,'./content/project-journey','projectLevels'],['rust','./content/exams/rust','rustExams','./content/rust-journey','rustLevels']]
+ .filter(([id,e])=>(!arg('--subject')||arg('--subject')===id)&&(!e||existsSync(e.replace('./','')+'.ts')));
+const entry=subjects.map(([,e,x,l,y],i)=>(e?`export {${x} as e${i}} from '${e}';`:`export const e${i}=[];`)+`export {${y} as l${i}} from '${l}';`).join('')+`export {paperLoaders} from './content/papers/index';export {paperSections,questionMax,FILL_BLANKS,PAPER_TOTAL} from './content/papers/types';`;
 const out=await build({stdin:{contents:entry,resolveDir:process.cwd(),loader:'ts'},bundle:true,write:false,format:'esm',platform:'node',logLevel:'error'});
 const file=join(mkdtempSync(join(tmpdir(),'quality-')),'bundle.mjs');writeFileSync(file,out.outputFiles[0].text);
 const m=await import(pathToFileURL(file).href);

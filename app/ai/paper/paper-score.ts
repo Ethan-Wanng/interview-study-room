@@ -7,7 +7,9 @@ export type PaperAnswer={choice?:number[];judge?:boolean;blanks?:string[];text?:
 // 主观题的得分：AI 评分结果，或者 AI 不可用时自评勾选的得分点。
 export type WrittenScore={kind:'ai';result:GradeResult}|{kind:'self';score:number;got:boolean[]};
 // orders：开考时为每道选择题随机打乱的选项顺序（存原始下标），交卷后复查沿用同一顺序；下载的 PDF 按原始顺序。
-export type PaperRecord={startedAt:number;answers:Record<string,PaperAnswer>;orders?:Record<string,number[]>;submittedAt?:number;written?:Record<string,WrittenScore>;gradeNote?:string};
+// pausedAt：正在暂停（暂停开始的时间）；pausedMs：之前所有暂停加起来的时长，不计入考试用时。
+// qids：这次实际出的题（每次开考会换一部分题）；没有时就是原试卷。
+export type PaperRecord={startedAt:number;qids?:string[];pausedAt?:number;pausedMs?:number;answers:Record<string,PaperAnswer>;orders?:Record<string,number[]>;submittedAt?:number;written?:Record<string,WrittenScore>;gradeNote?:string};
 
 // 每道题的题型内序号和满分，按试卷顺序排好。
 export function paperLayout(p:Paper){const at:Record<string,number>={};
@@ -17,7 +19,7 @@ export const isWrittenQuiz=(q:AiQuiz)=>q.type==='short'||q.type==='code'||q.type
 export const answered=(q:AiQuiz,a?:PaperAnswer)=>{if(!a)return false;switch(q.type??'single'){
  case 'single':case 'multi':return !!a.choice?.length;
  case 'judge':return a.judge!==undefined;
- case 'fill':return !!a.blanks?.some(b=>b.trim());
+ case 'fill':return !!a.blanks?.some(b=>typeof b==='string'&&b.trim()!=='');
  default:return !!a.text?.trim()}};
 
 // 客观题得分：单选、判断全对得分；多选必须完全一致，少选多选错选都是 0 分；填空按空计分。
