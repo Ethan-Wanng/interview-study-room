@@ -1,6 +1,6 @@
 'use client';
 import {Fragment,useEffect,useRef,useState,useSyncExternalStore,type PointerEvent as ReactPointerEvent} from 'react';
-import {Bot,Brain,GripVertical,History,ImagePlus,Loader2,Send,SlidersHorizontal,SquarePen,Trash2,X} from 'lucide-react';
+import {Bot,Brain,ChevronDown,ChevronUp,GripVertical,History,ImagePlus,Loader2,Send,SlidersHorizontal,SquarePen,Trash2,X} from 'lucide-react';
 import {clearChats,latestChat,loadChats,newChatId,onChatsChange,removeChat,saveChat,type SavedChat} from './tutor-history';
 import {useI18n} from '../components/i18n';
 import VoiceButton from '../components/voice-input';
@@ -124,6 +124,10 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
  const openChat=(c:SavedChat)=>{setShowHistory(false);if(c.key===sessionKey){chatId.current=c.id;chatCache.set(sessionKey,c.msgs);msgsRef.current=c.msgs;setMsgsState(c.msgs);setViewing(null)}else setViewing(c)};
  const adoptChat=(c:SavedChat)=>{chatId.current='';setViewing(null);setMsgs(c.msgs)};
  const shown=viewing?viewing.msgs:msgs;
+ // 对话下方的快捷提问可以收起，只留一行“接着问”；收起与否记在浏览器里。
+ const [hidePrompts,setHidePrompts]=useState(false);
+ useEffect(()=>{try{setHidePrompts(localStorage.getItem('ai-tutor-prompts-hidden')==='1')}catch{}},[]);
+ const togglePrompts=()=>setHidePrompts(v=>{try{localStorage.setItem('ai-tutor-prompts-hidden',v?'0':'1')}catch{}return !v});
  // 打开时并排停靠：给 body 加 ai-docked，样式据此让页面（包括放大阅读层）给面板让出位置；电脑上面板是右侧一栏，手机上是底部半屏抽屉。
  useEffect(()=>{if(!open)return;document.body.classList.add('ai-docked');return()=>document.body.classList.remove('ai-docked')},[open]);
  // 只有停在底部时才跟着新内容滚到底；往上翻看时不打扰，翻回底部后继续跟随。
@@ -206,7 +210,7 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
     {busy&&answerAt>=msgs.length&&liveBubble}
    </div>
    {error&&<p className="ai-grade-error">{error}</p>}
-   {msgs.length>0&&!busy&&!viewing&&<div className="ai-dock-prompts compact"><span className="ai-dock-prompts-label">{L('接着问','Ask next')}</span>{prompts.slice(0,3).map(p=><button key={p} type="button" onClick={()=>send(p)}>{p}</button>)}</div>}
+   {msgs.length>0&&!busy&&!viewing&&<div className={'ai-dock-prompts compact'+(hidePrompts?' folded':'')}><button type="button" className="ai-dock-prompts-label" aria-expanded={!hidePrompts} onClick={togglePrompts} title={hidePrompts?L('展开快捷提问','Show quick questions'):L('收起快捷提问','Hide quick questions')}>{L('接着问','Ask next')}{hidePrompts?<ChevronUp size={14}/>:<ChevronDown size={14}/>}</button>{!hidePrompts&&prompts.slice(0,3).map(p=><button key={p} type="button" onClick={()=>send(p)}>{p}</button>)}</div>}
    {images.length>0&&<div className="tutor-attach">{images.map((u,i)=><span key={i}><img src={u} alt=""/><button type="button" onClick={()=>setImages(v=>v.filter((_,j)=>j!==i))} aria-label={L('移除图片','Remove image')}><X size={12}/></button></span>)}</div>}
    <form className="tutor-input" hidden={!!viewing} onSubmit={e=>{e.preventDefault();send(input,images)}}>
     <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={e=>{if(e.target.files)void addFiles(e.target.files);e.target.value=''}}/>

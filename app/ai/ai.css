@@ -372,3 +372,15 @@ body.ai-docked{--dock-w:min(420px,38vw);--dock-h:52vh}
 .tutor-viewing{position:sticky;top:-12px;z-index:1;display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:-12px -14px 0;padding:8px 14px;border-bottom:1px solid var(--line);background:var(--surface);font-size:12.5px;color:var(--quiet)}
 .tutor-viewing span{flex:1;min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tutor-viewing button{padding:3px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface-soft);color:var(--primary);font:inherit;font-size:12px;cursor:pointer}
 .tutor-input[hidden]{display:none}
+/* 快捷提问可收起：标题是一个按钮，收起后只剩这一行 */
+button.ai-dock-prompts-label{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:0;border:0;border-radius:0;background:none!important;color:var(--quiet);font-size:12px;font-weight:600;cursor:pointer}
+button.ai-dock-prompts-label:hover{color:var(--primary);border:0}
+.ai-dock-prompts.compact.folded{padding:7px 14px}
+/* 手机上 AI 老师全屏显示（不再是半屏抽屉），关掉后回到页面 */
+@media(max-width:767px){
+ body.ai-docked{padding-bottom:0;overflow:hidden}
+ body.ai-docked .lc-zoom{bottom:0}
+ .ai-dock{inset:0;width:100%;height:100dvh;border:0;border-radius:0;z-index:95}
+ .ai-dock header{padding-top:max(11px,env(safe-area-inset-top))}
+ .ai-dock .tutor-input{padding-bottom:max(10px,env(safe-area-inset-bottom))}
+}

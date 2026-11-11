@@ -4,6 +4,10 @@
 export type Release={version:string;date:string;title:string;changes:string[]};
 
 export const RELEASES:Release[]=[
+ {version:'2026.11.11-3',date:'2026-11-11',title:'AI 老师：手机全屏、快捷提问可收起',changes:[
+  '手机上打开 AI 老师改为全屏显示，看得更清楚；关掉后回到页面，对话会保留。',
+  '对话下方的「接着问」快捷提问可以点标题收起，只留一行。',
+ ]},
  {version:'2026.11.11-2',date:'2026-11-11',title:'AI 老师保存对话、历史记录、完整思考过程',changes:[
   'AI 老师的对话现在会自动保存：回到同一张卡片或同一道题时接着上次的聊；登录后换设备也能看到（图片不保存）。',
   'AI 老师面板顶栏新增「历史对话」，可以翻看、接着问或删除以前的对话；「新对话」会开一段新的，旧的留在历史里。',
