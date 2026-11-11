@@ -9,7 +9,7 @@ import type {GradeResult} from '@/lib/grade-types';
 import {codeEditing} from '../code-input';
 import CodeReference from '../code-reference';
 import type {AiQuiz} from '@/content/journey';
-import {isWrittenQuiz,type PaperAnswer,type WrittenScore} from './paper-score';
+import {fillPoints,fillScores,isAiGradedQuiz,isWrittenQuiz,type PaperAnswer,type WrittenScore} from './paper-score';
 
 const letters='ABCDEFGH';
 // live：AI 阅卷中，这道题正在写出的评分（null：还没写到这道题）。
@@ -35,16 +35,17 @@ export default function PaperQuestion({q,no,max,answer,order,onChange,review}:{q
  else if(type==='code')body=<CodeAnswer id={q.id} value={a.text??''} disabled={locked} rows={10} placeholder={L('在这里写代码，可以只写关键部分','Write your code here; key parts are enough')} onChange={v=>set({text:v})}/>;
  else body=<textarea className={'paper-text'+(type==='design'?' code':'')} ref={type==='short'?undefined:codeEditing} disabled={locked} rows={type==='short'?5:14} spellCheck={type==='short'} value={a.text??''}
   placeholder={type==='design'?L('先写设计思路（模块、数据、流程、取舍），再写关键代码','Write the design (modules, data, flow, trade-offs), then the key code'):L('用自己的话作答，按要点分条写更清楚','Answer in your own words; listing points helps')} onChange={e=>set({text:e.target.value})}/>;
- const written=isWrittenQuiz(q)?q as Extract<AiQuiz,{reference:string}>:undefined;
+ const written=isWrittenQuiz(q)?q as Extract<AiQuiz,{reference:string}>:undefined,aiGraded=isAiGradedQuiz(q);
+ const points=written?written.points:q.type==='fill'?fillPoints(q):[],scores=written?written.scores:q.type==='fill'?fillScores(q):undefined;
  return <article className="paper-q" id={'pq-'+no}>
   <header><span className="paper-no">{no}</span><span className="paper-max">{L(`（${max} 分）`,`(${max} pts)`)}</span>{review&&<span className={'paper-got '+(review.got>=max?'full':review.got>0?'part':'none')}>{L(`得 ${review.got} 分`,`${review.got} pts`)}</span>}</header>
   <h3>{q.q}</h3>{q.code&&<pre className="ai-snippet"><code>{q.code}</code></pre>}{body}
   {review&&<div className="paper-review">
    {!written&&<p className="ai-answer">{L('正确答案：','Answer: ')}{type==='single'||type==='multi'?(type==='multi'?(q as Extract<AiQuiz,{type:'multi'}>).answers:[(q as Extract<AiQuiz,{answer:number}>).answer]).map(i=>letters[(order??[]).indexOf(i)>=0?(order??[]).indexOf(i):i]).sort().join('、')+'  ':''}{answerText(q,L)}</p>}
-   {written&&!review.written&&review.live!==undefined&&(review.live?<GradeBreakdown result={review.live} live code={q.type!=='short'}/>:<GradeWaiting/>)}
-   {written&&review.written?.kind==='ai'&&<GradeBreakdown result={review.written.result} code={q.type!=='short'}/>}
-   {written&&!review.written&&review.onSelfScore&&<SelfScore points={written.points} scores={written.scores} max={max} onDone={review.onSelfScore}/>}
-   {written&&review.written?.kind==='self'&&<p className="paper-self">{L(`自评 ${review.written.score} / ${max} 分`,`Self-scored ${review.written.score} / ${max}`)}</p>}
+   {aiGraded&&!review.written&&review.live!==undefined&&(review.live?<GradeBreakdown result={review.live} live code={q.type==='code'||q.type==='design'}/>:<GradeWaiting/>)}
+   {aiGraded&&review.written?.kind==='ai'&&<GradeBreakdown result={review.written.result} code={q.type==='code'||q.type==='design'}/>}
+   {aiGraded&&!review.written&&review.onSelfScore&&<SelfScore points={points} scores={scores} max={max} onDone={review.onSelfScore}/>}
+   {aiGraded&&review.written?.kind==='self'&&<p className="paper-self">{L(`自评 ${review.written.score} / ${max} 分`,`Self-scored ${review.written.score} / ${max}`)}</p>}
    {written&&<div className="ai-reference"><strong>{L('参考答案','Reference answer')}</strong>{q.type==='short'?<p><KeywordText text={written.reference}/></p>:q.type==='code'?<CodeReference id={q.id} reference={written.reference}/>:<pre className="ref-wrap"><code>{written.reference}</code></pre>}</div>}
    <p className="paper-explain"><strong>{L('解析：','Explanation: ')}</strong><KeywordText text={q.explain}/></p></div>}
  </article>}

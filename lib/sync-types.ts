@@ -32,6 +32,7 @@ export function mergeValues(server:string,a:string,aTime:number,b:string,bTime:n
  if(server.startsWith(WORDS)){const o=(older as Words).cards??{},n=(newer as Words).cards??{},cards:Record<string,Card>={...o};
   for(const [w,c] of Object.entries(n))if(!cards[w]||(c?.n??0)>=(cards[w]?.n??0))cards[w]=c;
   return JSON.stringify({...older,...newer,cards})}
- const o=older as Journey,n=newer as Journey,best:Record<string,number>={...(o.best??{})};
- for(const [k,v] of Object.entries(n.best??{}))best[k]=Math.max(v,best[k]??-Infinity);
+ const o=older as Journey,n=newer as Journey,norm=(v:number)=>v>1?v/150:v,best:Record<string,number>={};
+ for(const [k,v] of Object.entries(o.best??{}))if(typeof v==='number')best[k]=norm(v);
+ for(const [k,v] of Object.entries(n.best??{}))if(typeof v==='number')best[k]=Math.max(norm(v),best[k]??-Infinity);
  return JSON.stringify({...o,...n,best,passed:[...new Set([...(o.passed??[]),...(n.passed??[])])],mistakes:n.mistakes??o.mistakes??[]})}

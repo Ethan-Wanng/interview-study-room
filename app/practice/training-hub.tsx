@@ -16,7 +16,7 @@ export type HubSubject={id:string;name:string;nameEn:string;icon:string;href:str
 const subscribe=(notify:()=>void)=>{window.addEventListener('storage',notify);return()=>window.removeEventListener('storage',notify)};
 const read=(key:string)=>{try{return localStorage.getItem(key)??''}catch{return ''}};
 type Saved={passed:Set<string>;best:Record<string,number>;mistakes:string[]};
-const parse=(raw:string):Saved=>{try{const p=JSON.parse(raw||'{}');return {passed:new Set<string>(p.passed??[]),best:(p.best??{}) as Record<string,number>,mistakes:Array.isArray(p.mistakes)?p.mistakes:[]}}catch{return {passed:new Set<string>(),best:{},mistakes:[]}}};
+const parse=(raw:string):Saved=>{try{const p=JSON.parse(raw||'{}'),best:Record<string,number>={};for(const [k,v] of Object.entries((p.best??{}) as Record<string,number>))if(typeof v==='number')best[k]=v>1?v/PAPER_TOTAL:v;return {passed:new Set<string>(p.passed??[]),best,mistakes:Array.isArray(p.mistakes)?p.mistakes:[]}}catch{return {passed:new Set<string>(),best:{},mistakes:[]}}};
 // 读取本浏览器里各学科的闯关记录（和「学习」共用），训练进度就是其中的训练和考试。
 function useSaved(username:string,subjects:HubSubject[]){
  const raw=useSyncExternalStore(subscribe,()=>subjects.map(s=>read(s.storageKey+(username||'guest'))).join('\u0001'),()=>'');

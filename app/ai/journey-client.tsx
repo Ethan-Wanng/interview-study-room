@@ -70,7 +70,7 @@ export default function JourneyClient({username,subject,interviews}:{username:st
  const setView=(v:View)=>{window.history.pushState({...window.history.state,aiView:v},'');setViewState(v)};
  const replaceView=(v:View)=>{window.history.replaceState({...window.history.state,aiView:v},'');setViewState(v)};
  useEffect(()=>{window.history.replaceState({...window.history.state,aiView:{kind:'map'}},'');const onPop=(e:PopStateEvent)=>setViewState((e.state?.aiView as View)??{kind:'map'});window.addEventListener('popstate',onPop);return()=>window.removeEventListener('popstate',onPop)},[]);
- const saved=useMemo<Saved>(()=>{try{return raw?{...empty,...JSON.parse(raw)}:empty}catch{return empty}},[raw]);
+ const saved=useMemo<Saved>(()=>{try{if(!raw)return empty;const p={...empty,...JSON.parse(raw)} as Saved;const best:Record<string,number>={};for(const [k,v] of Object.entries(p.best??{}))if(typeof v==='number')best[k]=v>1?v/PAPER_TOTAL:v;return {...p,best}}catch{return empty}},[raw]);
  function persist(next:Saved){try{localStorage.setItem(key,JSON.stringify({...next,carried:true}))}catch{}noteLocalWrite(key);window.dispatchEvent(new Event(changed))}
  const scrollKey=view.kind+(view.kind==='quiz'?view.index:view.kind==='video'?view.id:'');
  useEffect(()=>{window.scrollTo({top:0})},[scrollKey]);

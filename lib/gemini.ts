@@ -18,14 +18,17 @@ const geminiSchema={type:'OBJECT',properties:{results:{type:'ARRAY',items:{type:
 
 const system=`你是严格但友善的面试题阅卷老师。逐题、逐个得分点判断学生答案，给出每个得分点的得分（0 到该点满分，可以给一半分）和一句中文点评。
 规则：只按得分点给分，不因为写得长或用词漂亮加分；意思对、说法不同也算对；答错、自相矛盾或只写了关键词没解释的，酌情扣分；
+填空题按空给分（每空 1 分）：意思相同、同义词、近义词、中英文对应、常见简称或全称、大小写或单复数差异、多带了“状态码/算法/机制/模型”等修饰词都算对（给满分 1 分）；如果题干中多个空是并列关系（如“system、＿ 和 ＿”），各空顺序互换完全正确，每空都必须给满分 1 分；非并列的多空题若学生把顺序写反但内容正确，给一半分并说明；未填的空给 0 分；
 代码题看思路和关键逻辑是否正确，学生可以用任何主流语言作答（Python、Go、Java、JS/TS、Rust 等），参考答案只是其中一种写法，不因语言不同扣分，示范回答用学生所用的语言写；语法小错不扣分，逻辑错误、遗漏边界或并发安全问题要扣分；学生没作答时全部给 0 分。
 feedback 用一两句话总结这题答得好的地方和最该补的一点。hits 的个数和顺序必须与得分点一致。
-answer 写一份你自己的满分示范回答，覆盖全部得分点，供学生对照学习：简答题 3～6 句、条理清楚；代码题给出完整、能运行的关键代码，必要时加简短注释；综合题先列设计要点，再给关键代码。不要照抄参考答案，用自己的话写。
+answer 写一份你自己的满分示范回答，覆盖全部得分点，供学生对照学习：填空题直接填空字符串 ""；简答题 3～6 句、条理清楚；代码题给出完整、能运行的关键代码，必要时加简短注释；综合题先列设计要点，再给关键代码。不要照抄参考答案，用自己的话写。
 请严格只输出一个合法的 JSON 对象（不要用 Markdown 代码块包裹），结构与字段顺序如下：
 {"results":[{"id":"题目id","hits":[{"got":0,"comment":"一句中文点评"}],"feedback":"总结点评","answer":"满分示范回答"}]}`;
 
+const kindLabel:Record<GradeItem['kind'],string>={fill:'填空题',short:'简答题',code:'代码题',design:'综合题'};
 function prompt(items:GradeItem[]){return items.map(it=>{const scores=pointScores(it.points,it.max,it.scores);
- return [`### 题目 id：${it.id}（${it.kind==='code'?'代码题':it.kind==='design'?'综合题':'简答题'}，满分 ${it.max} 分）`,it.q,it.code?`题目代码：\n${it.code}`:'',`参考答案：\n${it.reference}`,
+ return [`### 题目 id：${it.id}（${kindLabel[it.kind]}，满分 ${it.max} 分）`,it.q,it.code?`题目代码：\n${it.code}`:'',`参考答案：\n${it.reference}`,
+  it.kind==='fill'?'判分要求：每空独立判分；意思一致、同义词、中英文对应、简称或全称都给满分；若题干中多个空属于并列列举关系（如“A、＿ 和 ＿”，本身不分先后顺序），学生把各空的参考答案对调位置填写且没有重复时，不要因为与参考答案编号顺序不同而扣分，每个空都必须给满分 1 分！':'',
   '得分点：',...it.points.map((p,i)=>`${i+1}. ${p}（${scores[i]} 分）`),`学生答案：\n${it.answer.trim()||'（未作答）'}`].filter(Boolean).join('\n')}).join('\n\n')}
 
 type Raw={results:{id:string;hits:{got:number;comment:string}[];feedback:string;answer?:string}[]};
@@ -194,8 +197,8 @@ function parseJsonRaw(text:string):Raw{
 
 // 把模型的打分夹回合法范围：每个得分点 0..满分、按 0.5 取整，总分为各点之和。
 function normalize(items:GradeItem[],raw:Raw):GradeResult[]{return items.map((it,k)=>{const r=raw.results.find(x=>x.id===it.id)??raw.results[k],scores=pointScores(it.points,it.max,it.scores);
- const hits=it.points.map((point,i)=>{const h=r?.hits[i],got=Math.max(0,Math.min(scores[i],Math.round((Number(h?.got)||0)*2)/2));return {point,got,max:scores[i],comment:h?.comment??''}});
- return {id:it.id,max:it.max,score:hits.reduce((n,h)=>n+h.got,0),hits,feedback:r?.feedback??'',answer:r?.answer??''}})}
+ const hits=it.points.map((point,i)=>{const h=r?.hits?.[i],got=Math.max(0,Math.min(scores[i],Math.round((Number(h?.got)||0)*2)/2));return {point,got,max:scores[i],comment:h?.comment??''}});
+ return {id:it.id,max:it.max,score:hits.reduce((n,h)=>n+h.got,0),hits,feedback:r?.feedback??'',answer:it.kind==='fill'?'':r?.answer??''}})}
 
 // 评分：onText 收到模型实时写出的文字；换下一个模型重试前先调用 onReset，让页面清掉上一个模型写了一半的内容。
 export async function gradeStream(items:GradeItem[],onText:(t:string)=>void,onReset:()=>void,custom?:RuntimeAiConfig):Promise<{results:GradeResult[];model:string}>{
@@ -203,7 +206,7 @@ export async function gradeStream(items:GradeItem[],onText:(t:string)=>void,onRe
  let last:unknown;
  for(const model of models){let wrote=false;
   try{
-   const text=await runProviderStream(provider,model,key,system,[{role:'user',content:prompt(items)}],0.2,true,maxTokens,t=>{wrote=true;onText(t)});
+   const text=await runProviderStream(provider,model,key,system,[{role:'user',content:prompt(items)}],0.2,true,maxTokens??8192,t=>{wrote=true;onText(t)});
    const raw=parseJsonRaw(text);
    return {results:normalize(items,raw),model:`${provider}/${model}`};
   }catch(e){last=e;if(wrote)onReset()}}

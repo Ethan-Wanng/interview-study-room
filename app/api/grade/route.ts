@@ -11,7 +11,7 @@ const used=async(user:string)=>(await studyDb().prepare('SELECT count FROM ai_gr
 
 const str=(v:unknown,max:number)=>typeof v==='string'&&v.length<=max;
 function parseItem(v:unknown):GradeItem|null{if(!v||typeof v!=='object')return null;const o=v as Record<string,unknown>;
- if(!str(o.id,80)||!['short','code','design'].includes(o.kind as string)||!str(o.q,4000)||!str(o.reference,12000)||!str(o.answer,GRADE_LIMITS.answer))return null;
+ if(!str(o.id,80)||!['fill','short','code','design'].includes(o.kind as string)||!str(o.q,4000)||!str(o.reference,12000)||!str(o.answer,GRADE_LIMITS.answer))return null;
  if(o.code!==undefined&&!str(o.code,6000))return null;
  if(!Array.isArray(o.points)||!o.points.length||o.points.length>12||!o.points.every(p=>str(p,400)))return null;
  const max=Number(o.max);if(!Number.isFinite(max)||max<1||max>30)return null;
