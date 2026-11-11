@@ -1,6 +1,6 @@
 'use client';
 import {useEffect,useRef,useState,useSyncExternalStore} from 'react';
-import {Bell,CheckCheck,History,MessageSquareReply,RefreshCw,Sparkles,X} from 'lucide-react';
+import {Bell,CheckCheck,ChevronDown,History,MessageSquareReply,RefreshCw,Sparkles,X} from 'lucide-react';
 import {useI18n} from './i18n';
 import {APP_VERSION,type Release} from '@/lib/releases';
 import type {Notice} from '@/lib/notify';
@@ -60,9 +60,9 @@ export function VersionLog(){const {locale}=useI18n(),L=(zh:string,en:string)=>l
   document.addEventListener('pointerdown',close);document.addEventListener('keydown',esc);return()=>{document.removeEventListener('pointerdown',close);document.removeEventListener('keydown',esc)}},[open]);
  const toggle=()=>{if(!open){setFresh(new Set(unread.map(r=>r.version)));markReleasesSeen()}setOpen(!open)};
  return <div className="notice-bell version-log" ref={box}><button type="button" className="notice-bell-btn version-btn" aria-label={L(`版本更新${unread.length?`（${unread.length} 条没看过）`:''}`,`Version updates${unread.length?` (${unread.length} new)`:''}`)} title={L(`版本更新 · 当前 v${APP_VERSION}`,`Version updates · v${APP_VERSION}`)} aria-expanded={open} onClick={toggle}><History size={18}/>{unread.length>0&&<span className="version-dot"/>}</button>
-  {open&&<div className="notice-panel" role="dialog" aria-label={L('版本更新','Version updates')}><div className="notice-panel-head"><strong>{L('版本更新','Version updates')}</strong><span>{L(`当前版本 v${APP_VERSION}`,`Current v${APP_VERSION}`)}</span></div>
+  {open&&<div className="notice-panel" role="dialog" aria-label={L('版本更新','Version updates')}><div className="notice-panel-head"><strong>{L('版本更新','Version updates')}</strong><span>{L(`当前版本 v${APP_VERSION}`,`Current v${APP_VERSION}`)}</span>{s.releases.length>1&&<button type="button" className="version-all" onClick={e=>{const list=e.currentTarget.closest('.notice-panel')?.querySelectorAll('details');if(!list)return;const open=[...list].some(d=>!d.open);list.forEach(d=>{d.open=open})}}>{L('全部展开 / 折叠','Expand / collapse all')}</button>}</div>
    <div className="notice-list">
-    {s.releases.map(r=><div key={r.version} className={'notice-item release'+(fresh.has(r.version)?' unread':'')}><Sparkles size={16}/><span><b><i className="version-tag">v{r.version}</i>{r.title}</b><ul>{r.changes.map(c=><li key={c}>{c}</li>)}</ul><time>{r.date}{r.version!==APP_VERSION&&s.version===r.version?L(' · 刷新页面后生效',' · refresh to get it'):''}</time></span></div>)}
+    {s.releases.map((r,i)=><details key={r.version} className={'version-item'+(fresh.has(r.version)?' unread':'')} open={i===0||fresh.has(r.version)}><summary><i className="version-tag">v{r.version}</i><b>{r.title}</b><time>{r.date}</time><ChevronDown size={15}/></summary><ul>{r.changes.map(c=><li key={c}>{c}</li>)}</ul>{r.version!==APP_VERSION&&s.version===r.version&&<small>{L('刷新页面后生效','Refresh to get it')}</small>}</details>)}
     {!s.releases.length&&<p className="notice-empty">{L('还没有更新记录。','No updates yet.')}</p>}
    </div></div>}</div>}
 

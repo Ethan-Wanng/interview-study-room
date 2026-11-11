@@ -384,3 +384,12 @@ button.ai-dock-prompts-label:hover{color:var(--primary);border:0}
  .ai-dock header{padding-top:max(11px,env(safe-area-inset-top))}
  .ai-dock .tutor-input{padding-bottom:max(10px,env(safe-area-inset-bottom))}
 }
+/* 学习卡片进度条：可以拖动的滑块，拖到哪张跳到哪张（手机上手指更好点，所以滑块做得比较大） */
+.lc-slider{flex:1;min-width:0;height:28px;margin:0;background:none;cursor:pointer;-webkit-appearance:none;appearance:none;touch-action:pan-y}
+.lc-slider::-webkit-slider-runnable-track{height:8px;border-radius:999px;background:linear-gradient(to right,var(--primary) var(--lc-pos),var(--line) var(--lc-pos))}
+.lc-slider::-moz-range-track{height:8px;border-radius:999px;background:var(--line)}
+.lc-slider::-moz-range-progress{height:8px;border-radius:999px;background:var(--primary)}
+.lc-slider::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;margin-top:-7px;border:3px solid var(--surface);border-radius:50%;background:var(--primary);box-shadow:0 2px 8px #0003}
+.lc-slider::-moz-range-thumb{width:16px;height:16px;border:3px solid var(--surface);border-radius:50%;background:var(--primary);box-shadow:0 2px 8px #0003}
+.lc-slider:focus-visible{outline:2px solid var(--primary);outline-offset:4px;border-radius:999px}
+.lc-slider:disabled{cursor:default;opacity:.6}

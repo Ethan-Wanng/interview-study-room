@@ -4,6 +4,10 @@
 export type Release={version:string;date:string;title:string;changes:string[]};
 
 export const RELEASES:Release[]=[
+ {version:'2026.11.11-4',date:'2026-11-11',title:'卡片进度条可拖动、版本更新可折叠',changes:[
+  '学习卡片上方的进度条改成可以拖动的滑块：拖到哪张就跳到哪张，手机上也好操作。',
+  '「版本更新」里每个版本可以点开或收起，最新的和没看过的默认展开。',
+ ]},
  {version:'2026.11.11-3',date:'2026-11-11',title:'AI 老师：手机全屏、快捷提问可收起',changes:[
   '手机上打开 AI 老师改为全屏显示，看得更清楚；关掉后回到页面，对话会保留。',
   '对话下方的「接着问」快捷提问可以点标题收起，只留一行。',
