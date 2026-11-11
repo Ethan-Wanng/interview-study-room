@@ -1,6 +1,7 @@
 'use client';
 import {Fragment,useEffect,useRef,useState,useSyncExternalStore,type PointerEvent as ReactPointerEvent} from 'react';
-import {Bot,Brain,GripVertical,ImagePlus,Loader2,RotateCcw,Send,SlidersHorizontal,X} from 'lucide-react';
+import {Bot,Brain,GripVertical,History,ImagePlus,Loader2,Send,SlidersHorizontal,SquarePen,Trash2,X} from 'lucide-react';
+import {clearChats,latestChat,loadChats,newChatId,onChatsChange,removeChat,saveChat,type SavedChat} from './tutor-history';
 import {useI18n} from '../components/i18n';
 import VoiceButton from '../components/voice-input';
 import {DEFAULT_TUTOR_MODEL,TUTOR_IMAGES,TUTOR_MODELS,type TutorContext,type TutorEvent,type TutorMessage} from '@/lib/tutor-types';
@@ -51,7 +52,11 @@ function ThinkBox({text,live,secs,L}:{text:string;live?:boolean;secs?:number;L:(
  useEffect(()=>{const el=tail.current;if(el)el.scrollTop=el.scrollHeight},[text]);
  if(live)return <div className="tutor-think live"><span className="tutor-think-head"><Brain size={14}/>{L('正在思考…','Thinking…')}</span><div className="tutor-think-tail" ref={tail}>{text.slice(-400)}</div></div>;
  const steps=keySteps(text);if(!steps.length)return null;
- return <details className="tutor-think"><summary><Brain size={14}/>{secs?L(`思考了 ${secs} 秒 · 看关键步骤`,`Thought for ${secs}s · key steps`):L('思考过程 · 看关键步骤','Thinking · key steps')}</summary><ol>{steps.map((s,i)=><li key={i}>{s}</li>)}</ol></details>}
+ return <ThinkDone text={text} steps={steps} secs={secs} L={L}/>}
+// 写完后的思考过程：默认收起；展开先列关键步骤，点“看全部思考过程”可以看完整内容（框高度有上限，多了在框里滚动）。
+function ThinkDone({text,steps,secs,L}:{text:string;steps:string[];secs?:number;L:(zh:string,en:string)=>string}){const [full,setFull]=useState(false);
+ return <details className="tutor-think"><summary><Brain size={14}/>{secs?L(`思考了 ${secs} 秒 · 看关键步骤`,`Thought for ${secs}s · key steps`):L('思考过程 · 看关键步骤','Thinking · key steps')}</summary>{full?<div className="tutor-think-full">{text}</div>:<ol>{steps.map((s,i)=><li key={i}>{s}</li>)}</ol>}
+  <button type="button" className="tutor-think-more" onClick={()=>setFull(v=>!v)}>{full?L('只看关键步骤','Key steps only'):L(`看全部思考过程（${text.length} 字）`,`Show the full thinking (${text.length} chars)`)}</button></details>}
 function Md({text,caret}:{text:string;caret?:boolean}){const parts=text.split(/```[^\n]*\n?/),last=parts.length-1;
  return <>{parts.map((p,i)=>i%2?<pre key={i}><code>{p.replace(/\n$/,'')}{caret&&i===last&&<span className="ai-caret"/>}</code></pre>
   :p.trim()||caret&&i===last?<p key={i}>{inline(p.trim())}{caret&&i===last&&<span className="ai-caret"/>}</p>:null)}</>}
@@ -106,8 +111,19 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
  // images：输入框里待发送的图片；answerAt：AI 正在回复的位置（回复插在这条之后，回复期间新发的消息排在后面）。
  const [images,setImages]=useState<string[]>([]),[answerAt,setAnswerAt]=useState(-1),fileRef=useRef<HTMLInputElement>(null),inputRef=useRef<HTMLTextAreaElement>(null);
  const msgsRef=useRef(msgs),running=useRef(false),stick=useRef(true);
- const setMsgs=(next:TutorMessage[])=>{msgsRef.current=next;setMsgsState(next);if(next.length)chatCache.set(sessionKey,next);else chatCache.delete(sessionKey)};
- useEffect(()=>{const m=chatCache.get(sessionKey)??[];msgsRef.current=m;setMsgsState(m);setError('')},[sessionKey]);
+ // 对话记录：每段对话有一个 id，写一条就存一次（浏览器里，并同步到账号）。回到同一张卡片、同一道题时接着上次的聊；点“新对话”换一个 id，旧的留在历史里。
+ const chatTitle='quiz' in context?context.quiz.q:'lesson' in context?context.lesson.title:L('全站提问','Site-wide chat');
+ const chatId=useRef(''),[showHistory,setShowHistory]=useState(false),[chats,setChats]=useState<SavedChat[]>([]),[viewing,setViewing]=useState<SavedChat|null>(null);
+ const setMsgs=(next:TutorMessage[])=>{msgsRef.current=next;setMsgsState(next);if(next.length)chatCache.set(sessionKey,next);else chatCache.delete(sessionKey);
+  if(next.length&&!chatId.current)chatId.current=newChatId(sessionKey);
+  if(chatId.current)saveChat({id:chatId.current,key:sessionKey,title:sessionKey==='site'?(next.find(m=>m.role==='user')?.text||chatTitle):chatTitle,msgs:next})};
+ useEffect(()=>{const saved=latestChat(sessionKey),m=chatCache.get(sessionKey)??saved?.msgs??[];chatId.current=saved?.id??'';msgsRef.current=m;setMsgsState(m);setError('');setViewing(null)},[sessionKey]);
+ useEffect(()=>{const sync=()=>setChats(loadChats());sync();return onChatsChange(sync)},[]);
+ const newChat=()=>{chatId.current='';chatCache.delete(sessionKey);msgsRef.current=[];setMsgsState([]);setError('');setViewing(null);setShowHistory(false)};
+ // 打开一段历史对话：就是这里的对话就直接接着聊；别处的对话先只读查看，可以选择“接着这段继续问”（之后的提问按当前页面的内容回答）。
+ const openChat=(c:SavedChat)=>{setShowHistory(false);if(c.key===sessionKey){chatId.current=c.id;chatCache.set(sessionKey,c.msgs);msgsRef.current=c.msgs;setMsgsState(c.msgs);setViewing(null)}else setViewing(c)};
+ const adoptChat=(c:SavedChat)=>{chatId.current='';setViewing(null);setMsgs(c.msgs)};
+ const shown=viewing?viewing.msgs:msgs;
  // 打开时并排停靠：给 body 加 ai-docked，样式据此让页面（包括放大阅读层）给面板让出位置；电脑上面板是右侧一栏，手机上是底部半屏抽屉。
  useEffect(()=>{if(!open)return;document.body.classList.add('ai-docked');return()=>document.body.classList.remove('ai-docked')},[open]);
  // 只有停在底部时才跟着新内容滚到底；往上翻看时不打扰，翻回底部后继续跟随。
@@ -169,21 +185,30 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
   {open&&<aside className="ai-dock" aria-label={name}>
    <header><Bot size={18}/><strong>{name}</strong>{modelPicker}
     <button type="button" className={'ai-dock-icon'+(showCfg?' active':'')} onClick={()=>setShowCfg(v=>!v)} title={L('AI 模型与 API Key 设置','AI Model & API Key Settings')}><SlidersHorizontal size={15}/></button>
-    <button type="button" className="ai-dock-icon" disabled={busy||!msgs.length} onClick={()=>{setMsgs([]);setError('')}} title={L('清空对话','Clear')}><RotateCcw size={15}/></button>
+    <button type="button" className={'ai-dock-icon'+(showHistory?' active':'')} onClick={()=>{setShowCfg(false);setShowHistory(v=>!v)}} title={L(`历史对话（${chats.length}）`,`History (${chats.length})`)} aria-label={L('历史对话','History')}><History size={15}/></button>
+    <button type="button" className="ai-dock-icon" disabled={busy||(!msgs.length&&!viewing)} onClick={newChat} title={L('新对话（当前对话会留在历史里）','New chat (this one stays in history)')} aria-label={L('新对话','New chat')}><SquarePen size={15}/></button>
     <button type="button" className="ai-dock-icon" onClick={()=>setOpen(false)} title={L('收起','Close')}><X size={16}/></button></header>
-   {showCfg?<div className="ai-dock-log"><AiSettingsPanel onClose={()=>setShowCfg(false)}/></div>:<>
+   {showCfg?<div className="ai-dock-log"><AiSettingsPanel onClose={()=>setShowCfg(false)}/></div>
+   :showHistory?<div className="ai-dock-log tutor-history">
+     <div className="tutor-history-head"><strong>{L('历史对话','History')}</strong><small>{L('保存在你的账号下，换设备登录也能看到；图片不保存。','Saved to your account; images are not kept.')}</small></div>
+     {!chats.length&&<p className="notice-empty">{L('还没有对话记录。问过的问题会自动保存在这里。','No chats yet. Your questions are saved here automatically.')}</p>}
+     {chats.map(c=><div key={c.id} className={'tutor-history-item'+(c.id===chatId.current?' on':'')}><button type="button" onClick={()=>openChat(c)}><b>{c.title}</b><small>{c.msgs.find(m=>m.role==='user')?.text.slice(0,60)}</small><time>{new Date(c.at).toLocaleString(locale==='en'?'en':'zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})} · {L(`${c.msgs.length} 条`,`${c.msgs.length} messages`)}{c.key===sessionKey?L(' · 当前位置',' · here'):''}</time></button>
+      <button type="button" className="ai-dock-icon" onClick={()=>{removeChat(c.id);if(c.id===chatId.current)newChat()}} title={L('删除这段对话','Delete')} aria-label={L('删除这段对话','Delete')}><Trash2 size={14}/></button></div>)}
+     {chats.length>1&&<button type="button" className="tutor-history-clear" onClick={()=>{if(confirm(L('确定删除全部历史对话吗？删除后不能恢复。','Delete all history? This cannot be undone.'))){clearChats();newChat()}}}>{L('清空全部历史','Clear all history')}</button>}
+    </div>:<>
    <div className="ai-dock-log" ref={box} onScroll={onScroll}>
-    {!msgs.length&&!busy&&<div className="ai-dock-hello"><p>{hello??L('哪里没看懂都可以问我，我会结合你正在看的内容讲。也可以发截图给我看。点下面的问题也行：','Ask me anything about what you are looking at — screenshots welcome — or tap a question below:')}</p>
+    {viewing&&<div className="tutor-viewing"><span>{L(`历史对话 · ${viewing.title}`,`History · ${viewing.title}`)}</span><button type="button" onClick={()=>adoptChat(viewing)}>{L("接着这段继续问","Continue this chat")}</button><button type="button" onClick={()=>setViewing(null)}>{L("回到当前对话","Back")}</button></div>}
+    {!shown.length&&!busy&&<div className="ai-dock-hello"><p>{hello??L('哪里没看懂都可以问我，我会结合你正在看的内容讲。也可以发截图给我看。点下面的问题也行：','Ask me anything about what you are looking at — screenshots welcome — or tap a question below:')}</p>
      <div className="ai-dock-prompts">{prompts.map(p=><button key={p} type="button" onClick={()=>send(p)}>{p}</button>)}</div></div>}
-    {msgs.map((m,i)=><Fragment key={i}>{busy&&i===answerAt&&liveBubble}<div className={'tutor-msg '+m.role+(busy&&answerAt>=0&&i>=answerAt?' queued':'')}>
+    {shown.map((m,i)=><Fragment key={i}>{busy&&i===answerAt&&liveBubble}<div className={'tutor-msg '+m.role+(busy&&answerAt>=0&&i>=answerAt?' queued':'')}>
      {m.images?.length?<div className="tutor-imgs">{m.images.map((u,j)=><img key={j} src={u} alt={L('附图','Attached image')} onClick={e=>e.currentTarget.classList.toggle('big')}/>)}</div>:null}
      {m.role==='model'&&m.think&&<ThinkBox text={m.think} secs={m.secs} L={L}/>}{m.role==='model'?<Md text={m.text}/>:m.text&&<p>{m.text}</p>}{busy&&answerAt>=0&&i>=answerAt&&<small className="tutor-queued">{L('等上一条回复完接着回答','Queued')}</small>}</div></Fragment>)}
     {busy&&answerAt>=msgs.length&&liveBubble}
    </div>
    {error&&<p className="ai-grade-error">{error}</p>}
-   {msgs.length>0&&!busy&&<div className="ai-dock-prompts compact">{prompts.slice(0,3).map(p=><button key={p} type="button" onClick={()=>send(p)}>{p}</button>)}</div>}
+   {msgs.length>0&&!busy&&!viewing&&<div className="ai-dock-prompts compact"><span className="ai-dock-prompts-label">{L('接着问','Ask next')}</span>{prompts.slice(0,3).map(p=><button key={p} type="button" onClick={()=>send(p)}>{p}</button>)}</div>}
    {images.length>0&&<div className="tutor-attach">{images.map((u,i)=><span key={i}><img src={u} alt=""/><button type="button" onClick={()=>setImages(v=>v.filter((_,j)=>j!==i))} aria-label={L('移除图片','Remove image')}><X size={12}/></button></span>)}</div>}
-   <form className="tutor-input" onSubmit={e=>{e.preventDefault();send(input,images)}}>
+   <form className="tutor-input" hidden={!!viewing} onSubmit={e=>{e.preventDefault();send(input,images)}}>
     <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={e=>{if(e.target.files)void addFiles(e.target.files);e.target.value=''}}/>
     <button type="button" className="tutor-attach-btn" onClick={()=>fileRef.current?.click()} disabled={images.length>=TUTOR_IMAGES.perMessage} title={L('附图片（也可以直接粘贴截图）','Attach image (or paste a screenshot)')} aria-label={L('附图片','Attach image')}><ImagePlus size={17}/></button>
     <VoiceButton className="tutor-voice" onText={t=>{setInput(v=>v.trim()?v.replace(/\s+$/,'')+' '+t:t);inputRef.current?.focus()}}/>

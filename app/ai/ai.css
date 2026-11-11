@@ -354,3 +354,21 @@ body.ai-docked{--dock-w:min(420px,38vw);--dock-h:52vh}
  body.ai-docked .lc-zoom{bottom:var(--dock-h)}
  .ai-dock{left:0;right:0;bottom:0;width:100%;height:var(--dock-h);border-width:1px 0 0;border-radius:16px 16px 0 0}
 }
+
+.tutor-think-full{max-height:260px;margin-top:6px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+.tutor-think-more{margin-top:6px;padding:2px 9px;border:1px solid var(--line);border-radius:999px;background:var(--surface-soft);color:var(--primary);font:inherit;font-size:12px;cursor:pointer}.tutor-think-more:hover{border-color:var(--primary)}
+/* 对话下方的快捷提问：和上面的回复用分隔线、小标题隔开，不再贴在气泡下面 */
+.ai-dock-prompts.compact{margin-top:2px;padding:10px 14px 8px;border-top:1px solid var(--line);background:var(--surface-soft)}
+.ai-dock-prompts-label{flex-basis:100%;font-size:12px;font-weight:600;color:var(--quiet);letter-spacing:.04em}
+.ai-dock-prompts.compact button{background:var(--surface)}
+.ai-dock-log{padding-bottom:16px}
+/* AI 老师：历史对话 */
+.tutor-history{gap:6px}.tutor-history-head{display:flex;flex-direction:column;gap:2px;margin-bottom:4px}.tutor-history-head small{color:var(--quiet);font-size:12px}
+.tutor-history-item{display:flex;align-items:center;gap:4px;border:1px solid var(--line);border-radius:10px;background:var(--surface-soft)}.tutor-history-item.on{border-color:var(--primary)}
+.tutor-history-item>button:first-child{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;padding:9px 11px;border:0;background:none;color:var(--body-ink);font:inherit;text-align:left;cursor:pointer}
+.tutor-history-item b{color:var(--ink);font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tutor-history-item small{font-size:12.5px;color:var(--quiet);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tutor-history-item time{font-size:11.5px;color:var(--quiet)}
+.tutor-history-item>button:first-child:hover b{color:var(--primary)}
+.tutor-history-clear{align-self:center;margin-top:6px;padding:4px 12px;border:0;background:none;color:var(--quiet);font:inherit;font-size:12.5px;text-decoration:underline;cursor:pointer}
+.tutor-viewing{position:sticky;top:-12px;z-index:1;display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:-12px -14px 0;padding:8px 14px;border-bottom:1px solid var(--line);background:var(--surface);font-size:12.5px;color:var(--quiet)}
+.tutor-viewing span{flex:1;min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tutor-viewing button{padding:3px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface-soft);color:var(--primary);font:inherit;font-size:12px;cursor:pointer}
+.tutor-input[hidden]{display:none}

@@ -5,12 +5,15 @@
 export type SyncItem={key:string;value:string;updatedAt:number};
 export const SYNC_LIMITS={value:200_000,batch:50,keys:400,body:2_000_000} as const;
 const JOURNEY=/^([a-z][a-z-]{0,40}-journey:v1:)(.*)$/,WORDS='english-words:v1:';
+// AI 老师的对话记录：键不带用户名，原样存到服务器（两边不同时用较新的一边）。
+const TUTOR='ai-tutor:v1:history';
 
 // 服务器接受的键：闯关进度、英语单词（@me）、试卷记录（paper:考试 id）、技术栈选择（stack）。
-export const syncedKey=(k:string)=>k===WORDS+'@me'||/^[a-z][a-z-]{0,40}-journey:v1:(@me|stack|paper:[A-Za-z0-9_.-]{1,80})$/.test(k);
+export const syncedKey=(k:string)=>k===WORDS+'@me'||k===TUTOR||/^[a-z][a-z-]{0,40}-journey:v1:(@me|stack|paper:[A-Za-z0-9_.-]{1,80})$/.test(k);
 // 浏览器里的键 → 服务器上的键；不需要同步的键返回 null。name 是页面上用来拼键名的用户名（游客为 guest）。
 export function toServerKey(local:string,name:string):string|null{
  if(local===WORDS+name)return WORDS+'@me';
+ if(local===TUTOR)return TUTOR;
  const m=local.match(JOURNEY);if(!m)return null;
  const [,prefix,rest]=m,mine=name+':paper:';
  const key=rest==='stack'||rest.startsWith('paper:')?local:rest.startsWith(mine)?prefix+'paper:'+rest.slice(mine.length):rest===name?prefix+'@me':null;
