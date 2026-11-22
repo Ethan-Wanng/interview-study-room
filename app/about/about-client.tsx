@@ -1,7 +1,7 @@
 'use client';
 import '../ai/ai.css';
 import './about.css';
-import {ArrowRight,BookOpen,Calendar,Code2,Cpu,GraduationCap,HeartHandshake,History,Layers,Sparkles} from 'lucide-react';
+import {ArrowRight,BookOpen,Calendar,Code2,Cpu,GraduationCap,HeartHandshake,History,Layers,Sparkles,User} from 'lucide-react';
 import SiteHeader from '../components/site-header';
 import {PROJECT_STARTED} from '@/lib/project';
 import TitleTip from '../components/title-tip';
@@ -154,6 +154,10 @@ export default function AboutClient({
       )}
      </p>
      <div className="ab-meta-row">
+      <a className="ab-meta-pill link" href="https://github.com/Ethan-Wanng" target="_blank" rel="noreferrer">
+       <User size={16}/>
+       <span>{L('作者：Ethan-Wanng','Author: Ethan-Wanng')}</span>
+      </a>
       <span className="ab-meta-pill">
        <Calendar size={16}/>
        <span>{L(`始建于 ${PROJECT_STARTED}（已持续迭代 ${stats.daysActive} 天）`,`Started ${PROJECT_STARTED} (${stats.daysActive} days active)`)}</span>

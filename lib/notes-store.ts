@@ -422,15 +422,169 @@ export function restorePresetGuideNotebook(username:string):NotesState{
  });
 }
 
+export type DuplicateNoteMatch={
+ bookId:string;
+ bookName:string;
+ pageId:string;
+ pageIndex:number;
+ pageTitle:string;
+ exact:boolean;
+ canOverwrite:boolean;
+};
+
+function normalizeRawNote(s:string):string{
+ return s.replace(/\s+/g,' ').trim().toLowerCase();
+}
+
+function normalizeCoreNote(s:string):string{
+ return s
+  .replace(/>\s*💡\s*\*\*[^*]+\*\*[：:][\s\S]*$/,'')
+  .replace(/```[a-zA-Z0-9_-]*/g,'```')
+  .replace(/\s+/g,' ')
+  .trim()
+  .toLowerCase();
+}
+
+function splitNoteBlocks(content:string):string[]{
+ return content
+  .split(/\n\n---\n\n/)
+  .map(part=>part.replace(/^####\s+[^\n]+\n+/,'').trim())
+  .filter(Boolean);
+}
+
+function isAiQaNoteSource(src?:NoteSource):boolean{
+ if(!src)return false;
+ const l=src.label.trim();
+ return l.startsWith('AI 问答')||l.startsWith('AI Q&A');
+}
+
+export function findDuplicateNotes(
+ state:NotesState,
+ input:{
+  title?:string;
+  content?:string;
+  altContent?:string;
+  source?:NoteSource;
+  bookId?:string;
+ },
+):DuplicateNoteMatch[]{
+ const rawInput=normalizeRawNote(input.content??'');
+ const coreInput=normalizeCoreNote(input.content??'');
+ const coreAlt=normalizeCoreNote(input.altContent??'');
+ const cleanTitle=normalizeRawNote(input.title??'');
+ const src=input.source;
+ const qid=src?.questionId?.trim()||'';
+ const learnCard=Boolean(src?.kind==='learn'&&!isAiQaNoteSource(src)&&src.label.trim());
+
+ if(!qid&&!learnCard&&!rawInput&&!coreAlt)return [];
+
+ const matches:DuplicateNoteMatch[]=[];
+ for(const book of state.notebooks){
+  if(input.bookId&&book.id!==input.bookId)continue;
+  let found:DuplicateNoteMatch|null=null;
+  for(let i=0;i<book.pages.length;i++){
+   const page=book.pages[i];
+   if(!page.content.trim()&&!page.source)continue;
+
+   const rawPage=normalizeRawNote(page.content);
+   const corePage=normalizeCoreNote(page.content);
+   const isMultiBlock=page.content.includes('\n\n---\n\n');
+   const sameTitle=Boolean(cleanTitle&&normalizeRawNote(page.title)===cleanTitle);
+   const exact=Boolean(rawInput&&rawPage===rawInput&&(!cleanTitle||sameTitle));
+
+   let matched=false;
+   let canOverwrite=false;
+
+   if(qid&&page.source?.questionId===qid){
+    matched=true;
+    canOverwrite=!isMultiBlock;
+   }else if(
+    learnCard&&
+    page.source?.kind==='learn'&&
+    page.source.label===src!.label&&
+    (!src!.href||!page.source.href||page.source.href===src!.href)
+   ){
+    matched=true;
+    canOverwrite=!isMultiBlock;
+   }else if(rawInput&&(rawPage===rawInput||(coreInput&&corePage===coreInput))){
+    matched=true;
+    canOverwrite=true;
+   }else{
+    const blocks=isMultiBlock?splitNoteBlocks(page.content):[];
+    const blockHit=blocks.some(b=>{
+     const rb=normalizeRawNote(b);
+     const cb=normalizeCoreNote(b);
+     return Boolean(
+      (rawInput&&rb===rawInput)||
+      (coreInput&&cb===coreInput)||
+      (coreAlt&&cb===coreAlt)
+     );
+    });
+    const containedHit=Boolean(
+     (coreInput.length>=14&&corePage.includes(coreInput))||
+     (coreAlt.length>=14&&corePage.includes(coreAlt))
+    );
+    const aiUpgradeHit=Boolean(
+     isAiQaNoteSource(src)&&
+     page.source?.label===src?.label&&
+     corePage.length>=6&&
+     ((coreAlt&&corePage===coreAlt)||(coreInput&&coreInput.includes(corePage)&&sameTitle))
+    );
+    if(blockHit||containedHit){
+     matched=true;
+     canOverwrite=!isMultiBlock&&(Boolean(coreAlt&&corePage===coreAlt)||exact);
+    }else if(aiUpgradeHit){
+     matched=true;
+     canOverwrite=!isMultiBlock;
+    }
+   }
+
+   if(matched){
+    found={
+     bookId:book.id,
+     bookName:book.name,
+     pageId:page.id,
+     pageIndex:i,
+     pageTitle:page.title,
+     exact,
+     canOverwrite,
+    };
+    if(exact||canOverwrite)break;
+   }
+  }
+  if(found)matches.push(found);
+ }
+ return matches;
+}
+
 export function addNoteEntry(
  username:string,
  bookId:string,
  entry:{title:string;content:string;source?:NoteSource},
  mode:'new-page'|'append-last'='new-page',
-):{state:NotesState;bookId:string;pageId:string;pageIndex:number}{
+ options?:{preventDuplicate?:boolean;altContent?:string},
+):{state:NotesState;bookId:string;pageId:string;pageIndex:number;duplicate?:boolean}{
  const cur=readNotesState(username);
  const now=Date.now();
  const target=cur.notebooks.find(b=>b.id===bookId)??cur.notebooks[0];
+ if(target&&options?.preventDuplicate){
+  const dup=findDuplicateNotes(cur,{
+   title:entry.title,
+   content:entry.content,
+   altContent:options.altContent,
+   source:entry.source,
+   bookId:target.id,
+  })[0];
+  if(dup){
+   return {
+    state:cur,
+    bookId:dup.bookId,
+    pageId:dup.pageId,
+    pageIndex:dup.pageIndex,
+    duplicate:true,
+   };
+  }
+ }
  if(!target){
   const created=createNotebook(username,{
    name:'我的笔记本',

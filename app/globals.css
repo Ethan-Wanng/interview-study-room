@@ -391,6 +391,8 @@ html.dark .fb-alert.ok{color:#86efac}
 /* 全站「记笔记」快捷胶囊与收入笔记本弹窗 */
 .ai-note-pill{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;border:1px solid color-mix(in srgb,var(--primary) 34%,var(--line));background:color-mix(in srgb,var(--primary) 9%,var(--surface));color:var(--primary);font-size:12px;font-weight:650;line-height:1.35;cursor:pointer;white-space:nowrap;transition:background .16s,border-color .16s,transform .14s}
 .ai-note-pill:hover{background:color-mix(in srgb,var(--primary) 16%,var(--surface));border-color:var(--primary);transform:translateY(-1px)}
+.ai-note-pill.saved,.ai-note-btn.saved{border-color:color-mix(in srgb,#16a34a 45%,var(--line));background:color-mix(in srgb,#16a34a 11%,var(--surface));color:#16a34a}
+.ai-note-pill.saved:hover,.ai-note-btn.saved:hover{background:color-mix(in srgb,#16a34a 18%,var(--surface));border-color:#16a34a}
 .ai-tags .ai-note-pill{margin-left:auto}
 .rc-card .ai-tags .ai-note-pill{margin-left:0}
 .tutor-msg-actions .ai-note-pill{margin-left:auto;padding:2px 9px;font-size:12px}
@@ -422,6 +424,14 @@ html.dark .fb-alert.ok{color:#86efac}
 .note-book-chip{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font-size:13px;cursor:pointer;transition:border-color .15s,background .15s}
 .note-book-chip small{color:var(--quiet);font-size:11.5px}
 .note-book-chip.on{border-color:var(--primary);background:color-mix(in srgb,var(--primary) 12%,var(--surface));color:var(--primary);font-weight:650}
+.note-book-chip.has-dup{border-color:color-mix(in srgb,#16a34a 45%,var(--line))}
+.note-book-chip .note-chip-dup{color:#16a34a;flex:none}
+.note-dup-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;border-radius:10px;border:1px solid color-mix(in srgb,#16a34a 38%,var(--line));background:color-mix(in srgb,#16a34a 9%,var(--surface));color:var(--ink);font-size:13px}
+.note-dup-bar.other{border-color:var(--line);background:color-mix(in srgb,var(--primary) 6%,var(--surface))}
+.note-dup-msg{display:inline-flex;align-items:center;gap:6px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.note-dup-msg svg{color:#16a34a;flex:none}
+.note-dup-link{display:inline-flex;align-items:center;gap:3px;flex:none;color:var(--primary);font-size:12.5px;font-weight:650;text-decoration:none}
+.note-dup-link:hover{text-decoration:underline}
 .note-way-row{display:flex;gap:12px;flex-wrap:wrap;margin-top:2px}
 .note-way-row label{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--quiet);cursor:pointer;padding:4px 10px;border-radius:999px;border:1px solid var(--line)}
 .note-way-row label.on{color:var(--primary);border-color:var(--primary);background:color-mix(in srgb,var(--primary) 9%,transparent);font-weight:600}
