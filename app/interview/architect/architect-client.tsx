@@ -361,7 +361,10 @@ export default function ArchitectClient({username}:{username:string}){
 
  const deleteRecord=async(id:string)=>{
   try{
-   await fetch('/api/ai-interview-records?id='+encodeURIComponent(id),{method:'DELETE'});
+   await fetch('/api/ai-interview-records?id='+encodeURIComponent(id),{
+    method:'DELETE',
+    headers:{'content-type':'application/json'},
+   });
   }catch{}
   setRecords(prev=>prev.filter(x=>x.id!==id));
   if(recordId===id)resetAll();

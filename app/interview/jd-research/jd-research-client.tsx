@@ -494,7 +494,10 @@ export default function JdResearchClient({
 
  const deleteRecord = async (recId: string) => {
   try {
-   await fetch('/api/ai-interview-records?id=' + encodeURIComponent(recId), { method: 'DELETE' });
+   await fetch('/api/ai-interview-records?id=' + encodeURIComponent(recId), {
+    method: 'DELETE',
+    headers: { 'content-type': 'application/json' },
+   });
   } catch {}
   setRecords(prev => prev.filter(x => x.id !== recId));
   if (activeId === recId) {
