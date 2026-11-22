@@ -21,10 +21,15 @@ export default function InterviewHome({tracks,mine,member,today,goals,onOpen,onA
    <div className="ai-card"><span><RotateCcw size={17}/>{L('今日复习','Reviewed today')}</span><strong>{today?.reviewDone??'–'}<small> / {goals.review_goal}</small></strong><Progress value={today?Math.min(100,today.reviewDone/goals.review_goal*100):0}/></div>
    <div className="ai-card"><span><CalendarClock size={17}/>{L('待复习','Due')}</span><strong>{today?.due??'–'}<small> {L('题','')}</small></strong><button type="button" className="iv-link" onClick={onGoals}>{L('设置每日目标','Daily goals')}</button></div>
   </section>
-  <section className="learn-space"><h2 className="an-group">{L('高阶模拟面试','Senior Mock & Review')}</h2><div className="learn-subjects">
+  <section className="learn-space"><h2 className="an-group">{L('AI 专项实战','AI Interview Lab')}</h2><div className="learn-subjects">
    <a href="/interview/architect" className="ai-card learn-subject iv-subject iv-arch">
     <span className="learn-icon">🏛️</span>
     <strong>{L('系统设计深度点评 · 高阶模拟面试','System Design Review & Senior Mock')}</strong>
+    <span className="learn-foot"><span>Antigravity Agent</span><b>{L('进入','Open')}<ArrowRight size={16}/></b></span>
+   </a>
+   <a href="/interview/jd-research" className="ai-card learn-subject iv-subject iv-arch">
+    <span className="learn-icon">🧭</span>
+    <strong>{L('JD / 面经深度调研 · 专题题库与路径','JD & Interview Deep Research')}</strong>
     <span className="learn-foot"><span>Antigravity Agent</span><b>{L('进入','Open')}<ArrowRight size={16}/></b></span>
    </a>
   </div></section>

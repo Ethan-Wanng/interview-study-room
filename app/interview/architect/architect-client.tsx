@@ -103,7 +103,14 @@ export default function ArchitectClient({username}:{username:string}){
   setBusy(false);
  };
 
- useEffect(()=>()=>stopActive(),[]);
+ useEffect(()=>()=>{stopActive()},[]);
+ useEffect(()=>{
+  const p=new URLSearchParams(window.location.search);
+  const m=p.get('mode');
+  const t=p.get('topic')?.trim();
+  if(m==='mock'||m==='design')setMode(m);
+  if(t)setTopic(t.slice(0,200));
+ },[]);
 
  const lastSession=turns.slice().reverse().find(t=>t.status==='done'&&t.interactionId&&t.sig);
  const lastDoneTurn=turns.slice().reverse().find(t=>t.status==='done');
