@@ -170,13 +170,45 @@ export function buildJdResearchInput(opts: {
 }
 
 function extractJsonText(raw: string): string | null {
- const trimmed = raw.trim();
- const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
- if (fenced?.[1]) return fenced[1].trim();
+ // Strip ONLY an outer wrapping ```json ... ``` fence (never match non-greedily, because JSON
+ // `answer` strings legitimately contain nested ```go / ```sql code blocks!).
+ const trimmed = raw
+  .trim()
+  .replace(/^```(?:json)?\s*\r?\n?/i, '')
+  .replace(/\r?\n?```\s*$/, '')
+  .trim();
+
  const start = trimmed.indexOf('{');
+ if (start < 0) return null;
+
+ // Walk string-aware brace balance to find the exact matching closing `}`.
+ let depth = 0;
+ let inStr = false;
+ let esc = false;
+ for (let i = start; i < trimmed.length; i++) {
+  const ch = trimmed[i];
+  if (inStr) {
+   if (esc) {
+    esc = false;
+   } else if (ch === '\\') {
+    esc = true;
+   } else if (ch === '"') {
+    inStr = false;
+   }
+   continue;
+  }
+  if (ch === '"') {
+   inStr = true;
+  } else if (ch === '{') {
+   depth++;
+  } else if (ch === '}') {
+   depth--;
+   if (depth === 0) return trimmed.slice(start, i + 1);
+  }
+ }
+
  const end = trimmed.lastIndexOf('}');
- if (start >= 0 && end > start) return trimmed.slice(start, end + 1);
- return null;
+ return end > start ? trimmed.slice(start, end + 1) : null;
 }
 
 function safeParseJson(text: string): unknown {
