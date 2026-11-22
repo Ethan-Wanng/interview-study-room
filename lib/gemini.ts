@@ -84,9 +84,14 @@ function resolveEffectiveConcreteLevel(provider:AiProviderId,model:string,level:
 }
 
 function geminiThinkingCfgs(model:string,level:ThinkingLevel,defaultOn:boolean):(Record<string,unknown>|undefined)[]{
- if(level==='auto')return defaultOn?[{includeThoughts:true},undefined]:[undefined];
  const is25=/gemini-2\.5/i.test(model);
  const isHydrogen=/hydrogen/i.test(model);
+ if(level==='auto'){
+  if(!defaultOn)return [undefined];
+  return isHydrogen
+   ?[{includeThoughts:true,thinkingLevel:'MEDIUM'},{includeThoughts:true},undefined]
+   :[{includeThoughts:true},undefined];
+ }
  if(level==='off'){
   if(isHydrogen)return [{includeThoughts:true,thinkingLevel:'LOW'},{includeThoughts:true},undefined];
   return is25
@@ -140,7 +145,11 @@ async function runProviderStream(
  try{
   if(provider==='gemini'){
    const e=env as unknown as Record<string,string|undefined>;
-   const rawBase=opts.geminiProxy===false?undefined:(e?.GEMINI_PROXY_URL||(typeof process!=='undefined'?process.env?.GEMINI_PROXY_URL:undefined));
+   const proxy1=e?.GEMINI_PROXY_URL||(typeof process!=='undefined'?process.env?.GEMINI_PROXY_URL:undefined);
+   const proxy2=e?.GEMINI_PROXY_URL_2||(typeof process!=='undefined'?process.env?.GEMINI_PROXY_URL_2:undefined);
+   const cnDay=new Date(Date.now()+8*3600_000).getUTCDate();
+   const scheduledProxy=cnDay<=15?(proxy1||proxy2):(proxy2||proxy1);
+   const rawBase=opts.geminiProxy===false?undefined:scheduledProxy;
    const geminiBase=(rawBase||'https://generativelanguage.googleapis.com').replace(/\/+$/,'');
    const baseCfg:Record<string,unknown>=jsonMode
     ?{temperature,responseMimeType:'application/json',responseSchema:geminiSchema}

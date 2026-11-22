@@ -10,6 +10,7 @@ import {
 // 按模型作用域保存思考强度偏好（v2）：每个模型独立记住选择的挡位，未设置时回到该模型自己的默认值。
 export const THINKING_LEVEL_KEY='ai-thinking-levels-v2';
 export const TUTOR_MODEL_KEY='ai-tutor-model';
+export const NOTE_MODEL_KEY='ai-note-model';
 const listeners=new Set<()=>void>();
 const emit=()=>listeners.forEach(fn=>fn());
 
@@ -63,7 +64,7 @@ export function setModelThinkingLevel(scopeKey:string,level:ConcreteThinkingLeve
 const subscribe=(fn:()=>void)=>{
  listeners.add(fn);
  const onStorage=(e:StorageEvent)=>{
-  if(e.key===THINKING_LEVEL_KEY||e.key===TUTOR_MODEL_KEY)fn();
+  if(e.key===THINKING_LEVEL_KEY||e.key===TUTOR_MODEL_KEY||e.key===NOTE_MODEL_KEY)fn();
  };
  if(typeof window!=='undefined')window.addEventListener('storage',onStorage);
  return()=>{listeners.delete(fn);if(typeof window!=='undefined')window.removeEventListener('storage',onStorage)};
@@ -88,4 +89,27 @@ export function notifyTutorModelChanged(){emit()}
 
 export function useStoredTutorModel():string{
  return useSyncExternalStore(subscribe,getStoredTutorModel,()=>'auto');
+}
+
+export function getStoredNoteModel():string{
+ if(typeof window==='undefined')return 'auto';
+ try{
+  const raw=localStorage.getItem(NOTE_MODEL_KEY)||'auto';
+  return raw==='gemini-flash'?'gemini-4':raw;
+ }catch{return 'auto'}
+}
+
+export function setStoredNoteModel(model:string){
+ const next=model==='gemini-flash'?'gemini-4':(model||'auto');
+ try{
+  if(typeof window!=='undefined'){
+   if(next==='auto')localStorage.removeItem(NOTE_MODEL_KEY);
+   else localStorage.setItem(NOTE_MODEL_KEY,next);
+  }
+ }catch{}
+ emit();
+}
+
+export function useStoredNoteModel():[string,(model:string)=>void]{
+ return [useSyncExternalStore(subscribe,getStoredNoteModel,()=>'auto'),setStoredNoteModel];
 }

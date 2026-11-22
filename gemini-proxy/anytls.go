@@ -297,6 +297,15 @@ func (a *AnyTLSDialer) DialContext(ctx context.Context, _ string, addr string) (
 	return conn, nil
 }
 
+// Host returns the configured AnyTLS node hostname.
+func (a *AnyTLSDialer) Host() string { return a.cfg.Host }
+
+// Name returns the configured AnyTLS node display name.
+func (a *AnyTLSDialer) Name() string { return a.cfg.Name }
+
+// Protocol identifies this proxy node protocol.
+func (a *AnyTLSDialer) Protocol() string { return "anytls" }
+
 // NewHTTPTransport returns an http.Transport that routes HTTPS requests through the AnyTLS tunnel.
 func (a *AnyTLSDialer) NewHTTPTransport() *http.Transport {
 	return &http.Transport{
@@ -304,9 +313,10 @@ func (a *AnyTLSDialer) NewHTTPTransport() *http.Transport {
 		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
 		ForceAttemptHTTP2:     false,
 		TLSNextProto:          make(map[string]func(authority string, c *tls.Conn) http.RoundTripper),
-		MaxIdleConns:          16,
+		MaxIdleConns:          32,
+		MaxIdleConnsPerHost:   16,
 		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   15 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 }

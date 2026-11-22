@@ -78,14 +78,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	rt, st := s.router.Resolve(r.Context())
 	activeMode := st.Mode
-	var retried bool
+	var retriedExisting, retriedStandby bool
 
 	rp := &httputil.ReverseProxy{
 		FlushInterval: -1,
 		Transport: roundTripFunc(func(outReq *http.Request) (*http.Response, error) {
 			resp, err := rt.RoundTrip(outReq)
-			if activeMode == "existing-proxy" && !retried && canRetryWithOverride(outReq, bodyCopy, resp, err) {
-				retried = true
+			if activeMode == "existing-proxy" && !retriedExisting && canRetryWithOverride(outReq, bodyCopy, resp, err) {
+				retriedExisting = true
 				rt, st = s.router.ForceOverride("existing proxy failed or location unsupported during request")
 				activeMode = st.Mode
 				retryReq := outReq.Clone(outReq.Context())
@@ -93,7 +93,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					retryReq.Body = io.NopCloser(bytes.NewReader(bodyCopy))
 					retryReq.ContentLength = int64(len(bodyCopy))
 				}
-				return rt.RoundTrip(retryReq)
+				resp, err = rt.RoundTrip(retryReq)
+			}
+			if activeMode != "existing-proxy" && !retriedStandby && err != nil && outReq.Context().Err() == nil {
+				if standbyRT, standbyMode, ok := s.router.StandbyOverride(); ok {
+					retriedStandby = true
+					rt = standbyRT
+					activeMode = standbyMode
+					retryReq := outReq.Clone(outReq.Context())
+					if bodyCopy != nil {
+						retryReq.Body = io.NopCloser(bytes.NewReader(bodyCopy))
+						retryReq.ContentLength = int64(len(bodyCopy))
+					}
+					return rt.RoundTrip(retryReq)
+				}
 			}
 			return resp, err
 		}),

@@ -23,7 +23,7 @@ async function isHealthy(url) {
 
 function newestGoMtime() {
   let latest = 0;
-  for (const name of ["anytls.go", "checker.go", "server.go", "dialer_windows.go", "dialer_other.go", "system_proxy_windows.go", "system_proxy_other.go", "cmd/gemini-proxy/main.go"]) {
+  for (const name of ["anytls.go", "https_proxy.go", "checker.go", "server.go", "dialer_windows.go", "dialer_other.go", "system_proxy_windows.go", "system_proxy_other.go", "cmd/gemini-proxy/main.go"]) {
     const p = join(proxyDir, name);
     if (existsSync(p)) latest = Math.max(latest, statSync(p).mtimeMs);
   }

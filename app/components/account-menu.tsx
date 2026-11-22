@@ -1,11 +1,39 @@
 'use client';
 import {useGeminiAutoProxy} from '../ai/gemini-proxy-pref';
-import {useModelThinkingLevel,useStoredTutorModel} from '../ai/thinking-pref';
+import {useModelThinkingLevel,useStoredNoteModel,useStoredTutorModel} from '../ai/thinking-pref';
 import {useGradeModel} from '../ai/grade-client';
+import {useAiConfigStatus} from '../ai/ai-settings';
+import {providerMeta} from '@/lib/ai-config';
 import {getGradeThinkingSpec,getTutorThinkingSpec,THINKING_META,type ModelThinkingSpec} from '@/lib/thinking';
 import {TUTOR_MODELS} from '@/lib/tutor-types';
 import {GRADE_MODELS} from '@/lib/grade-types';
 function GeminiProxyRow({L}:{L:(zh:string,en:string)=>string}){const [auto,setAuto]=useGeminiAutoProxy();return <div className="settings-row"><span className="settings-stack"><span className="settings-label">{L('Gemini 自动代理','Gemini auto proxy')}</span></span><div className="settings-seg" role="group" aria-label={L('Gemini 自动代理','Gemini auto proxy')}><button type="button" className={auto?'on':''} onClick={()=>setAuto(true)}>{L('开启','On')}</button><button type="button" className={!auto?'on':''} onClick={()=>setAuto(false)}>{L('关闭','Off')}</button></div></div>;}
+function NoteModelRow({L}:{L:(zh:string,en:string)=>string}){
+ const [noteModel,setNoteModel]=useStoredNoteModel();
+ const {status}=useAiConfigStatus();
+ const customOn=Boolean(!status?.isGuest&&status?.settings?.enabled&&status?.settings?.hasKey&&status?.settings?.allowTutor);
+ const customLabel=customOn&&status?.settings
+  ?`${providerMeta(status.settings.provider).badge} · ${status.settings.model||providerMeta(status.settings.provider).defaultModel}`
+  :'';
+ const value=noteModel==='custom'&&!customOn?'auto':noteModel;
+ return (
+  <div className="settings-row">
+   <span className="settings-label">{L('笔记 AI 模型','Note AI model')}</span>
+   <select
+    className="theme-select settings-theme-select"
+    value={value}
+    onChange={e=>setNoteModel(e.target.value)}
+    aria-label={L('笔记 AI 模型','Note AI model')}
+   >
+    <option value="auto">{L('默认（自动）','Default (Auto)')}</option>
+    {customOn&&<option value="custom">{L(`专属 API（${customLabel}）`,`Custom (${customLabel})`)}</option>}
+    {TUTOR_MODELS.map(m=>(
+     <option key={m.id} value={m.id}>{L(m.label[0],m.label[1])}</option>
+    ))}
+   </select>
+  </div>
+ );
+}
 function ModelThinkingSeg({title,scopeKey,spec,L}:{title:string;scopeKey:string;spec:ModelThinkingSpec;L:(zh:string,en:string)=>string}){
  const [thinking,setThinking]=useModelThinkingLevel(scopeKey,spec);
  return (
@@ -28,10 +56,14 @@ function ModelThinkingSeg({title,scopeKey,spec,L}:{title:string;scopeKey:string;
 function ThinkingLevelRow({L}:{L:(zh:string,en:string)=>string}){
  const tutorModel=useStoredTutorModel();
  const [gradeModel]=useGradeModel();
+ const [noteModel]=useStoredNoteModel();
  const tutor=getTutorThinkingSpec(tutorModel,null);
  const grade=getGradeThinkingSpec(gradeModel,null);
+ const note=getTutorThinkingSpec(noteModel,null);
  const tutorName=TUTOR_MODELS.find(m=>m.id===tutorModel)?.label[0]??'DeepSeek V4.1 Flash';
  const gradeName=GRADE_MODELS.find(m=>m.id===gradeModel)?.name??'Gemini 4 Hydrogen';
+ const noteName=TUTOR_MODELS.find(m=>m.id===noteModel)?.label[0]??'DeepSeek V4.1 Flash';
+ const showNoteSeg=noteModel!=='auto'&&noteModel!=='custom'&&note.scopeKey!==tutor.scopeKey&&note.scopeKey!==grade.scopeKey;
  return (
   <div className="settings-row settings-row-col">
    <span className="settings-stack">
@@ -40,6 +72,7 @@ function ThinkingLevelRow({L}:{L:(zh:string,en:string)=>string}){
    </span>
    <ModelThinkingSeg title={L(`问答：${tutorName}`,`Chat: ${tutorName}`)} scopeKey={tutor.scopeKey} spec={tutor.spec} L={L}/>
    <ModelThinkingSeg title={L(`评分：${gradeName}`,`Grade: ${gradeName}`)} scopeKey={grade.scopeKey} spec={grade.spec} L={L}/>
+   {showNoteSeg&&<ModelThinkingSeg title={L(`笔记：${noteName}`,`Notes: ${noteName}`)} scopeKey={note.scopeKey} spec={note.spec} L={L}/>}
   </div>
  );
 }
@@ -172,6 +205,7 @@ export default function AccountMenu({username}:{username:string}){
       <ThemeSelect className="theme-select settings-theme-select"/>
      </div>
      <GeminiProxyRow L={L}/>
+     <NoteModelRow L={L}/>
      <ThinkingLevelRow L={L}/>
 
      <div className="settings-glass">

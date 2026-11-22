@@ -37,21 +37,33 @@ func main() {
 	if defaultNode == "" {
 		defaultNode = geminiproxy.DefaultAnyTLSNode
 	}
+	defaultNode2 := strings.TrimSpace(os.Getenv("GEMINI_HTTPS_NODE"))
+	if defaultNode2 == "" {
+		defaultNode2 = geminiproxy.DefaultHTTPSNode
+	}
 	defaultKeyFile := filepath.Join("..", "..", "1.txt")
 
 	listen := flag.String("listen", "127.0.0.1:18765", "local HTTP gateway address")
-	nodeURI := flag.String("node", defaultNode, "AnyTLS node URI used when Gemini proxy override is required")
-	upstreamProxy := flag.String("upstream-proxy", strings.TrimSpace(os.Getenv("GEMINI_USER_PROXY")), "optional explicit existing proxy URL to test before AnyTLS override")
+	nodeURI := flag.String("node", defaultNode, "primary proxy node URI used on days 1-15 of each month")
+	node2URI := flag.String("node2", defaultNode2, "secondary proxy node URI used on days 16-end of each month")
+	upstreamProxy := flag.String("upstream-proxy", strings.TrimSpace(os.Getenv("GEMINI_USER_PROXY")), "optional explicit existing proxy URL to test before override")
 	keyFile := flag.String("key-file", defaultKeyFile, "optional path to file containing Gemini API key for region probe")
 	probeOnly := flag.Bool("probe-only", false, "check active proxy support for Gemini API and exit with JSON status")
 	flag.Parse()
 
-	cfg, err := geminiproxy.ParseAnyTLS(*nodeURI)
+	primaryNode, err := geminiproxy.ParseProxyNode(*nodeURI)
 	if err != nil {
-		log.Fatalf("invalid AnyTLS node config: %v", err)
+		log.Fatalf("invalid day 1-15 proxy node config: %v", err)
 	}
 
 	var opts []geminiproxy.RouterOption
+	if strings.TrimSpace(*node2URI) != "" {
+		secondaryNode, err := geminiproxy.ParseProxyNode(*node2URI)
+		if err != nil {
+			log.Fatalf("invalid day 16-end proxy node config: %v", err)
+		}
+		opts = append(opts, geminiproxy.WithSecondHalfNode(secondaryNode))
+	}
 	if *upstreamProxy != "" {
 		opts = append(opts, geminiproxy.WithUpstreamProxy(*upstreamProxy))
 	}
@@ -59,7 +71,7 @@ func main() {
 		opts = append(opts, geminiproxy.WithAPIKey(apiKey))
 	}
 
-	router := geminiproxy.NewDynamicRouter(cfg, opts...)
+	router := geminiproxy.NewDynamicRouterWithNodes(primaryNode, opts...)
 	defer router.Close()
 
 	if *probeOnly {

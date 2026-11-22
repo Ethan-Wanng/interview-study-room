@@ -1,5 +1,7 @@
 import type {TutorContext,TutorEvent,TutorMessage} from '@/lib/tutor-types';
+import {getTutorThinkingSpec} from '@/lib/thinking';
 import {getGeminiAutoProxy} from '../ai/gemini-proxy-pref';
+import {getModelThinkingLevel,getStoredNoteModel} from '../ai/thinking-pref';
 
 // 流式调用 /api/tutor 处理笔记润色、规范化与选中文本 AI 问答
 export async function streamNoteAi(
@@ -10,6 +12,13 @@ export async function streamNoteAi(
  signal:AbortSignal,
 ):Promise<{ok:true;text:string}|{ok:false;aborted?:boolean;message:string}>{
  const NET='AI 助手暂时连接失败，本次未扣除额度，请稍后重试。';
+ const model=getStoredNoteModel();
+ const thinkingLevel=model==='auto'||model==='custom'
+  ?'auto'
+  :(()=>{
+    const {scopeKey,spec}=getTutorThinkingSpec(model,null);
+    return getModelThinkingLevel(scopeKey,spec);
+   })();
  let res:Response;
  try{
   res=await fetch('/api/tutor',{
@@ -18,9 +27,9 @@ export async function streamNoteAi(
    body:JSON.stringify({
     context,
     messages,
-    model:'auto',
+    model,
     geminiProxy:getGeminiAutoProxy(),
-    thinkingLevel:'auto',
+    thinkingLevel,
    }),
    signal,
   });

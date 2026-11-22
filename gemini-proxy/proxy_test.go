@@ -165,6 +165,7 @@ func TestDynamicRouterExistingVsOverrideAndPathRestriction(t *testing.T) {
 		return http.DefaultTransport.RoundTrip(clone)
 	})
 	router.cachedStatus = RouteStatus{Mode: "existing-proxy", GeminiSupported: true, ExistingProxy: "system-tun"}
+	router.cachedSlot = ScheduleSlotName(router.nowFn())
 	router.cachedAt = time.Now()
 	router.mu.Unlock()
 
@@ -195,5 +196,59 @@ func TestIsTunnelFakeIPAndPhysicalFilter(t *testing.T) {
 	})
 	if len(filtered) != 1 || filtered[0] != "1.1.1.1" {
 		t.Fatalf("unexpected filtered IPs: %v", filtered)
+	}
+}
+
+func TestParseHTTPSProxyAndMonthlySchedule(t *testing.T) {
+	cfg, err := ParseHTTPSProxy(DefaultHTTPSNode)
+	if err != nil {
+		t.Fatalf("ParseHTTPSProxy failed: %v", err)
+	}
+	if cfg.Scheme != "https" || cfg.Host != "t4cache.71edgeiqiyi.com" || cfg.Port != 22443 {
+		t.Fatalf("unexpected https proxy endpoint: %+v", cfg)
+	}
+	if cfg.Username != "b98bc3e4-afc5-4d29-a934-161f6dc80654" || cfg.Password != "b98bc3e4-afc5-4d29-a934-161f6dc80654" {
+		t.Fatalf("unexpected credentials: user=%q pass=%q", cfg.Username, cfg.Password)
+	}
+
+	firstNode, err := ParseProxyNode(DefaultAnyTLSNode)
+	if err != nil {
+		t.Fatalf("parse primary: %v", err)
+	}
+	secondNode, err := ParseProxyNode(DefaultHTTPSNode)
+	if err != nil {
+		t.Fatalf("parse secondary: %v", err)
+	}
+
+	fakeNow := time.Date(2026, 11, 15, 23, 59, 0, 0, chinaTZ)
+	router := NewDynamicRouterWithNodes(
+		firstNode,
+		WithSecondHalfNode(secondNode),
+		WithClock(func() time.Time { return fakeNow }),
+		WithCacheTTL(5*time.Minute),
+	)
+	router.detectFn = func(string) DetectedProxy {
+		return DetectedProxy{Enabled: false, Kind: "none", Display: "none"}
+	}
+	defer router.Close()
+
+	// Day 15 (UTC+8) -> original AnyTLS node
+	_, st15 := router.Resolve(context.Background())
+	if st15.ScheduleSlot != "day1-15" || st15.NodeHost != "5tw.quandao.com" || st15.Mode != "anytls-override" {
+		t.Fatalf("day 15 expected original AnyTLS node, got %+v", st15)
+	}
+
+	// Cross midnight to Day 16 (UTC+8) -> automatically switches to new HTTPS node without restart/invalidate
+	fakeNow = time.Date(2026, 11, 16, 0, 1, 0, 0, chinaTZ)
+	_, st16 := router.Resolve(context.Background())
+	if st16.ScheduleSlot != "day16-end" || st16.NodeHost != "t4cache.71edgeiqiyi.com" || st16.Mode != "https-proxy-override" {
+		t.Fatalf("day 16 expected new HTTPS node, got %+v", st16)
+	}
+
+	// Day 1 of next month (UTC+8) -> switches back to original AnyTLS node
+	fakeNow = time.Date(2026, 12, 1, 0, 5, 0, 0, chinaTZ)
+	_, st1 := router.Resolve(context.Background())
+	if st1.ScheduleSlot != "day1-15" || st1.NodeHost != "5tw.quandao.com" || st1.Mode != "anytls-override" {
+		t.Fatalf("day 1 expected original AnyTLS node, got %+v", st1)
 	}
 }

@@ -29,3 +29,6 @@ if(existsSync('../1.txt')){
 if(process.env.GEMINI_PROXY_URL?.trim()){
  run(['secret','put','GEMINI_PROXY_URL'],process.env.GEMINI_PROXY_URL.trim());
 }
+if(process.env.GEMINI_PROXY_URL_2?.trim()){
+ run(['secret','put','GEMINI_PROXY_URL_2'],process.env.GEMINI_PROXY_URL_2.trim());
+}
