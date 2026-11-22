@@ -40,6 +40,7 @@ export function tutorModelBadge(model:string|undefined,lang:'zh'|'en'='zh'):stri
  const lvTag=level?(lang==='en'?` (${thinkingLevelBadgeText(level,lang)})`:`（${thinkingLevelBadgeText(level,lang)}）`):'';
  if(m==='gemini-4-hydrogen')return `Gemini 4 Hydrogen${lvTag}`;
  if(m==='gemini-3.8-flash')return (lang==='en'?'Gemini 3.8 Flash (fallback)':'Gemini 3.8 Flash（降级）')+(level?` · ${thinkingLevelBadgeText(level,lang)}`:'');
+ if(m==='gemini-2.5-flash')return (lang==='en'?'Gemini 2.5 Flash (fallback)':'Gemini 2.5 Flash（降级）')+(level?` · ${thinkingLevelBadgeText(level,lang)}`:'');
  if(m==='gemini-3.6-flash')return (lang==='en'?'Gemini 3.6 Flash (fallback)':'Gemini 3.6 Flash（降级）')+(level?` · ${thinkingLevelBadgeText(level,lang)}`:'');
  if(m==='deepseek-flash (thinking)'||m==='deepseek-flash-think')return (lang==='en'?'DeepSeek V4.1 Flash · thinking':'DeepSeek V4.1 Flash · 深度思考')+lvTag;
  if(m==='deepseek-flash')return `DeepSeek V4.1 Flash${lvTag}`;

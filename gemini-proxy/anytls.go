@@ -200,6 +200,29 @@ func queryDoHPhysicalIPv4(ctx context.Context, dohIP, dohHost, domain string) []
 	return filterPhysicalIPv4s(addrs)
 }
 
+type dnsCacheEntry struct {
+	ips     []string
+	expires time.Time
+}
+
+type dnsInflightCall struct {
+	done chan struct{}
+	ips  []string
+}
+
+type ipChoiceEntry struct {
+	ip      string
+	expires time.Time
+}
+
+var (
+	nodeDNSMu       sync.Mutex
+	nodeDNSCache    = make(map[string]dnsCacheEntry)
+	nodeDNSInflight = make(map[string]*dnsInflightCall)
+	nodeIPMu        sync.Mutex
+	nodeIPCache     = make(map[string]ipChoiceEntry)
+)
+
 func resolveHostPhysicalIPv4(ctx context.Context, host string) []string {
 	if ip := net.ParseIP(host); ip != nil {
 		if ip4 := ip.To4(); ip4 != nil {
@@ -207,32 +230,136 @@ func resolveHostPhysicalIPv4(ctx context.Context, host string) []string {
 		}
 		return []string{host}
 	}
+	key := strings.ToLower(strings.TrimSpace(host))
+	now := time.Now()
+
+	nodeDNSMu.Lock()
+	if entry, ok := nodeDNSCache[key]; ok && now.Before(entry.expires) && len(entry.ips) > 0 {
+		out := append([]string(nil), entry.ips...)
+		nodeDNSMu.Unlock()
+		return out
+	}
+	if call, ok := nodeDNSInflight[key]; ok {
+		nodeDNSMu.Unlock()
+		select {
+		case <-call.done:
+			return append([]string(nil), call.ips...)
+		case <-ctx.Done():
+			return nil
+		}
+	}
+	call := &dnsInflightCall{done: make(chan struct{})}
+	nodeDNSInflight[key] = call
+	nodeDNSMu.Unlock()
+
+	var resolved []string
 	// When a TUN adapter is up, OS DNS may return Fake-IPs (198.18.x.x) and raw port 53 over
-	// non-TUN NICs is often blocked by TUN WFP rules. Query public DoH endpoints over port 443
-	// pinned to the physical NIC so outer AnyTLS connections always escape TUN cleanly.
+	// non-TUN NICs is often blocked by TUN WFP rules. Query public DoH endpoints concurrently
+	// over port 443 pinned to the physical NIC so outer connections always escape TUN cleanly.
 	if hasTunnelInterface() {
+		qctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		ch := make(chan []string, 2)
 		for _, ep := range [][2]string{{"223.5.5.5", "223.5.5.5"}, {"1.12.12.12", "doh.pub"}} {
-			if ips := queryDoHPhysicalIPv4(ctx, ep[0], ep[1], host); len(ips) > 0 {
-				return ips
+			ep := ep
+			go func() {
+				ch <- queryDoHPhysicalIPv4(qctx, ep[0], ep[1], host)
+			}()
+		}
+		for i := 0; i < 2; i++ {
+			if ips := <-ch; len(ips) > 0 && len(resolved) == 0 {
+				resolved = ips
+				cancel()
+				break
+			}
+		}
+		cancel()
+	}
+	if len(resolved) == 0 {
+		rctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		addrs, err := net.DefaultResolver.LookupIPAddr(rctx, host)
+		cancel()
+		if err == nil {
+			resolved = filterPhysicalIPv4s(addrs)
+		}
+	}
+
+	nodeDNSMu.Lock()
+	call.ips = resolved
+	delete(nodeDNSInflight, key)
+	if len(resolved) > 0 {
+		nodeDNSCache[key] = dnsCacheEntry{
+			ips:     append([]string(nil), resolved...),
+			expires: time.Now().Add(2 * time.Minute),
+		}
+	}
+	nodeDNSMu.Unlock()
+	close(call.done)
+	return resolved
+}
+
+// racePhysicalIPs probes multiple resolved IPs in parallel (matching high-mae's raceNodeIPs)
+// and caches the fastest reachable IP for 2 minutes.
+func racePhysicalIPs(ctx context.Context, host string, port int, ips []string) string {
+	if len(ips) <= 1 {
+		if len(ips) == 1 {
+			return ips[0]
+		}
+		return ""
+	}
+	cacheKey := strings.ToLower(host) + ":" + strconv.Itoa(port)
+	now := time.Now()
+	nodeIPMu.Lock()
+	if entry, ok := nodeIPCache[cacheKey]; ok && now.Before(entry.expires) {
+		for _, ip := range ips {
+			if ip == entry.ip {
+				nodeIPMu.Unlock()
+				return entry.ip
 			}
 		}
 	}
-	rctx, cancel := context.WithTimeout(ctx, 4*time.Second)
-	addrs, err := net.DefaultResolver.LookupIPAddr(rctx, host)
-	cancel()
-	if err == nil {
-		if ips := filterPhysicalIPv4s(addrs); len(ips) > 0 {
-			return ips
+	nodeIPMu.Unlock()
+
+	pctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer cancel()
+	portStr := strconv.Itoa(port)
+	winners := make(chan string, len(ips))
+	for _, ip := range ips {
+		ip := ip
+		go func() {
+			d := newPhysicalDialer(1500 * time.Millisecond)
+			c, err := d.DialContext(pctx, "tcp4", net.JoinHostPort(ip, portStr))
+			if err != nil {
+				winners <- ""
+				return
+			}
+			_ = c.Close()
+			winners <- ip
+		}()
+	}
+	for range ips {
+		if winner := <-winners; winner != "" {
+			nodeIPMu.Lock()
+			nodeIPCache[cacheKey] = ipChoiceEntry{ip: winner, expires: time.Now().Add(2 * time.Minute)}
+			nodeIPMu.Unlock()
+			return winner
 		}
 	}
-	return nil
+	return ips[0]
 }
 
 func dialPhysicalNode(ctx context.Context, host string, port int) (net.Conn, error) {
 	dialer := newPhysicalDialer(5 * time.Second)
 	portStr := strconv.Itoa(port)
+	ips := resolveHostPhysicalIPv4(ctx, host)
+	if len(ips) > 1 {
+		if best := racePhysicalIPs(ctx, host, port, ips); best != "" {
+			if conn, err := dialer.DialContext(ctx, "tcp4", net.JoinHostPort(best, portStr)); err == nil {
+				return conn, nil
+			}
+		}
+	}
 	var lastErr error
-	for _, ip := range resolveHostPhysicalIPv4(ctx, host) {
+	for _, ip := range ips {
 		conn, err := dialer.DialContext(ctx, "tcp4", net.JoinHostPort(ip, portStr))
 		if err == nil {
 			return conn, nil

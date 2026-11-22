@@ -114,5 +114,5 @@ export async function POST(req:Request){try{assertSameOrigin(req);const user=awa
  const row=await db.prepare('INSERT INTO ai_tutor_quota(user_id,day,count) VALUES(?,?,1) ON CONFLICT(user_id,day) DO UPDATE SET count=count+1 WHERE count<? RETURNING count').bind(user.id,day,limit).first<{count:number}>();
  if(!row)return fail('quota',user.is_guest?`游客每天可以问 AI 老师 ${limit} 次，今天的次数已用完。登录后每天有 ${TUTOR_QUOTA.user} 次，还可绑定自己的专属 API。`:`今天的 ${limit} 次站点默认 AI 老师已用完，明天再来，或在「AI 设置」中配置你自己的 API Key。`,429,{remaining:0});
  const refund=()=>db.prepare('UPDATE ai_tutor_quota SET count=MAX(count-1,0) WHERE user_id=? AND day=?').bind(user.id,day).run();
- return streamTutor(Math.max(0,limit-row.count),refund,e=>e instanceof VisionError?e.message+'（这次没有扣次数）':'AI 老师暂时连不上，这次没有扣次数，请稍后再试。',undefined,siteModel)}
+ return streamTutor(Math.max(0,limit-row.count),refund,e=>e instanceof VisionError?e.message+'（这次没有扣次数）':(e instanceof Error&&e.message.startsWith('gemini-rate-limit:'))?'站点 Gemini 限流已满（5 次/分钟 · 20 次/天），请稍后再试、切换 DeepSeek，或在「AI 设置」绑定自己的 API Key。（这次没有扣次数）':'AI 老师暂时连不上，这次没有扣次数，请稍后再试。',undefined,siteModel)}
  catch(e){if(e instanceof AuthError)return fail('auth',e.message,e.status);return fail('failed','AI 老师暂时不可用。',500)}}

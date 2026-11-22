@@ -4,6 +4,8 @@ import {analyzeStarterAnswer,filterStarterMarks} from './starter-diff';
 import {DEFAULT_TUTOR_MODEL,TUTOR_MODELS,type TutorContext,type TutorLesson,type TutorMessage,type TutorQuiz} from './tutor-types';
 import {providerMeta,type AiProviderId,type RuntimeAiConfig} from './ai-config';
 import {clampThinkingToSpec,getCustomThinkingSpec,parseThinkingLevel,type ConcreteThinkingLevel,type ThinkingLevel} from './thinking';
+import {fetchGeminiViaScheduledProxy} from './gemini-worker-proxy';
+import {estimateGeminiTokens,markSiteGemini429,recordExtraGeminiTokens,refundSiteGeminiLimit,tryConsumeSiteGeminiLimit} from './gemini-rate-limit';
 import type {PlaygroundLang} from '@/lib/playground-bridge';
 
 // 默认用 DeepSeek（密钥来自 Worker 的 DEEPSEEK_API_KEY，由 2.txt 配置）；
@@ -120,7 +122,7 @@ async function runProviderStream(
  maxTokens:number|undefined,
  onText:(t:string)=>void,
  // thinking / thinkingLevel：控制是否开启思考及思考强度；onThink 收到思考过程里新写出的文字。
- opts:{thinking?:boolean;thinkingLevel?:ThinkingLevel;onThink?:(t:string)=>void;geminiProxy?:boolean;signal?:AbortSignal}={}
+ opts:{thinking?:boolean;thinkingLevel?:ThinkingLevel;onThink?:(t:string)=>void;geminiProxy?:boolean;signal?:AbortSignal;siteManaged?:boolean}={}
 ):Promise<string>{
  const ctl=new AbortController(),onAbort=()=>ctl.abort();if(opts.signal){if(opts.signal.aborted)ctl.abort();else opts.signal.addEventListener('abort',onAbort,{once:true})}let timer=setTimeout(()=>ctl.abort(),FIRST),text='',alive=false;
  // 收到第一段内容（思考或正文）后，把“等第一个字”的短超时换成整段回复的长超时。
@@ -144,38 +146,99 @@ async function runProviderStream(
  const messagesApi=provider==='anthropic'||provider==='deepseek'&&!jsonMode;
  try{
   if(provider==='gemini'){
-   const e=env as unknown as Record<string,string|undefined>;
-   const proxy1=e?.GEMINI_PROXY_URL||(typeof process!=='undefined'?process.env?.GEMINI_PROXY_URL:undefined);
-   const proxy2=e?.GEMINI_PROXY_URL_2||(typeof process!=='undefined'?process.env?.GEMINI_PROXY_URL_2:undefined);
-   const cnDay=new Date(Date.now()+8*3600_000).getUTCDate();
-   const scheduledProxy=cnDay<=15?(proxy1||proxy2):(proxy2||proxy1);
-   const rawBase=opts.geminiProxy===false?undefined:scheduledProxy;
-   const geminiBase=(rawBase||'https://generativelanguage.googleapis.com').replace(/\/+$/,'');
-   const baseCfg:Record<string,unknown>=jsonMode
-    ?{temperature,responseMimeType:'application/json',responseSchema:geminiSchema}
-    :{temperature};
-   if(maxTokens)baseCfg.maxOutputTokens=maxTokens;
-   const geminiBody=(cfg:Record<string,unknown>)=>JSON.stringify({
-    systemInstruction:{parts:[{text:sys}]},
-    contents:messages.map(m=>({role:m.role==='assistant'?'model':'user',parts:[...(m.images??[]).map(u=>{const d=dataUrl(u);return {inline_data:{mime_type:d.mime,data:d.data}}}),...(m.content?[{text:m.content}]:[])]})),
-    generationConfig:cfg,
-   });
-   const postGemini=(cfg:Record<string,unknown>)=>fetch(`${geminiBase}/v1beta/models/${model}:streamGenerateContent?alt=sse`,{
-    method:'POST',
-    signal:ctl.signal,
-    headers:{'content-type':'application/json','x-goog-api-key':key},
-    body:geminiBody(cfg),
-   });
-   const cfgs=geminiThinkingCfgs(model,level,Boolean(opts.thinking||opts.onThink));
-   let res=await postGemini(cfgs[0]?{...baseCfg,thinkingConfig:cfgs[0]}:baseCfg);
-   for(let i=1;i<cfgs.length&&res.status===400;i++){
-    const tc=cfgs[i];
-    res=await postGemini(tc?{...baseCfg,thinkingConfig:tc}:baseCfg);
+   const enforceSiteLimit=opts.siteManaged!==false;
+   const estTokens=enforceSiteLimit?estimateGeminiTokens(sys,messages):0;
+   let reservedTokens=0;
+   let limitReserved=false;
+   if(enforceSiteLimit){
+    const quota=await tryConsumeSiteGeminiLimit(model,estTokens);
+    if(!quota.allowed){
+     throw new GradeError(`gemini-rate-limit:${model}:${quota.reason}`);
+    }
+    reservedTokens=quota.reservedTokens;
+    limitReserved=reservedTokens>0;
    }
-   if(!res.ok)throw new GradeError(`${provider}:${model} ${res.status}`);
-   for await(const data of sseLines(res)){
-    const ev=JSON.parse(data) as {candidates?:{content?:{parts?:GeminiPart[]}}[]};
-    for(const p of ev.candidates?.[0]?.content?.parts??[]){if(p.thought){if(p.text)think(p.text);continue;}if(p.text)emit(p.text);}
+   let streamedOut=false;
+   let got429=false;
+   try{
+    const e=env as unknown as Record<string,string|undefined>;
+    const proxy1=e?.GEMINI_PROXY_URL||(typeof process!=='undefined'?process.env?.GEMINI_PROXY_URL:undefined);
+    const proxy2=e?.GEMINI_PROXY_URL_2||(typeof process!=='undefined'?process.env?.GEMINI_PROXY_URL_2:undefined);
+    const cnDay=new Date(Date.now()+8*3600_000).getUTCDate();
+    const gatewayBase=opts.geminiProxy===false?undefined:(cnDay<=15?(proxy1||proxy2):(proxy2||proxy1));
+    const useWorkerTunnel=opts.geminiProxy!==false&&!gatewayBase;
+    const geminiBase=(gatewayBase||'https://generativelanguage.googleapis.com').replace(/\/+$/,'');
+    const baseCfg:Record<string,unknown>=jsonMode
+     ?{temperature,responseMimeType:'application/json',responseSchema:geminiSchema}
+     :{temperature};
+    if(maxTokens)baseCfg.maxOutputTokens=maxTokens;
+    const geminiBody=(cfg:Record<string,unknown>)=>JSON.stringify({
+     systemInstruction:{parts:[{text:sys}]},
+     contents:messages.map(m=>({role:m.role==='assistant'?'model':'user',parts:[...(m.images??[]).map(u=>{const d=dataUrl(u);return {inline_data:{mime_type:d.mime,data:d.data}}}),...(m.content?[{text:m.content}]:[])]})),
+     generationConfig:cfg,
+    });
+    const pathWithQuery=`/v1beta/models/${model}:streamGenerateContent?alt=sse`;
+    const postGemini=async(cfg:Record<string,unknown>,preferStandby=false):Promise<Response>=>{
+     const headers={'content-type':'application/json','x-goog-api-key':key};
+     const body=geminiBody(cfg);
+     if(useWorkerTunnel){
+      try{
+       const {res}=await fetchGeminiViaScheduledProxy(pathWithQuery,{method:'POST',headers,body,signal:ctl.signal,connectTimeoutMs:6000},e,{preferStandby});
+       return res;
+      }catch{
+       if(ctl.signal.aborted)throw new GradeError('aborted');
+       // If both proxy tunnels fail to connect, fall back to direct fetch once
+      }
+     }
+     return fetch(`${geminiBase}${pathWithQuery}`,{
+      method:'POST',
+      signal:ctl.signal,
+      headers,
+      body,
+     });
+    };
+    const cfgs=geminiThinkingCfgs(model,level,Boolean(opts.thinking||opts.onThink));
+    let activeCfg=cfgs[0]?{...baseCfg,thinkingConfig:cfgs[0]}:baseCfg;
+    let res=await postGemini(activeCfg);
+    for(let i=1;i<cfgs.length&&res.status===400;i++){
+     const tc=cfgs[i];
+     activeCfg=tc?{...baseCfg,thinkingConfig:tc}:baseCfg;
+     res=await postGemini(activeCfg);
+    }
+    // Gemini 4 transient high-demand 503: brief backoff + retry once (preferring standby node if tunneling)
+    if(res.status===503&&/hydrogen/i.test(model)&&!ctl.signal.aborted){
+     try{await res.body?.cancel()}catch{}
+     await new Promise(r=>setTimeout(r,500));
+     if(!ctl.signal.aborted)res=await postGemini(activeCfg,true);
+    }
+    if(res.status===429){
+     got429=true;
+     let errBody='';
+     try{errBody=(await res.text()).slice(0,1024)}catch{}
+     if(enforceSiteLimit){
+      if(limitReserved)await refundSiteGeminiLimit(model,reservedTokens);
+      await markSiteGemini429(model,errBody);
+     }
+     throw new GradeError(`${provider}:${model} 429`);
+    }
+    if(!res.ok)throw new GradeError(`${provider}:${model} ${res.status}`);
+    let thoughtChars=0;
+    for await(const data of sseLines(res)){
+     const ev=JSON.parse(data) as {candidates?:{content?:{parts?:GeminiPart[]}}[]};
+     for(const p of ev.candidates?.[0]?.content?.parts??[]){
+      if(p.thought){if(p.text){streamedOut=true;thoughtChars+=p.text.length;think(p.text)}continue;}
+      if(p.text){streamedOut=true;emit(p.text);}
+     }
+    }
+    if(enforceSiteLimit&&streamedOut){
+     const actualOutTokens=Math.ceil((text.length+thoughtChars)/2);
+     if(actualOutTokens>512)void recordExtraGeminiTokens(model,actualOutTokens-512);
+    }
+   }catch(err){
+    if(enforceSiteLimit&&limitReserved&&!streamedOut&&!got429){
+     await refundSiteGeminiLimit(model,reservedTokens);
+    }
+    throw err;
    }
   }else if(messagesApi){
    const ds=provider==='deepseek';
@@ -285,6 +348,7 @@ function resolveRuntime(custom?:RuntimeAiConfig,vision=false,siteModel?:string):
  const gmCands:TutorCandidate[]=gmKey?[
   {provider:'gemini',model:'gemini-4-hydrogen',key:gmKey,thinking:true},
   {provider:'gemini',model:'gemini-3.8-flash',key:gmKey,thinking:true},
+  {provider:'gemini',model:'gemini-2.5-flash',key:gmKey,thinking:true},
  ]:[];
  const norm=siteModel==='gemini-flash'?'gemini-4':siteModel;
  let picked=TUTOR_MODELS.find(m=>m.id===norm)??DEFAULT_TUTOR_MODEL;
@@ -329,6 +393,7 @@ function resolveGradeRuntime(custom?:RuntimeAiConfig,gradeModel?:GradeModelId):G
  const gmCands:GradeCandidate[]=gmKey?[
   {provider:'gemini',model:'gemini-4-hydrogen',key:gmKey,thinking:true,label:'gemini-4-hydrogen'},
   {provider:'gemini',model:'gemini-3.8-flash',key:gmKey,thinking:true,label:'gemini-3.8-flash'},
+  {provider:'gemini',model:'gemini-2.5-flash',key:gmKey,thinking:true,label:'gemini-2.5-flash'},
  ]:[];
  const dsCands:GradeCandidate[]=dsKey?[
   {provider:'deepseek',model:'deepseek-flash',key:dsKey,thinking:true,label:'deepseek-flash (thinking)'},
@@ -357,7 +422,7 @@ export async function gradeStream(items:GradeItem[],onText:(t:string)=>void,onRe
  let last:unknown;
  for(const cand of candidates){if(signal?.aborted)throw last instanceof Error?last:new GradeError('aborted');let wrote=false;
   try{
-   const text=await runProviderStream(cand.provider,cand.model,cand.key,system,[{role:'user',content:prompt(items)}],0.2,true,cand.maxTokens??8192,t=>{wrote=true;onText(t)},{thinking:cand.thinking,thinkingLevel:lv,onThink:t=>{wrote=true;onThink?.(t)},geminiProxy,signal});
+   const text=await runProviderStream(cand.provider,cand.model,cand.key,system,[{role:'user',content:prompt(items)}],0.2,true,cand.maxTokens??8192,t=>{wrote=true;onText(t)},{thinking:cand.thinking,thinkingLevel:lv,onThink:t=>{wrote=true;onThink?.(t)},geminiProxy,signal,siteManaged:!(custom?.isCustom&&custom.apiKey)});
    const raw=parseJsonRaw(text);
    return {results:normalize(items,raw),model:resolveModelLabel(cand,lv,custom)};
   }catch(e){last=e;if(signal?.aborted)throw e;if(wrote)onReset()}}
@@ -389,7 +454,7 @@ export async function standardAnswerStream(item:GradeItem,onText:(t:string)=>voi
  let last:unknown;
  for(const cand of candidates){if(signal?.aborted)throw last instanceof Error?last:new GradeError('aborted');let wrote=false;
   try{
-   const text=await runProviderStream(cand.provider,cand.model,cand.key,standardSystem,[{role:'user',content:standardPrompt(item)}],0.35,false,cand.maxTokens??8192,t=>{wrote=true;onText(t)},{thinking:cand.thinking,thinkingLevel:lv,onThink:t=>{wrote=true;onThink?.(t)},geminiProxy,signal});
+   const text=await runProviderStream(cand.provider,cand.model,cand.key,standardSystem,[{role:'user',content:standardPrompt(item)}],0.35,false,cand.maxTokens??8192,t=>{wrote=true;onText(t)},{thinking:cand.thinking,thinkingLevel:lv,onThink:t=>{wrote=true;onThink?.(t)},geminiProxy,signal,siteManaged:!(custom?.isCustom&&custom.apiKey)});
    return {text:text.trim(),model:resolveModelLabel(cand,lv,custom)};
   }catch(e){last=e;if(signal?.aborted)throw e;if(wrote)onReset()}}
  throw last instanceof Error?last:new GradeError('standard answer failed')}
@@ -472,7 +537,7 @@ export async function tutorStream(context:TutorContext,messages:TutorMessage[],o
  let last:unknown;
  for(const cand of candidates){if(signal?.aborted)throw last instanceof Error?last:new GradeError('aborted');let wrote=false;const modelLabel=resolveModelLabel(cand,lv,custom);onModel?.(modelLabel);
   try{
-   await runProviderStream(cand.provider,cand.model,cand.key,sys,chatMsgs,0.5,false,cand.maxTokens,t=>{wrote=true;onText(t)},{thinking:cand.thinking,thinkingLevel:lv,onThink:t=>{wrote=true;onThink?.(t)},geminiProxy,signal});
+   await runProviderStream(cand.provider,cand.model,cand.key,sys,chatMsgs,0.5,false,cand.maxTokens,t=>{wrote=true;onText(t)},{thinking:cand.thinking,thinkingLevel:lv,onThink:t=>{wrote=true;onThink?.(t)},geminiProxy,signal,siteManaged:!(custom?.isCustom&&custom.apiKey)});
    return modelLabel;
   }catch(e){last=e;if(signal?.aborted)throw e;if(wrote)onReset()}}
  throw last instanceof Error?last:new GradeError('tutor failed')}
@@ -485,7 +550,7 @@ const questionSystem=`你是资深技术面试官，帮学生整理面试题。�
 export async function generateQuestions(source:string,count:number,custom?:RuntimeAiConfig):Promise<{title:string;answer:string}[]>{
  const candidates=resolveRuntime(custom);let last:unknown;
  for(const cand of candidates){try{
-  const text=await runProviderStream(cand.provider,cand.model,cand.key,questionSystem,[{role:'user',content:`请出 ${count} 道题。材料如下：\n\n${source}`}],0.4,false,cand.maxTokens,()=>{});
+  const text=await runProviderStream(cand.provider,cand.model,cand.key,questionSystem,[{role:'user',content:`请出 ${count} 道题。材料如下：\n\n${source}`}],0.4,false,cand.maxTokens,()=>{},{siteManaged:!(custom?.isCustom&&custom.apiKey)});
   const raw=text.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,''),json=raw.slice(raw.indexOf('{'),raw.lastIndexOf('}')+1);
   const list=(JSON.parse(json) as {questions?:{title?:unknown;answer?:unknown}[]}).questions??[];
   const out=list.filter(q=>typeof q.title==='string'&&q.title.trim()).slice(0,count).map(q=>({title:String(q.title).trim().slice(0,300),answer:typeof q.answer==='string'?q.answer.trim().slice(0,20000):''}));
@@ -557,7 +622,7 @@ export async function completePlaygroundCode(input:{
     false,
     cand.maxTokens,
     ()=>{},
-    {thinking:false,thinkingLevel:'off',geminiProxy:input.geminiProxy??true},
+    {thinking:false,thinkingLevel:'off',geminiProxy:input.geminiProxy??true,siteManaged:!(input.custom?.isCustom&&input.custom.apiKey)},
    );
    const cleaned=stripOuterFence(text);
    if(cleaned.trim().length>=8)return cleaned;

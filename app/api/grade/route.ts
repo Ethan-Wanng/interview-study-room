@@ -60,9 +60,13 @@ export async function POST(req:Request){try{assertSameOrigin(req);const user=awa
       const {results,model}=await gradeStream(items as GradeItem[],text=>{wrote=true;send({t:'delta',text})},()=>{wrote=false;send({t:'reset'})},customCfg,gradeModel,text=>{wrote=true;send({t:'think',text})},geminiProxy,ctl.signal,thinkingLevel);
       send({t:'done',results,model,remaining});
      }
-    }catch{
+    }catch(e){
      if(ctl.signal.aborted){if(!wrote)await onRefund().catch(()=>{})}
-     else{await onRefund().catch(()=>{});send({t:'error',message:errMsg})}
+     else{
+      await onRefund().catch(()=>{});
+      const rateLimited=e instanceof Error&&e.message.startsWith('gemini-rate-limit:');
+      send({t:'error',message:rateLimited?'站点 Gemini 限流已满（5 次/分钟 · 20 次/天），请稍后再试、切换 DeepSeek，或在「AI 设置」绑定自己的 API Key。':errMsg});
+     }
     }finally{
      req.signal?.removeEventListener('abort',abort);
      if(!closed)try{c.close()}catch{}

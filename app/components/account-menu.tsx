@@ -7,7 +7,123 @@ import {providerMeta} from '@/lib/ai-config';
 import {getGradeThinkingSpec,getTutorThinkingSpec,THINKING_META,type ModelThinkingSpec} from '@/lib/thinking';
 import {TUTOR_MODELS} from '@/lib/tutor-types';
 import {GRADE_MODELS} from '@/lib/grade-types';
-function GeminiProxyRow({L}:{L:(zh:string,en:string)=>string}){const [auto,setAuto]=useGeminiAutoProxy();return <div className="settings-row"><span className="settings-stack"><span className="settings-label">{L('Gemini 自动代理','Gemini auto proxy')}</span></span><div className="settings-seg" role="group" aria-label={L('Gemini 自动代理','Gemini auto proxy')}><button type="button" className={auto?'on':''} onClick={()=>setAuto(true)}>{L('开启','On')}</button><button type="button" className={!auto?'on':''} onClick={()=>setAuto(false)}>{L('关闭','Off')}</button></div></div>;}
+type ProxyCheckItem={
+ id:'primary'|'standby'|'direct'|'gemini4';
+ host:string;
+ protocol:string;
+ ok:boolean;
+ state:'ok'|'busy'|'quota'|'blocked'|'error';
+ status:number;
+ ms:number;
+ detail:string;
+};
+type ProxyQuotaItem={
+ model:string;
+ label:string;
+ rpm:{used:number;limit:number};
+ tpm:{used:number;limit:number};
+ rpd:{used:number;limit:number};
+ coolingSec:number;
+};
+type ProxyCheckResult={
+ cnDay:number;
+ slot:'day1-15'|'day16-end';
+ colo:string;
+ mode:'worker-tunnel'|'gateway';
+ checks:ProxyCheckItem[];
+ quotas?:ProxyQuotaItem[];
+};
+const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(n>=10000?0:1)}K`:String(n);
+function GeminiProxyRow({L}:{L:(zh:string,en:string)=>string}){
+ const [auto,setAuto]=useGeminiAutoProxy();
+ const [checking,setChecking]=useState(false);
+ const [res,setRes]=useState<ProxyCheckResult|null>(null);
+ const [err,setErr]=useState('');
+ const runCheck=async()=>{
+  if(checking)return;
+  setChecking(true);
+  setErr('');
+  try{
+   const r=await fetch('/api/gemini-proxy-check',{
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body:'{}',
+   });
+   const d=await r.json() as ProxyCheckResult&{error?:string};
+   if(!r.ok)throw new Error(d.error??L('检测失败','Check failed'));
+   setRes(d);
+  }catch(e){
+   setErr((e as Error).message||L('检测失败','Check failed'));
+  }finally{
+   setChecking(false);
+  }
+ };
+ const rowLabel=(id:ProxyCheckItem['id'])=>
+  id==='primary'?L('当前节点','Primary')
+  :id==='standby'?L('备用节点','Standby')
+  :id==='direct'?L('直连','Direct')
+  :'Gemini 4';
+ const stateLabel=(c:ProxyCheckItem)=>
+  c.state==='ok'?L('正常','OK')
+  :c.state==='busy'?L('高负载 503','Busy 503')
+  :c.state==='quota'?L('限流 429','Quota 429')
+  :c.state==='blocked'?L('地区受限','Geo-blocked')
+  :c.detail==='timeout'?L('超时','Timeout')
+  :L('不可达','Failed');
+ const stateTone=(c:ProxyCheckItem)=>
+  c.state==='ok'?'ok'
+  :c.state==='busy'||c.state==='quota'?'warn'
+  :'err';
+ return (
+  <div className="settings-row settings-row-col">
+   <div className="settings-row-head">
+    <span className="settings-label">{L('Gemini 自动代理','Gemini auto proxy')}</span>
+    <div className="settings-net-ctrls">
+     <button type="button" className="settings-net-btn" disabled={checking} onClick={()=>void runCheck()}>
+      {checking?<Loader2 size={13} className="ai-spin"/>:<Activity size={13}/>}
+      <span>{checking?L('检测中…','Checking…'):L('网络检查','Check')}</span>
+     </button>
+     <div className="settings-seg" role="group" aria-label={L('Gemini 自动代理','Gemini auto proxy')}>
+      <button type="button" className={auto?'on':''} onClick={()=>setAuto(true)}>{L('开启','On')}</button>
+      <button type="button" className={!auto?'on':''} onClick={()=>setAuto(false)}>{L('关闭','Off')}</button>
+     </div>
+    </div>
+   </div>
+   {err&&<span className="settings-net-err" role="alert">{err}</span>}
+   {res&&(
+    <div className="settings-net-panel">
+     <div className="settings-net-meta">
+      <span>{res.slot==='day1-15'?L(`${res.cnDay} 日 · 1–15 日原节点`,`Day ${res.cnDay} · Primary (1–15)`):L(`${res.cnDay} 日 · 16–月末新节点`,`Day ${res.cnDay} · New (16–end)`)}</span>
+      {res.colo&&<span>{res.colo}</span>}
+     </div>
+     {res.checks.map(c=>(
+      <div key={c.id} className="settings-net-item">
+       <span className="settings-net-left">
+        <i className={'settings-net-dot '+stateTone(c)}/>
+        <b>{rowLabel(c.id)}</b>
+        {c.id!=='direct'&&c.id!=='gemini4'&&<small>{c.host}</small>}
+       </span>
+       <span className="settings-net-right">
+        <span className="settings-net-ms">{c.ms}ms</span>
+        <span className={'settings-net-tag '+stateTone(c)}>{stateLabel(c)}</span>
+       </span>
+      </div>
+     ))}
+     {res.quotas&&res.quotas.length>0&&(
+      <div className="settings-net-quotas">
+       {res.quotas.map(q=>(
+        <div key={q.model} className="settings-net-qrow">
+         <b>{q.label}</b>
+         <span>RPM {q.rpm.used}/{q.rpm.limit} · TPM {fmtTok(q.tpm.used)}/{fmtTok(q.tpm.limit)} · RPD {q.rpd.used}/{q.rpd.limit}{q.coolingSec>0?` (${q.coolingSec}s)`:''}</span>
+        </div>
+       ))}
+      </div>
+     )}
+    </div>
+   )}
+  </div>
+ );
+}
 function NoteModelRow({L}:{L:(zh:string,en:string)=>string}){
  const [noteModel,setNoteModel]=useStoredNoteModel();
  const {status}=useAiConfigStatus();
@@ -77,7 +193,7 @@ function ThinkingLevelRow({L}:{L:(zh:string,en:string)=>string}){
  );
 }
 import {useEffect,useRef,useState,type ChangeEvent,type CSSProperties} from 'react';
-import {AudioLines,Camera,Lightbulb,LightbulbOff,LogIn,LogOut,RotateCcw,Settings,ShieldCheck,Sparkles} from 'lucide-react';
+import {Activity,AudioLines,Camera,Lightbulb,LightbulbOff,Loader2,LogIn,LogOut,RotateCcw,Settings,ShieldCheck,Sparkles} from 'lucide-react';
 import {Dialog,DialogContent,DialogDescription,DialogHeader,DialogTitle,DialogTrigger} from '@/components/ui/dialog';
 import {NoticeBell as Bell,VersionLog} from './notices';
 import {AnimationDownloadMenu} from './animation-download-menu';

@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	utls "github.com/refraction-networking/utls"
 )
 
 // DefaultHTTPSNode is the Taiwan HTTPS CONNECT proxy node used for Gemini on days 16..end of each month.
@@ -183,16 +185,19 @@ func (h *HTTPSProxyDialer) DialContext(ctx context.Context, _ string, addr strin
 
 	var conn net.Conn = rawConn
 	if h.cfg.Scheme == "https" {
-		tlsConn := tls.Client(rawConn, &tls.Config{
+		// Use uTLS Chrome fingerprint with ALPN http/1.1 (matching high-mae's https outbound TLS setup)
+		// to avoid Go stdlib TLS fingerprint throttling on middleboxes.
+		uconn := utls.UClient(rawConn, &utls.Config{
 			ServerName:         h.cfg.SNI,
 			MinVersion:         tls.VersionTLS12,
 			InsecureSkipVerify: h.cfg.SkipCertVerify,
-		})
-		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			NextProtos:         []string{"http/1.1"},
+		}, utls.HelloChrome_Auto)
+		if err := uconn.HandshakeContext(ctx); err != nil {
 			_ = rawConn.Close()
 			return nil, fmt.Errorf("tls handshake https proxy %s: %w", h.hostPort, err)
 		}
-		conn = tlsConn
+		conn = uconn
 	}
 
 	if dl, ok := ctx.Deadline(); ok {
