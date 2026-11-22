@@ -28,6 +28,13 @@ export const SITE_GEMINI_LIMITS: Record<string, GeminiModelQuota> = {
   tpm: 250_000,
   rpd: 20,
  },
+ 'antigravity-preview-09-2026': {
+  model: 'antigravity-preview-09-2026',
+  label: 'Antigravity Agent',
+  rpm: 60,
+  tpm: 100_000,
+  rpd: 100,
+ },
 };
 
 const MINUTE_MS = 60_000;

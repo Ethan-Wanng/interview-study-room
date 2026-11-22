@@ -86,3 +86,13 @@ export const playgroundSnippets=sqliteTable('playground_snippets',{
  userId:text('user_id').notNull().default(''),
  createdAt:integer('created_at').notNull(),
 },t=>[index('idx_playground_snippets_created').on(t.createdAt)]);
+
+export const promptCache=sqliteTable('prompt_cache',{
+ cacheKey:text('cache_key').primaryKey(),
+ kind:text('kind').notNull(),
+ model:text('model').notNull().default(''),
+ payload:text('payload').notNull(),
+ hits:integer('hits').notNull().default(0),
+ createdAt:integer('created_at').notNull(),
+ expiresAt:integer('expires_at').notNull(),
+},t=>[index('idx_prompt_cache_expires').on(t.expiresAt)]);

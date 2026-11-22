@@ -157,7 +157,7 @@ async function openSocket(hostname: string, port: number, useNativeTls: boolean,
   });
  } catch (err) {
   signal?.removeEventListener('abort', onAbort);
-  await sock.close().catch(() => {});
+  void sock.close().catch(() => {});
   throw err;
  }
 

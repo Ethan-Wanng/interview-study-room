@@ -1,6 +1,7 @@
 /* 「面试」页：首页沿用「学习」首页的卡片样式，这里只补差异。 */
 .iv-subject{text-align:left;cursor:pointer;font:inherit;color:inherit;width:100%}
 .iv-add{border-style:dashed;text-decoration:none}
+.iv-arch{text-decoration:none}
 .iv-add .learn-icon{display:flex;align-items:center;color:var(--primary)}
 .iv-today{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:4px 0 30px}
 .iv-today .ai-card{display:flex;flex-direction:column;gap:10px;padding:18px;min-width:0}

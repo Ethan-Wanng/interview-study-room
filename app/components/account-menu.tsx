@@ -32,6 +32,7 @@ type ProxyCheckResult={
  mode:'worker-tunnel'|'gateway';
  checks:ProxyCheckItem[];
  quotas?:ProxyQuotaItem[];
+ promptCache?:{activeEntries:number;totalHits:number};
 };
 const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(n>=10000?0:1)}K`:String(n);
 function GeminiProxyRow({L}:{L:(zh:string,en:string)=>string}){
@@ -109,14 +110,20 @@ function GeminiProxyRow({L}:{L:(zh:string,en:string)=>string}){
        </span>
       </div>
      ))}
-     {res.quotas&&res.quotas.length>0&&(
+     {((res.quotas&&res.quotas.length>0)||res.promptCache)&&(
       <div className="settings-net-quotas">
-       {res.quotas.map(q=>(
+       {res.quotas?.map(q=>(
         <div key={q.model} className="settings-net-qrow">
          <b>{q.label}</b>
          <span>RPM {q.rpm.used}/{q.rpm.limit} · TPM {fmtTok(q.tpm.used)}/{fmtTok(q.tpm.limit)} · RPD {q.rpd.used}/{q.rpd.limit}{q.coolingSec>0?` (${q.coolingSec}s)`:''}</span>
         </div>
        ))}
+       {res.promptCache&&(
+        <div className="settings-net-qrow">
+         <b>{L('提示缓存','Prompt Cache')}</b>
+         <span>{L(`${res.promptCache.activeEntries} 条 · 命中 ${res.promptCache.totalHits} 次`,`${res.promptCache.activeEntries} entries · ${res.promptCache.totalHits} hits`)}</span>
+        </div>
+       )}
       </div>
      )}
     </div>

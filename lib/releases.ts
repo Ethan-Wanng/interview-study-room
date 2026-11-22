@@ -10,7 +10,9 @@ export function groupReleasesByDay(releases:Release[]):ReleaseDay[]{
 }
 
 export const RELEASES:Release[]=[
- {version:'2026.11.22-2',date:'2026-11-22',title:'新增 MySQL 沙盒运行、AI 问答代码直接运行及移动端操场/面试布局优化',changes:[
+ {version:'2026.11.22-2',date:'2026-11-22',title:'新增 MySQL 沙盒、高阶模拟面试 / 系统设计深度点评、提示缓存及移动端体验优化',changes:[
+  '新增「高阶模拟面试 · 系统设计深度点评」（/interview/architect，面试首页直达）：接入 Antigravity 托管 Agent，支持「系统设计评审」与「高阶模拟面试」双模式、6 大高频架构预设题、思考过程按需展开、一键记笔记与多轮深度追问。',
+  '全站 AI 接入多层提示缓存（Prompt Caching）：固定多轮对话系统提示与历史前缀（将动态站内检索移至当轮末尾，提升 DeepSeek/Gemini/OpenAI/通义千问隐式前缀缓存命中率），为 Anthropic 启用 cache_control 临时断点、为 OpenAI 绑定稳定 prompt_cache_key、为 Gemini 2.5 长系统提示接入显式 cachedContents 上下文缓存，并新增 D1 确定性结果缓存（覆盖 AI 评分、规范回答、代码操场补全与首轮系统设计评审，重复命中零 token 消耗、毫秒直出）。',
   '代码操场新增 MySQL（SQL）运行环境：内置浏览器 WASM 沙盒与 MySQL 8.0 兼容层，支持 CREATE TABLE（AUTO_INCREMENT/ENGINE/CHARSET/COMMENT/内联索引）、SHOW TABLES/DESC/SHOW INDEX/EXPLAIN、LIMIT offset,count、窗口函数、CTE、事务回滚、ON DUPLICATE KEY UPDATE 与 35+ 常用 MySQL 函数，附 7 套精选面试 SQL 示例，支持 AI 自动补全建表与测试数据。',
   'AI 问答、答题与笔记代码块均支持就地直接运行与 AI 自动补全，且 AI 问答支持划词记笔记、记笔记自动防重与用户设置内切换笔记 AI 模型：在 AI 问答气泡、答题后的题目代码/参考答案、学习卡片与笔记代码块上直接点击「运行」即可查看结果或 MySQL 表格输出；若代码片段不完整（缺少 main/依赖/SQL 建表）会自动由 AI 补全运行，报错支持一键「AI 修复」，关闭输出窗口后自动恢复原始不带 main 的代码；在 AI 问答中选中任意文字可弹出「记笔记」存入笔记本，全站记笔记自动检测同本已收录内容并支持一键查看或覆盖更新，笔记 AI 支持在用户设置中切换模型。',
   '学习页「本关相关面试题」改为默认收起、点击展开，减少页面纵向占用。',
