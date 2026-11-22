@@ -28,8 +28,8 @@ export async function readPromptCache<T>(cacheKey: string): Promise<{ payload: T
    .first<{ payload: string; model: string; hits: number; expires_at: number }>();
   if (!row || row.expires_at <= now) return null;
   const parsed = JSON.parse(row.payload) as T;
-  // Bump hit count best-effort without blocking response
-  void db
+  // Await hit bump so Cloudflare Workers doesn't cancel the D1 write upon returning the response.
+  await db
    .prepare('UPDATE prompt_cache SET hits = hits + 1 WHERE cache_key = ?')
    .bind(cacheKey)
    .run()

@@ -463,7 +463,7 @@ export async function gradeStream(items:GradeItem[],onText:(t:string)=>void,onRe
    const raw=parseJsonRaw(text);
    const normalized=normalize(items,raw);
    const modelLabel=resolveModelLabel(cand,lv,custom);
-   if(cacheKey)void writePromptCache(cacheKey,'grade',modelLabel,{results:normalized},24*3600_000);
+   if(cacheKey)await writePromptCache(cacheKey,'grade',modelLabel,{results:normalized},24*3600_000);
    return {results:normalized,model:modelLabel};
   }catch(e){last=e;if(signal?.aborted)throw e;if(wrote)onReset()}}
  throw last instanceof Error?last:new GradeError('grading failed')}
@@ -507,7 +507,7 @@ export async function standardAnswerStream(item:GradeItem,onText:(t:string)=>voi
    const text=await runProviderStream(cand.provider,cand.model,cand.key,standardSystem,[{role:'user',content:promptText}],0.35,false,cand.maxTokens??8192,t=>{wrote=true;onText(t)},{thinking:cand.thinking,thinkingLevel:lv,onThink:t=>{wrote=true;onThink?.(t)},geminiProxy,signal,siteManaged:!isCustom});
    const clean=text.trim();
    const modelLabel=resolveModelLabel(cand,lv,custom);
-   if(cacheKey&&clean)void writePromptCache(cacheKey,'standard',modelLabel,{text:clean},7*24*3600_000);
+   if(cacheKey&&clean)await writePromptCache(cacheKey,'standard',modelLabel,{text:clean},7*24*3600_000);
    return {text:clean,model:modelLabel};
   }catch(e){last=e;if(signal?.aborted)throw e;if(wrote)onReset()}}
  throw last instanceof Error?last:new GradeError('standard answer failed')}
@@ -691,7 +691,7 @@ export async function completePlaygroundCode(input:{
    );
    const cleaned=stripOuterFence(text);
    if(cleaned.trim().length>=8){
-    if(cacheKey)void writePromptCache(cacheKey,'pg-complete',cand.model,{code:cleaned},7*24*3600_000);
+    if(cacheKey)await writePromptCache(cacheKey,'pg-complete',cand.model,{code:cleaned},7*24*3600_000);
     return cleaned;
    }
    throw new GradeError('empty completion');

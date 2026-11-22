@@ -142,7 +142,7 @@ export async function GET(req: Request) {
   if (polled.status === 'completed' && polled.text.trim() && ck.startsWith('arch:') && ckSig) {
    const expectedCk = await signInteraction(user.id, ck);
    if (ckSig === expectedCk) {
-    void writePromptCache(
+    await writePromptCache(
      ck,
      'architect',
      ANTIGRAVITY_AGENT_ID,

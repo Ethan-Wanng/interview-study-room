@@ -128,7 +128,7 @@ export async function GET(req: Request) {
    if (report && ck.startsWith('jd:') && ckSig) {
     const expectedCk = await signToken(user.id, ck);
     if (ckSig === expectedCk) {
-     void writePromptCache(
+     await writePromptCache(
       ck,
       'jd-research',
       ANTIGRAVITY_AGENT_ID,
