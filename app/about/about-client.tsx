@@ -96,27 +96,11 @@ export default function AboutClient({
    ),
   },
   {
-   date:'2026-11-09 ~ 11-18',
-   title:L('五语言模板、液态玻璃与三大新栏目','Five-Language Support, Liquid Glass & Community'),
+   date:'2026-11-09 ~ 11-23',
+   title:L('六语言操场、全学科扩展与仿真笔记本','6-Language Playground, Full Tracks & Study Notebooks'),
    body:L(
-    '全部核心代码题覆盖 Python / Go / Java / JS-TS / Rust 五语言模板与参考答案；推出全站搜索、AI 老师、原文划词批注、iOS 26 液态玻璃界面，以及「代码操场」「项目关于」和「分享故事」。',
-    'Added five-language starters and solutions, global search, docked AI tutor, inline answer annotations, Liquid Glass UI, and Code Playground, About, and Stories.'
-   ),
-  },
-  {
-   date:'2026-11-19 ~ 11-21',
-   title:L('Rust / Python 完整路线与仿真笔记本上线','Rust / Python Complete Tracks & Study Notebooks'),
-   body:L(
-    '上线 AI 开发第 13 关《Harness 工程与 Skills》与学习→操场双向联动；补齐「Rust 开发」全 15 关与「Python 开发」全 15 关及 6 套 150 分模拟试卷；全新上线「笔记」（/notes）模块，支持多本自定义命名笔记本、全屏 3D 仿真翻页、答题/学习/面试/操场随手收录并原路返回，以及划词排版与 AI 辅助。',
-    'Launched AI Level 13 (Harness Engineering & Skills), two-way Learn-Playground sync, full 15-level Rust and Python tracks with 6 formal 150-point papers, and the Study Notebooks (/notes) module featuring fullscreen 3D page-turning, one-click capture with source return links, and selection formatting + AI assistance.'
-   ),
-  },
-  {
-   date:'2026-11-22 ~ 11-23',
-   title:L('MySQL 沙盒、全站代码就地运行、答题续答与多端体验升级','MySQL Sandbox, Inline Code Execution, Quiz Resume & Multi-Device Polish'),
-   body:L(
-    '答题全面支持自动暂存、未提交草稿保留、断点续答与云同步；代码操场扩展至六语言（新增浏览器 WASM MySQL 8.0 兼容沙盒与 7 套面试 SQL 示例），并在 AI 问答、答题、学习卡片与笔记中支持代码就地直接运行——不完整片段自动由 AI 补全执行、报错一键 AI 修复，关闭运行窗口自动恢复原代码；新增 AI 问答划词记笔记、笔记本 AI 润色预览与跨本移页调序，并系统优化移动端操场/学习/面试排版、电脑端导航栏跟随 AI 侧栏避让及移动端动画全屏。',
-    'Added auto-save, draft preservation, resume, and cloud sync across all quizzes; expanded Playground to 6 languages with a browser WASM MySQL 8.0 compat sandbox and 7 SQL examples; enabled direct inline code execution with AI auto-completion and restore-on-close across AI Q&A, quizzes, lessons, and notes; added AI Q&A selection-to-note, notebook AI polish and reorder/move, plus responsive mobile and fullscreen animation fixes.'
+    '补齐 Rust / Python 全 15 关与 150 分模拟卷，推出全站搜索、AI 老师、液态玻璃界面与「分享故事」；上线六语言（含 MySQL 沙盒）代码操场、全站代码就地运行、答题断点续答，以及 3D 翻页仿真笔记本与后台用户管理。',
+    'Completed full 15-level Rust & Python tracks with 150-point papers; added global search, AI Tutor, Liquid Glass UI, Stories, a 6-language Playground (with MySQL sandbox), inline code execution, quiz save/resume, 3D Study Notebooks, and admin user management.'
    ),
   },
  ];
