@@ -20,11 +20,11 @@ const ORDER=['go','backend','ai-development','frontend'];
 // 「面试」：首页按学科列出题库和今日进度；点进学科后逐题回忆、看答案、打分进入间隔复习。私人题库只对本人可见。
 export default function InterviewClient({username,member,bank:rawBank,links,courses}:{username:string;member:boolean;bank:StudyBank;links:Record<string,LevelLink>;courses:Record<string,Course>}){
  const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
- const [data,setData]=useState<StudyState|null>(null),[error,setError]=useState(''),[mine,setMine]=useState<MyQuestion[]>([]);
+ const [data,setData]=useState<StudyState|null>(null),[error,setError]=useState(''),[mine,setMine]=useState<MyQuestion[]>([]),[mineLoaded,setMineLoaded]=useState(false);
  const [track,setTrack]=useState(''),[editor,setEditor]=useState<{editing:MyQuestion|null}|null>(null),[goalOpen,setGoalOpen]=useState(false),[goals,setGoals]=useState({n:10,r:20}),saving=useRef(false);
  async function call(init?:RequestInit){try{setError('');const r=await fetch('/api/study',{cache:'no-store',...init});const d=await r.json() as StudyState&{error?:string};if(r.status===401){window.location.assign('/login');return null}if(!r.ok)throw new Error(d.error??L('请求失败','Request failed'));setData(d);return d}catch(e){setError((e as Error).message);return null}}
  const save=async(payload:object)=>{if(saving.current)return null;saving.current=true;try{return await call({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})}finally{saving.current=false}};
- useEffect(()=>{void call().then(d=>{if(d)setGoals({n:d.preferences.new_goal,r:d.preferences.review_goal})});void fetch('/api/my-questions',{cache:'no-store'}).then(r=>r.json() as Promise<{items?:MyQuestion[]}>).then(d=>setMine(d.items??[])).catch(()=>{});
+ useEffect(()=>{void call().then(d=>{if(d)setGoals({n:d.preferences.new_goal,r:d.preferences.review_goal})});void fetch('/api/my-questions',{cache:'no-store'}).then(r=>r.json() as Promise<{items?:MyQuestion[]}>).then(d=>setMine(d.items??[])).catch(()=>{}).finally(()=>setMineLoaded(true));
   const refresh=()=>{if(document.visibilityState==='visible')void call()};document.addEventListener('visibilitychange',refresh);return()=>document.removeEventListener('visibilitychange',refresh)},[]); // eslint-disable-line react-hooks/exhaustive-deps
  // 从全局搜索或 AI 老师给的链接进来（/interview?track=学科&q=题目ID）：直接打开这个学科并定位到这道题。
  const [jump,setJump]=useState('');
@@ -48,7 +48,7 @@ export default function InterviewClient({username,member,bank:rawBank,links,cour
   <SiteHeader active="interview" username={username}/>
   {error&&<div role="alert" className="error iv-error">{error}<button onClick={()=>void call()}>{L('重试','Retry')}</button></div>}
   {!current?<InterviewHome tracks={tracks} mine={mineStat} member={member} today={today} goals={data?.preferences??{new_goal:10,review_goal:20}} onOpen={open} onAdd={()=>setEditor({editing:null})} onGoals={()=>setGoalOpen(true)}/>
-   :<StudyView key={current.id} initial={jump} track={current} questions={questions.filter(q=>inTrack(q,current.id))} data={data} links={links} member={member}
+   :<StudyView key={current.id} initial={jump} track={current} questions={questions.filter(q=>inTrack(q,current.id))} data={track===MINE&&!mineLoaded?null:data} links={links} member={member}
      onRate={(questionId,rating)=>save({action:'rate',questionId,rating})}
      onAdd={()=>setEditor({editing:null})} onEdit={id=>setEditor({editing:mine.find(m=>m.id===id)??null})}
      onDelete={async id=>{const r=await fetch('/api/my-questions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'delete',id})});const d=await r.json() as {items?:MyQuestion[];error?:string};if(r.ok)setMine(d.items??[]);else setError(d.error??'')}}/>}

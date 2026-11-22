@@ -96,3 +96,16 @@ export const promptCache=sqliteTable('prompt_cache',{
  createdAt:integer('created_at').notNull(),
  expiresAt:integer('expires_at').notNull(),
 },t=>[index('idx_prompt_cache_expires').on(t.expiresAt)]);
+
+export const aiInterviewRecords=sqliteTable('ai_interview_records',{
+ id:text('id').primaryKey(),
+ userId:text('user_id').notNull(),
+ kind:text('kind').notNull(),
+ title:text('title').notNull(),
+ subtitle:text('subtitle').notNull().default(''),
+ status:text('status').notNull().default('completed'),
+ interactionId:text('interaction_id').notNull().default(''),
+ payload:text('payload').notNull(),
+ createdAt:integer('created_at').notNull(),
+ updatedAt:integer('updated_at').notNull(),
+},t=>[index('idx_ai_interview_records_user').on(t.userId,t.kind,t.updatedAt)]);

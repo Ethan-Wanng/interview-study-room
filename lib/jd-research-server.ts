@@ -211,14 +211,61 @@ function extractJsonText(raw: string): string | null {
  return end > start ? trimmed.slice(start, end + 1) : null;
 }
 
+// Repair common LLM JSON glitches inside long strings (raw newlines/tabs, invalid `\d`/`\s` regex escapes,
+// trailing commas) without altering valid JSON escapes.
+function repairJsonText(text: string): string {
+ let out = '';
+ let inStr = false;
+ let esc = false;
+ for (let i = 0; i < text.length; i++) {
+  const ch = text[i];
+  if (!inStr) {
+   if (ch === '"') inStr = true;
+   out += ch;
+   continue;
+  }
+  if (esc) {
+   // Valid JSON escape chars: " \ / b f n r t u
+   if ('"\\/bfnrtu'.includes(ch)) {
+    out += '\\' + ch;
+   } else {
+    out += '\\\\' + ch;
+   }
+   esc = false;
+   continue;
+  }
+  if (ch === '\\') {
+   esc = true;
+   continue;
+  }
+  if (ch === '"') {
+   inStr = false;
+   out += ch;
+   continue;
+  }
+  const code = ch.charCodeAt(0);
+  if (ch === '\n') {
+   out += '\\n';
+  } else if (ch === '\r') {
+   out += '\\r';
+  } else if (ch === '\t') {
+   out += '\\t';
+  } else if (code < 0x20) {
+   out += ' ';
+  } else {
+   out += ch;
+  }
+ }
+ if (esc) out += '\\\\';
+ return out.replace(/,\s*([}\]])/g, '$1');
+}
+
 function safeParseJson(text: string): unknown {
  try {
   return JSON.parse(text);
  } catch {
-  // Remove trailing commas before ] or }
-  const cleaned = text.replace(/,\s*([}\]])/g, '$1');
   try {
-   return JSON.parse(cleaned);
+   return JSON.parse(repairJsonText(text));
   } catch {
    return null;
   }

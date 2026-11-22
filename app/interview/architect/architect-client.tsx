@@ -3,7 +3,7 @@ import '../../ai/ai.css';
 import '../interview.css';
 import './architect.css';
 import {useEffect,useRef,useState} from 'react';
-import {ArrowLeft,Check,ChevronDown,ChevronUp,Copy,Loader2,RotateCcw,Send,Sparkles,Square} from 'lucide-react';
+import {ArrowLeft,Check,ChevronDown,ChevronUp,Copy,History,Loader2,Plus,RotateCcw,Send,Sparkles,Square,X} from 'lucide-react';
 import SiteHeader from '../../components/site-header';
 import AddToNoteButton from '../../components/add-to-note';
 import {useI18n} from '../../components/i18n';
@@ -22,6 +22,19 @@ type Turn={
  error?:string;
  interactionId?:string;
  sig?:string;
+};
+
+type CloudRecord={
+ id:string;
+ title:string;
+ subtitle:string;
+ status:'running'|'completed'|'error';
+ interactionId:string;
+ sig?:string;
+ ckSig?:string;
+ payload:{mode?:Mode;topic?:string;cacheKey?:string;turns?:Turn[]};
+ createdAt:number;
+ updatedAt:number;
 };
 
 const PRESETS:{id:string;zh:string;en:string;topicZh:string;topicEn:string}[]=[
@@ -83,6 +96,8 @@ export default function ArchitectClient({username}:{username:string}){
  const [topic,setTopic]=useState(PRESETS[0].topicZh);
  const [answer,setAnswer]=useState('');
  const [followup,setFollowup]=useState('');
+ const [records,setRecords]=useState<CloudRecord[]>([]);
+ const [recordId,setRecordId]=useState('');
  const [turns,setTurns]=useState<Turn[]>([]);
  const [busy,setBusy]=useState(false);
  const [elapsed,setElapsed]=useState(0);
@@ -104,13 +119,140 @@ export default function ArchitectClient({username}:{username:string}){
  };
 
  useEffect(()=>()=>{stopActive()},[]);
+
+ const refreshRecords=async():Promise<CloudRecord[]>=>{
+  try{
+   const r=await fetch('/api/ai-interview-records?kind=architect',{cache:'no-store'});
+   if(!r.ok)return [];
+   const d=await r.json() as {items?:CloudRecord[]};
+   const items=Array.isArray(d.items)?d.items:[];
+   setRecords(items);
+   return items;
+  }catch{
+   return [];
+  }
+ };
+
+ const pollExistingTurn=async(opts:{
+  recId:string;
+  turnId:string;
+  interactionId:string;
+  sig:string;
+  cacheKey?:string;
+  ckSig?:string;
+  geminiProxy:boolean;
+  startedAt?:number;
+ })=>{
+  stopActive();
+  setBusy(true);
+  const t0=opts.startedAt||Date.now();
+  setElapsed(Math.max(0,Math.floor((Date.now()-t0)/1000)));
+  const ctl=new AbortController();
+  pollAbortRef.current=ctl;
+  timerRef.current=window.setInterval(()=>{
+   setElapsed(Math.max(0,Math.floor((Date.now()-t0)/1000)));
+  },1000);
+
+  const patchTurn=(patch:Partial<Turn>)=>setTurns(list=>list.map(t=>t.id===opts.turnId?{...t,...patch}:t));
+  const pollParams=new URLSearchParams({
+   id:opts.interactionId,
+   sig:opts.sig,
+   rid:opts.recId,
+   geminiProxy:opts.geminiProxy?'1':'0',
+  });
+  if(opts.cacheKey&&opts.ckSig){
+   pollParams.set('ck',opts.cacheKey);
+   pollParams.set('ckSig',opts.ckSig);
+  }
+
+  try{
+   for(let attempt=0;attempt<65;attempt++){
+    if(ctl.signal.aborted)return;
+    if(attempt>0){
+     await new Promise<void>((resolve,reject)=>{
+      const tid=window.setTimeout(resolve,3000);
+      ctl.signal.addEventListener('abort',()=>{window.clearTimeout(tid);reject(new Error('aborted'))},{once:true});
+     });
+    }
+    if(ctl.signal.aborted)return;
+    const pr=await fetch('/api/architect-review?'+pollParams.toString(),{cache:'no-store',signal:ctl.signal});
+    const pd=await pr.json() as {
+     status?:string;
+     text?:string;
+     thoughts?:string;
+     usage?:Usage;
+     error?:string;
+    };
+    if(!pr.ok)throw new Error(pd.error??L('查询进度失败','Polling failed'));
+    if(pd.status==='completed'){
+     patchTurn({
+      status:'done',
+      text:pd.text||L('（未返回文本内容）','(Empty response)'),
+      thoughts:pd.thoughts||'',
+      usage:pd.usage,
+      interactionId:opts.interactionId,
+      sig:opts.sig,
+     });
+     void refreshRecords();
+     stopActive();
+     return;
+    }
+    if(pd.status==='failed'||pd.status==='cancelled'){
+     void refreshRecords();
+     throw new Error(pd.error||L('评审任务中断，请重试','Review failed'));
+    }
+   }
+   throw new Error(L('评审超时，请重试','Review timed out'));
+  }catch(e){
+   if(ctl.signal.aborted){
+    patchTurn({status:'error',error:L('已取消','Cancelled')});
+   }else{
+    patchTurn({status:'error',error:(e as Error).message||L('评审失败','Review failed')});
+   }
+   stopActive();
+  }
+ };
+
+ const hydrateRecord=(rec:CloudRecord)=>{
+  stopActive();
+  setError('');
+  setRecordId(rec.id);
+  setMode(rec.payload?.mode==='mock'?'mock':'design');
+  setTopic(rec.payload?.topic||rec.title||PRESETS[0].topicZh);
+  const rawTurns=Array.isArray(rec.payload?.turns)?rec.payload.turns:[];
+  const withSig=rawTurns.map(t=>t.interactionId&&t.interactionId===rec.interactionId&&rec.sig?{...t,sig:rec.sig}:t);
+  setTurns(withSig);
+  const running=withSig.find(t=>t.status==='running');
+  if(running&&rec.interactionId&&rec.sig){
+   void pollExistingTurn({
+    recId:rec.id,
+    turnId:running.id,
+    interactionId:rec.interactionId,
+    sig:rec.sig,
+    cacheKey:rec.payload?.cacheKey,
+    ckSig:rec.ckSig,
+    geminiProxy:getGeminiAutoProxy(),
+    startedAt:rec.updatedAt||rec.createdAt,
+   });
+  }
+ };
+
  useEffect(()=>{
+  let alive=true;
   const p=new URLSearchParams(window.location.search);
-  const m=p.get('mode');
-  const t=p.get('topic')?.trim();
-  if(m==='mock'||m==='design')setMode(m);
-  if(t)setTopic(t.slice(0,200));
- },[]);
+  const qMode=p.get('mode');
+  const qTopic=p.get('topic')?.trim();
+  if(qMode==='mock'||qMode==='design')setMode(qMode);
+  if(qTopic)setTopic(qTopic.slice(0,200));
+
+  (async()=>{
+   const items=await refreshRecords();
+   if(!alive||qTopic||!items.length)return;
+   hydrateRecord(items[0]);
+  })();
+  return()=>{alive=false};
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+ },[username]);
 
  const lastSession=turns.slice().reverse().find(t=>t.status==='done'&&t.interactionId&&t.sig);
  const lastDoneTurn=turns.slice().reverse().find(t=>t.status==='done');
@@ -132,8 +274,8 @@ export default function ArchitectClient({username}:{username:string}){
   setBusy(true);
   setElapsed(0);
 
-  const turnId='t-'+Date.now();
-  setTurns(list=>[...list,{id:turnId,userText:cleanAns,status:'running',text:'',thoughts:''}]);
+  const localTurnId='t-'+Date.now();
+  setTurns(list=>[...list,{id:localTurnId,userText:cleanAns,status:'running',text:'',thoughts:''}]);
   if(prev)setFollowup('');
 
   const ctl=new AbortController();
@@ -143,7 +285,7 @@ export default function ArchitectClient({username}:{username:string}){
    setElapsed(Math.floor((Date.now()-startedAt)/1000));
   },1000);
 
-  const patchTurn=(patch:Partial<Turn>)=>setTurns(list=>list.map(t=>t.id===turnId?{...t,...patch}:t));
+  const patchTurn=(patch:Partial<Turn>)=>setTurns(list=>list.map(t=>t.id===localTurnId?{...t,...patch}:t));
 
   try{
    const geminiProxy=getGeminiAutoProxy();
@@ -154,6 +296,7 @@ export default function ArchitectClient({username}:{username:string}){
      mode,
      topic:cleanTopic,
      answer:cleanAns,
+     recordId:prev?recordId:'',
      previousInteractionId:prev?.interactionId,
      prevSig:prev?.sig,
      followupContext:prev?.followupContext,
@@ -162,6 +305,7 @@ export default function ArchitectClient({username}:{username:string}){
     signal:ctl.signal,
    });
    const d=await r.json() as {
+    recordId?:string;
     id?:string;
     sig?:string;
     status?:string;
@@ -174,59 +318,27 @@ export default function ArchitectClient({username}:{username:string}){
     error?:string;
    };
    if(!r.ok)throw new Error(d.error??L('发起评审失败','Review request failed'));
+   if(d.recordId)setRecordId(d.recordId);
 
    if(d.status==='completed'&&d.text){
     patchTurn({status:'done',text:d.text,thoughts:d.thoughts||'',cached:Boolean(d.cached),usage:d.usage});
+    void refreshRecords();
     stopActive();
     return;
    }
    if(!d.id||!d.sig)throw new Error(L('未返回任务 ID','Missing interaction ID'));
 
-   const pollParams=new URLSearchParams({
-    id:d.id,
+   void refreshRecords();
+   await pollExistingTurn({
+    recId:d.recordId||recordId,
+    turnId:localTurnId,
+    interactionId:d.id,
     sig:d.sig,
-    geminiProxy:geminiProxy?'1':'0',
+    cacheKey:d.cacheKey,
+    ckSig:d.ckSig,
+    geminiProxy,
+    startedAt,
    });
-   if(d.cacheKey&&d.ckSig){
-    pollParams.set('ck',d.cacheKey);
-    pollParams.set('ckSig',d.ckSig);
-   }
-
-   // Poll up to ~3 minutes (60 * 3s) without hitting Worker request timeouts
-   for(let attempt=0;attempt<60;attempt++){
-    if(ctl.signal.aborted)return;
-    await new Promise<void>((resolve,reject)=>{
-     const id=window.setTimeout(resolve,3000);
-     ctl.signal.addEventListener('abort',()=>{window.clearTimeout(id);reject(new Error('aborted'))},{once:true});
-    });
-    if(ctl.signal.aborted)return;
-    const pr=await fetch('/api/architect-review?'+pollParams.toString(),{cache:'no-store',signal:ctl.signal});
-    const pd=await pr.json() as {
-     id?:string;
-     status?:string;
-     text?:string;
-     thoughts?:string;
-     usage?:Usage;
-     error?:string;
-    };
-    if(!pr.ok)throw new Error(pd.error??L('查询进度失败','Polling failed'));
-    if(pd.status==='completed'){
-     patchTurn({
-      status:'done',
-      text:pd.text||L('（未返回文本内容）','(Empty response)'),
-      thoughts:pd.thoughts||'',
-      usage:pd.usage,
-      interactionId:d.id,
-      sig:d.sig,
-     });
-     stopActive();
-     return;
-    }
-    if(pd.status==='failed'||pd.status==='cancelled'){
-     throw new Error(pd.error||L('评审任务中断，请重试','Review failed'));
-    }
-   }
-   throw new Error(L('评审超时，请重试','Review timed out'));
   }catch(e){
    if(ctl.signal.aborted){
     patchTurn({status:'error',error:L('已取消','Cancelled')});
@@ -240,10 +352,19 @@ export default function ArchitectClient({username}:{username:string}){
 
  const resetAll=()=>{
   stopActive();
+  setRecordId('');
   setTurns([]);
   setAnswer('');
   setFollowup('');
   setError('');
+ };
+
+ const deleteRecord=async(id:string)=>{
+  try{
+   await fetch('/api/ai-interview-records?id='+encodeURIComponent(id),{method:'DELETE'});
+  }catch{}
+  setRecords(prev=>prev.filter(x=>x.id!==id));
+  if(recordId===id)resetAll();
  };
 
  return (
@@ -258,6 +379,29 @@ export default function ArchitectClient({username}:{username:string}){
     <div className="ai-title arch-title">
      <h1>{L('高阶模拟面试 · 系统设计深度点评','Senior Mock Interview & System Design Review')}</h1>
     </div>
+
+    {records.length>0&&(
+     <div className="arch-hist-bar" aria-label={L('历史评审','Saved sessions')}>
+      <button type="button" className={'arch-hist-chip new-btn'+(turns.length===0?' on':'')} onClick={resetAll}>
+       <Plus size={13}/>
+       <span>{L('新题目','New')}</span>
+      </button>
+      {records.map(rec=>(
+       <div key={rec.id} className={'arch-hist-chip'+(recordId===rec.id&&turns.length>0?' on':'')} onClick={()=>hydrateRecord(rec)}>
+        {rec.status==='running'?<i className="arch-hist-dot"/>:<History size={12}/>}
+        <span>{rec.title}</span>
+        <button
+         type="button"
+         className="arch-hist-del"
+         aria-label={L('删除记录','Delete')}
+         onClick={e=>{e.stopPropagation();void deleteRecord(rec.id)}}
+        >
+         <X size={12}/>
+        </button>
+       </div>
+      ))}
+     </div>
+    )}
 
     <div className="arch-mode-bar" role="tablist">
      <button type="button" role="tab" aria-selected={mode==='design'} className={mode==='design'?'on':''} onClick={()=>{if(!busy)setMode('design')}}>
@@ -327,7 +471,7 @@ export default function ArchitectClient({username}:{username:string}){
       <div className="ai-card arch-topic-bar">
        <strong>{topic}</strong>
        <button type="button" className="button secondary arch-new-btn" onClick={resetAll}>
-        <RotateCcw size={14}/>
+        <Plus size={14}/>
         <span>{L('新题目','New Topic')}</span>
        </button>
       </div>

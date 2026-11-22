@@ -8,6 +8,7 @@ import {
  type AntigravityUsage,
 } from '@/lib/antigravity-agent';
 import { readPromptCache, sha256Hex, writePromptCache } from '@/lib/prompt-cache';
+import { getAiInterviewRecord, saveAiInterviewRecord } from '@/lib/ai-interview-records';
 import {
  buildJdResearchInput,
  getJdResearchSystemPrompt,
@@ -37,6 +38,31 @@ type CachedJdPayload = {
  usage?: AntigravityUsage;
 };
 
+type StoredJdRecordPayload = {
+ kind: JdInputKind;
+ days: JdPrepDays;
+ level: JdSeniority;
+ questionCount: number;
+ source: string;
+ cacheKey?: string;
+ report: JdResearchReport | null;
+ rawText: string;
+ thoughts: string;
+ cached?: boolean;
+ usage?: AntigravityUsage;
+ imported?: { count: number; subject: string } | null;
+ error?: string;
+};
+
+function draftTitle(source: string, kind: JdInputKind): string {
+ const first = source
+  .split('\n')
+  .map(l => l.trim())
+  .find(Boolean) || '';
+ const clean = first.replace(/^(?:岗位|职位|标题|题目)[:：\s]*/, '').slice(0, 36);
+ return clean || (kind === 'experience' ? '面经深度调研' : '岗位 JD 深度调研');
+}
+
 export async function POST(req: Request) {
  try {
   assertSameOrigin(req);
@@ -64,14 +90,39 @@ export async function POST(req: Request) {
 
   if (source.length < 20) throw new AuthError('请粘贴至少 20 字的岗位 JD 或面经内容。');
 
+  const recordId = 'jdr-' + crypto.randomUUID();
   const cacheKey = 'jd:' + (await sha256Hex([kind, String(days), level, String(questionCount), source]));
   const hit = await readPromptCache<CachedJdPayload>(cacheKey);
   if (hit?.payload?.report) {
+   const rep = hit.payload.report;
+   const stored: StoredJdRecordPayload = {
+    kind,
+    days,
+    level,
+    questionCount,
+    source,
+    cacheKey,
+    report: rep,
+    rawText: hit.payload.rawText || '',
+    thoughts: hit.payload.thoughts || '',
+    cached: true,
+    usage: hit.payload.usage,
+   };
+   await saveAiInterviewRecord({
+    id: recordId,
+    userId: user.id,
+    kind: 'jd-research',
+    title: rep.roleTitle || draftTitle(source, kind),
+    subtitle: rep.companyStyle || '',
+    status: 'completed',
+    payload: stored,
+   });
    return Response.json(
     {
+     recordId,
      status: 'completed',
      cached: true,
-     report: hit.payload.report,
+     report: rep,
      rawText: hit.payload.rawText || '',
      thoughts: hit.payload.thoughts || '',
      usage: hit.payload.usage,
@@ -89,8 +140,32 @@ export async function POST(req: Request) {
   const sig = await signToken(user.id, started.id);
   const ckSig = await signToken(user.id, cacheKey);
 
+  // Immediately persist running task to D1 so closing/leaving the page NEVER discards it!
+  const pendingPayload: StoredJdRecordPayload = {
+   kind,
+   days,
+   level,
+   questionCount,
+   source,
+   cacheKey,
+   report: null,
+   rawText: '',
+   thoughts: '',
+  };
+  await saveAiInterviewRecord({
+   id: recordId,
+   userId: user.id,
+   kind: 'jd-research',
+   title: draftTitle(source, kind),
+   subtitle: `${days} 天 · ${questionCount} 题`,
+   status: 'running',
+   interactionId: started.id,
+   payload: pendingPayload,
+  });
+
   return Response.json(
    {
+    recordId,
     id: started.id,
     sig,
     status: started.status,
@@ -116,6 +191,7 @@ export async function GET(req: Request) {
   const sig = (url.searchParams.get('sig') || '').trim();
   const ck = (url.searchParams.get('ck') || '').trim();
   const ckSig = (url.searchParams.get('ckSig') || '').trim();
+  const rid = (url.searchParams.get('rid') || '').trim();
   const geminiProxy = url.searchParams.get('geminiProxy') !== '0';
 
   if (!id || !sig || id.length > 160) throw new AuthError('缺少任务标识。', 400);
@@ -137,9 +213,41 @@ export async function GET(req: Request) {
      );
     }
    }
+
+   // Persist finished result directly into the user's D1 history record (even on fallback Markdown!)
+   if (rid) {
+    const prev = await getAiInterviewRecord<StoredJdRecordPayload>(user.id, rid);
+    const merged: StoredJdRecordPayload = {
+     kind: prev?.payload?.kind || 'jd',
+     days: prev?.payload?.days || 7,
+     level: prev?.payload?.level || 'mid',
+     questionCount: prev?.payload?.questionCount || 10,
+     source: prev?.payload?.source || '',
+     cacheKey: prev?.payload?.cacheKey || ck,
+     report,
+     rawText: polled.text,
+     thoughts: polled.thoughts,
+     cached: false,
+     usage: polled.usage,
+     imported: prev?.payload?.imported ?? null,
+    };
+    await saveAiInterviewRecord({
+     id: rid,
+     userId: user.id,
+     kind: 'jd-research',
+     title: report?.roleTitle || prev?.title || '深度调研报告',
+     subtitle: report?.companyStyle || prev?.subtitle || '',
+     status: 'completed',
+     interactionId: id,
+     payload: merged,
+     createdAt: prev?.createdAt,
+    });
+   }
+
    return Response.json(
     {
      id: polled.id,
+     recordId: rid || undefined,
      status: 'completed',
      report,
      rawText: polled.text,
@@ -148,6 +256,23 @@ export async function GET(req: Request) {
     },
     { headers: noCache },
    );
+  }
+
+  if ((polled.status === 'failed' || polled.status === 'cancelled') && rid) {
+   const prev = await getAiInterviewRecord<StoredJdRecordPayload>(user.id, rid);
+   if (prev) {
+    await saveAiInterviewRecord({
+     id: rid,
+     userId: user.id,
+     kind: 'jd-research',
+     title: prev.title,
+     subtitle: prev.subtitle,
+     status: 'error',
+     interactionId: id,
+     payload: { ...prev.payload, error: polled.error || '调研任务中断' },
+     createdAt: prev.createdAt,
+    });
+   }
   }
 
   return Response.json(polled, { headers: noCache });

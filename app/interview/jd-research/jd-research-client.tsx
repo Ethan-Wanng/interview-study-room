@@ -16,9 +16,11 @@ import {
  Copy,
  Download,
  ExternalLink,
+ History,
  Loader2,
  Lock,
  MessageSquare,
+ Plus,
  RotateCcw,
  Sparkles,
  Square,
@@ -41,15 +43,33 @@ type SubjectOpt = { id: string; name: string; nameEn: string };
 type Usage = { totalTokens: number; inputTokens: number; cachedTokens: number; outputTokens: number; thoughtTokens: number };
 type TabKey = 'profile' | 'roadmap' | 'questions';
 
-type SavedRun = {
- id: string;
- ts: number;
- kind: JdInputKind;
- report: JdResearchReport;
- rawText: string;
- thoughts: string;
+type StoredPayload = {
+ kind?: JdInputKind;
+ days?: JdPrepDays;
+ level?: JdSeniority;
+ questionCount?: number;
+ source?: string;
+ cacheKey?: string;
+ report?: JdResearchReport | null;
+ rawText?: string;
+ thoughts?: string;
  cached?: boolean;
  usage?: Usage;
+ imported?: { count: number; subject: string } | null;
+ error?: string;
+};
+
+type CloudRecord = {
+ id: string;
+ title: string;
+ subtitle: string;
+ status: 'running' | 'completed' | 'error';
+ interactionId: string;
+ sig?: string;
+ ckSig?: string;
+ payload: StoredPayload;
+ createdAt: number;
+ updatedAt: number;
 };
 
 const PRESETS: { id: string; kind: JdInputKind; zh: string; en: string; sample: string }[] = [
@@ -117,27 +137,8 @@ const PRESETS: { id: string; kind: JdInputKind; zh: string; en: string; sample: 
 
 const fmtTok = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n));
 
-function historyKey(username: string): string {
+function legacyLocalKey(username: string): string {
  return `isr_jd_research_v1:${username || 'guest'}`;
-}
-
-function loadHistory(username: string): SavedRun[] {
- if (typeof window === 'undefined') return [];
- try {
-  const raw = window.localStorage.getItem(historyKey(username));
-  if (!raw) return [];
-  const arr = JSON.parse(raw) as SavedRun[];
-  return Array.isArray(arr) ? arr.slice(0, 6) : [];
- } catch {
-  return [];
- }
-}
-
-function saveHistory(username: string, list: SavedRun[]): void {
- if (typeof window === 'undefined') return;
- try {
-  window.localStorage.setItem(historyKey(username), JSON.stringify(list.slice(0, 6)));
- } catch {}
 }
 
 function renderInline(line: string) {
@@ -206,6 +207,8 @@ export default function JdResearchClient({
  const [elapsed, setElapsed] = useState(0);
  const [error, setError] = useState('');
 
+ const [records, setRecords] = useState<CloudRecord[]>([]);
+ const [activeId, setActiveId] = useState<string>('');
  const [report, setReport] = useState<JdResearchReport | null>(null);
  const [rawText, setRawText] = useState('');
  const [thoughts, setThoughts] = useState('');
@@ -214,7 +217,6 @@ export default function JdResearchClient({
  const [thoughtsOpen, setThoughtsOpen] = useState(false);
  const [tab, setTab] = useState<TabKey>('profile');
 
- const [history, setHistory] = useState<SavedRun[]>([]);
  const [selected, setSelected] = useState<Record<number, boolean>>({});
  const [expandedQ, setExpandedQ] = useState<Record<number, boolean>>({ 0: true });
  const [targetSubject, setTargetSubject] = useState<string>('mine');
@@ -225,10 +227,6 @@ export default function JdResearchClient({
 
  const pollAbortRef = useRef<AbortController | null>(null);
  const timerRef = useRef<number | null>(null);
-
- useEffect(() => {
-  setHistory(loadHistory(username));
- }, [username]);
 
  const stopActive = () => {
   pollAbortRef.current?.abort();
@@ -242,22 +240,26 @@ export default function JdResearchClient({
 
  useEffect(() => () => stopActive(), []);
 
- const applyReport = (
+ const applyReportView = (
+  recId: string,
   rep: JdResearchReport | null,
   raw: string,
   th: string,
   isCached: boolean,
   usg?: Usage,
-  persist?: boolean,
+  imported?: { count: number; subject: string } | null,
+  src?: string,
  ) => {
+  setActiveId(recId);
   setReport(rep);
   setRawText(raw);
   setThoughts(th);
   setCachedHit(isCached);
   setUsage(usg);
+  if (typeof src === 'string' && src) setSource(src);
   setThoughtsOpen(false);
   setTab('profile');
-  setImportResult(null);
+  setImportResult(imported ?? null);
   setImportErr('');
   if (rep) {
    const sel: Record<number, boolean> = {};
@@ -266,26 +268,253 @@ export default function JdResearchClient({
    });
    setSelected(sel);
    setExpandedQ({ 0: true });
-   const validRec = subjects.some(s => s.id === rep.recommendedSubject) ? rep.recommendedSubject : 'mine';
-   setTargetSubject(validRec);
-   if (persist) {
-    const entry: SavedRun = {
-     id: 'run-' + Date.now(),
-     ts: Date.now(),
-     kind,
-     report: rep,
-     rawText: raw,
-     thoughts: th,
-     cached: isCached,
-     usage: usg,
-    };
-    setHistory(prev => {
-     const next = [entry, ...prev.filter(x => x.report.roleTitle !== rep.roleTitle)].slice(0, 6);
-     saveHistory(username, next);
-     return next;
-    });
-   }
+   // Default to 'mine' (我的题库) so importing goes straight into the user's private bank even if empty!
+   setTargetSubject('mine');
   }
+ };
+
+ const refreshRecords = async (): Promise<CloudRecord[]> => {
+  try {
+   const r = await fetch('/api/ai-interview-records?kind=jd-research', { cache: 'no-store' });
+   if (!r.ok) return [];
+   const d = (await r.json()) as { items?: CloudRecord[] };
+   const items = Array.isArray(d.items) ? d.items : [];
+   setRecords(items);
+   return items;
+  } catch {
+   return [];
+  }
+ };
+
+ const pollTask = async (opts: {
+  recordId: string;
+  interactionId: string;
+  sig: string;
+  cacheKey?: string;
+  ckSig?: string;
+  geminiProxy: boolean;
+  startedAt?: number;
+ }) => {
+  stopActive();
+  setError('');
+  setBusy(true);
+  setActiveId(opts.recordId);
+  const t0 = opts.startedAt || Date.now();
+  setElapsed(Math.max(0, Math.floor((Date.now() - t0) / 1000)));
+
+  const ctl = new AbortController();
+  pollAbortRef.current = ctl;
+  timerRef.current = window.setInterval(() => {
+   setElapsed(Math.max(0, Math.floor((Date.now() - t0) / 1000)));
+  }, 1000);
+
+  const qs = new URLSearchParams({
+   id: opts.interactionId,
+   sig: opts.sig,
+   rid: opts.recordId,
+   geminiProxy: opts.geminiProxy ? '1' : '0',
+  });
+  if (opts.cacheKey && opts.ckSig) {
+   qs.set('ck', opts.cacheKey);
+   qs.set('ckSig', opts.ckSig);
+  }
+
+  try {
+   for (let attempt = 0; attempt < 70; attempt++) {
+    if (ctl.signal.aborted) return;
+    if (attempt > 0) {
+     await new Promise<void>((resolve, reject) => {
+      const tid = window.setTimeout(resolve, 3000);
+      ctl.signal.addEventListener(
+       'abort',
+       () => {
+        window.clearTimeout(tid);
+        reject(new Error('aborted'));
+       },
+       { once: true },
+      );
+     });
+    }
+    if (ctl.signal.aborted) return;
+
+    const pr = await fetch('/api/jd-research?' + qs.toString(), { cache: 'no-store', signal: ctl.signal });
+    const pd = (await pr.json()) as {
+     status?: string;
+     report?: JdResearchReport | null;
+     rawText?: string;
+     thoughts?: string;
+     usage?: Usage;
+     error?: string;
+    };
+    if (!pr.ok) throw new Error(pd.error ?? L('查询进度失败', 'Polling failed'));
+    if (pd.status === 'completed') {
+     applyReportView(opts.recordId, pd.report ?? null, pd.rawText || '', pd.thoughts || '', false, pd.usage, null);
+     void refreshRecords();
+     stopActive();
+     return;
+    }
+    if (pd.status === 'failed' || pd.status === 'cancelled') {
+     void refreshRecords();
+     throw new Error(pd.error || L('调研任务中断，请重试', 'Research interrupted'));
+    }
+   }
+   throw new Error(L('调研超时，请重试', 'Research timed out'));
+  } catch (e) {
+   if (!ctl.signal.aborted) {
+    setError((e as Error).message || L('调研失败', 'Research failed'));
+   }
+   stopActive();
+  }
+ };
+
+ // Load cloud D1 history (+ auto-migrate any legacy localStorage items) and auto-restore latest record!
+ useEffect(() => {
+  let alive = true;
+  (async () => {
+   let items = await refreshRecords();
+   if (!alive) return;
+
+   // Migrate any pre-D1 localStorage items (member or guest key) to cloud D1 so nothing previously generated is lost
+   try {
+    const keys = [...new Set([legacyLocalKey(username), legacyLocalKey('')])];
+    const existingTitles = new Set(items.map(x => x.title));
+    let migrated = false;
+    for (const lk of keys) {
+     const raw = window.localStorage.getItem(lk);
+     if (!raw) continue;
+     const localArr = JSON.parse(raw) as {
+      id: string;
+      ts: number;
+      kind?: JdInputKind;
+      report?: JdResearchReport;
+      rawText?: string;
+      thoughts?: string;
+      cached?: boolean;
+      usage?: Usage;
+     }[];
+     if (!Array.isArray(localArr) || !localArr.length) continue;
+     for (const it of localArr.slice(0, 6)) {
+      const title = it.report?.roleTitle || '历史调研报告';
+      if (existingTitles.has(title) || (!it.report && !it.rawText)) continue;
+      existingTitles.add(title);
+      const r = await fetch('/api/ai-interview-records', {
+       method: 'POST',
+       headers: { 'content-type': 'application/json' },
+       body: JSON.stringify({
+        id: 'jdr-mig-' + (it.id || Date.now()),
+        kind: 'jd-research',
+        title,
+        subtitle: it.report?.companyStyle || '',
+        status: 'completed',
+        payload: {
+         kind: it.kind || 'jd',
+         report: it.report || null,
+         rawText: it.rawText || '',
+         thoughts: it.thoughts || '',
+         cached: Boolean(it.cached),
+         usage: it.usage,
+        },
+       }),
+      });
+      if (r.ok) migrated = true;
+     }
+    }
+    if (migrated && alive) {
+     items = await refreshRecords();
+    }
+   } catch {}
+
+   if (!alive || !items.length) return;
+   const latest = items[0];
+   if (latest.status === 'running' && latest.interactionId && latest.sig) {
+    void pollTask({
+     recordId: latest.id,
+     interactionId: latest.interactionId,
+     sig: latest.sig,
+     cacheKey: latest.payload?.cacheKey,
+     ckSig: latest.ckSig,
+     geminiProxy: getGeminiAutoProxy(),
+     startedAt: latest.createdAt,
+    });
+   } else if (latest.status === 'completed' && (latest.payload?.report || latest.payload?.rawText)) {
+    applyReportView(
+     latest.id,
+     latest.payload.report ?? null,
+     latest.payload.rawText || '',
+     latest.payload.thoughts || '',
+     Boolean(latest.payload.cached),
+     latest.payload.usage,
+     latest.payload.imported ?? null,
+     latest.payload.source,
+    );
+   }
+  })();
+  return () => {
+   alive = false;
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [username]);
+
+ const openRecord = (rec: CloudRecord) => {
+  stopActive();
+  setError('');
+  if (rec.status === 'running' && rec.interactionId && rec.sig) {
+   setReport(null);
+   setRawText('');
+   void pollTask({
+    recordId: rec.id,
+    interactionId: rec.interactionId,
+    sig: rec.sig,
+    cacheKey: rec.payload?.cacheKey,
+    ckSig: rec.ckSig,
+    geminiProxy: getGeminiAutoProxy(),
+    startedAt: rec.createdAt,
+   });
+   return;
+  }
+  if (rec.status === 'error') {
+   setActiveId(rec.id);
+   setReport(null);
+   setRawText('');
+   if (rec.payload?.source) setSource(rec.payload.source);
+   setError(rec.payload?.error || L('该次调研未完成，可重新发起', 'Previous run failed'));
+   return;
+  }
+  applyReportView(
+   rec.id,
+   rec.payload?.report ?? null,
+   rec.payload?.rawText || '',
+   rec.payload?.thoughts || '',
+   Boolean(rec.payload?.cached),
+   rec.payload?.usage,
+   rec.payload?.imported ?? null,
+   rec.payload?.source,
+  );
+ };
+
+ const deleteRecord = async (recId: string) => {
+  try {
+   await fetch('/api/ai-interview-records?id=' + encodeURIComponent(recId), { method: 'DELETE' });
+  } catch {}
+  setRecords(prev => prev.filter(x => x.id !== recId));
+  if (activeId === recId) {
+   stopActive();
+   setActiveId('');
+   setReport(null);
+   setRawText('');
+   setThoughts('');
+   setImportResult(null);
+  }
+ };
+
+ const startNewComposer = () => {
+  stopActive();
+  setActiveId('');
+  setReport(null);
+  setRawText('');
+  setThoughts('');
+  setError('');
+  setImportResult(null);
  };
 
  const runResearch = async () => {
@@ -302,6 +531,7 @@ export default function JdResearchClient({
   setReport(null);
   setRawText('');
   setThoughts('');
+  setImportResult(null);
 
   const ctl = new AbortController();
   pollAbortRef.current = ctl;
@@ -326,6 +556,7 @@ export default function JdResearchClient({
     signal: ctl.signal,
    });
    const d = (await r.json()) as {
+    recordId?: string;
     id?: string;
     sig?: string;
     status?: string;
@@ -341,57 +572,23 @@ export default function JdResearchClient({
    if (!r.ok) throw new Error(d.error ?? L('发起调研失败', 'Request failed'));
 
    if (d.status === 'completed') {
-    applyReport(d.report ?? null, d.rawText || '', d.thoughts || '', Boolean(d.cached), d.usage, true);
+    applyReportView(d.recordId || '', d.report ?? null, d.rawText || '', d.thoughts || '', Boolean(d.cached), d.usage, null, clean);
+    void refreshRecords();
     stopActive();
     return;
    }
    if (!d.id || !d.sig) throw new Error(L('未返回任务 ID', 'Missing task ID'));
 
-   const qs = new URLSearchParams({
-    id: d.id,
+   void refreshRecords();
+   await pollTask({
+    recordId: d.recordId || '',
+    interactionId: d.id,
     sig: d.sig,
-    geminiProxy: geminiProxy ? '1' : '0',
+    cacheKey: d.cacheKey,
+    ckSig: d.ckSig,
+    geminiProxy,
+    startedAt: t0,
    });
-   if (d.cacheKey && d.ckSig) {
-    qs.set('ck', d.cacheKey);
-    qs.set('ckSig', d.ckSig);
-   }
-
-   for (let attempt = 0; attempt < 65; attempt++) {
-    if (ctl.signal.aborted) return;
-    await new Promise<void>((resolve, reject) => {
-     const id = window.setTimeout(resolve, 3000);
-     ctl.signal.addEventListener(
-      'abort',
-      () => {
-       window.clearTimeout(id);
-       reject(new Error('aborted'));
-      },
-      { once: true },
-     );
-    });
-    if (ctl.signal.aborted) return;
-
-    const pr = await fetch('/api/jd-research?' + qs.toString(), { cache: 'no-store', signal: ctl.signal });
-    const pd = (await pr.json()) as {
-     status?: string;
-     report?: JdResearchReport | null;
-     rawText?: string;
-     thoughts?: string;
-     usage?: Usage;
-     error?: string;
-    };
-    if (!pr.ok) throw new Error(pd.error ?? L('查询进度失败', 'Polling failed'));
-    if (pd.status === 'completed') {
-     applyReport(pd.report ?? null, pd.rawText || '', pd.thoughts || '', false, pd.usage, true);
-     stopActive();
-     return;
-    }
-    if (pd.status === 'failed' || pd.status === 'cancelled') {
-     throw new Error(pd.error || L('调研任务中断，请重试', 'Research interrupted'));
-    }
-   }
-   throw new Error(L('调研超时，请重试', 'Research timed out'));
   } catch (e) {
    if (!ctl.signal.aborted) {
     setError((e as Error).message || L('调研失败', 'Research failed'));
@@ -417,17 +614,20 @@ export default function JdResearchClient({
   setSelected(next);
  };
 
- const importSelected = async () => {
-  if (!report || !selectedIndexes.length || importing) return;
+ const importSelected = async (subjectOverride?: string) => {
+  if (!report || importing) return;
+  const indexes = selectedIndexes.length > 0 ? selectedIndexes : report.questions.map((_, i) => i);
+  if (!indexes.length) return;
+  const sub = subjectOverride || targetSubject || 'mine';
   setImporting(true);
   setImportErr('');
   setImportResult(null);
   try {
-   const items = selectedIndexes.map(i => {
+   const items = indexes.map(i => {
     const q = report.questions[i];
     const extra = q.followups.length ? `\n\n【常见追问】\n${q.followups.map((f, idx) => `${idx + 1}. ${f}`).join('\n')}` : '';
     return {
-     subject: targetSubject,
+     subject: sub,
      section: q.section || report.roleTitle.slice(0, 20),
      title: q.title,
      answer: `${q.answer}${extra}`,
@@ -440,7 +640,20 @@ export default function JdResearchClient({
    });
    const d = (await r.json()) as { added?: number; error?: string };
    if (!r.ok) throw new Error(d.error ?? L('导入失败', 'Import failed'));
-   setImportResult({ count: d.added ?? items.length, subject: targetSubject });
+   const res = { count: d.added ?? items.length, subject: sub };
+   setImportResult(res);
+   if (activeId) {
+    void fetch('/api/ai-interview-records', {
+     method: 'POST',
+     headers: { 'content-type': 'application/json' },
+     body: JSON.stringify({
+      id: activeId,
+      kind: 'jd-research',
+      patch: true,
+      payload: { imported: res },
+     }),
+    }).then(() => void refreshRecords());
+   }
   } catch (e) {
    setImportErr((e as Error).message || L('导入失败', 'Import failed'));
   } finally {
@@ -457,7 +670,6 @@ export default function JdResearchClient({
  };
 
  const fullMarkdown = useMemo(() => (report ? reportToMarkdown(report) : rawText), [report, rawText]);
-
  const hasOutput = Boolean(report || rawText);
 
  return (
@@ -478,6 +690,40 @@ export default function JdResearchClient({
     <div className="ai-title arch-title">
      <h1>{L('JD / 面经深度调研', 'JD & Interview Deep Research')}</h1>
     </div>
+
+    {records.length > 0 && (
+     <div className="jdr-history-bar" aria-label={L('调研历史', 'Saved reports')}>
+      <button
+       type="button"
+       className={'jdr-hist-chip new-btn' + (!hasOutput && !busy ? ' on' : '')}
+       onClick={startNewComposer}
+      >
+       <Plus size={13} />
+       <span>{L('新调研', 'New')}</span>
+      </button>
+      {records.map(rec => (
+       <div
+        key={rec.id}
+        className={'jdr-hist-chip' + (activeId === rec.id ? ' on' : '')}
+        onClick={() => openRecord(rec)}
+       >
+        {rec.status === 'running' ? <i className="jdr-hist-dot" /> : <History size={12} />}
+        <span>{rec.title}</span>
+        <button
+         type="button"
+         className="jdr-hist-del"
+         aria-label={L('删除记录', 'Delete')}
+         onClick={e => {
+          e.stopPropagation();
+          void deleteRecord(rec.id);
+         }}
+        >
+         <X size={12} />
+        </button>
+       </div>
+      ))}
+     </div>
+    )}
 
     {!hasOutput && !busy && (
      <>
@@ -607,35 +853,6 @@ export default function JdResearchClient({
          </button>
         )}
        </div>
-
-       {history.length > 0 && (
-        <div className="jdr-history">
-         {history.map(h => (
-          <div key={h.id} className="jdr-hist-chip">
-           <span
-            onClick={() => applyReport(h.report, h.rawText, h.thoughts, Boolean(h.cached), h.usage, false)}
-           >
-            {h.report.roleTitle}
-           </span>
-           <button
-            type="button"
-            className="jdr-hist-del"
-            aria-label={L('删除记录', 'Delete')}
-            onClick={e => {
-             e.stopPropagation();
-             setHistory(prev => {
-              const next = prev.filter(x => x.id !== h.id);
-              saveHistory(username, next);
-              return next;
-             });
-            }}
-           >
-            <X size={12} />
-           </button>
-          </div>
-         ))}
-        </div>
-       )}
       </section>
      </>
     )}
@@ -676,6 +893,28 @@ export default function JdResearchClient({
         </div>
 
         <div className="jdr-head-btns">
+         {report && report.questions.length > 0 && (
+          member ? (
+           <button
+            type="button"
+            className="button primary arch-new-btn"
+            disabled={importing}
+            onClick={() => void importSelected()}
+           >
+            {importing ? <Loader2 size={14} className="ai-spin" /> : <Download size={14} />}
+            <span>
+             {importing
+              ? L('导入中…', 'Importing…')
+              : L(`导入我的题库 (${selectedIndexes.length || report.questions.length})`, `Import (${selectedIndexes.length || report.questions.length})`)}
+            </span>
+           </button>
+          ) : (
+           <a href="/login?return_to=%2Finterview%2Fjd-research" className="button primary arch-new-btn">
+            <Lock size={14} />
+            <span>{L('登录后导入题库', 'Sign in to import')}</span>
+           </a>
+          )
+         )}
          <button
           type="button"
           className="ai-note-pill"
@@ -699,21 +938,21 @@ export default function JdResearchClient({
            href: '/interview/jd-research',
           }}
          />
-         <button
-          type="button"
-          className="button secondary arch-new-btn"
-          onClick={() => {
-           setReport(null);
-           setRawText('');
-           setThoughts('');
-           setError('');
-          }}
-         >
-          <RotateCcw size={14} />
+         <button type="button" className="button secondary arch-new-btn" onClick={startNewComposer}>
+          <Plus size={14} />
           <span>{L('新调研', 'New')}</span>
          </button>
         </div>
        </div>
+
+       {importResult && (
+        <div className="jdr-import-ok" style={{ width: 'fit-content' }}>
+         <Check size={13} />
+         <span>{L(`已导入 ${importResult.count} 题到「我的题库」`, `Imported ${importResult.count} questions`)}</span>
+         <a href="/interview?track=mine">{L('去我的题库刷题 →', 'Practice now →')}</a>
+        </div>
+       )}
+       {importErr && <span className="ai-grade-error">{importErr}</span>}
 
        {report?.summary && <p className="jdr-summary">{report.summary}</p>}
 
@@ -858,9 +1097,7 @@ export default function JdResearchClient({
              <span className="jdr-import-ok">
               <Check size={13} />
               <span>{L(`已导入 ${importResult.count} 题`, `Imported ${importResult.count}`)}</span>
-              <a href={`/interview?track=${encodeURIComponent(importResult.subject)}`}>
-               {L('去刷题', 'Practice')}
-              </a>
+              <a href="/interview?track=mine">{L('去我的题库', 'My bank')}</a>
              </span>
             )}
             {importErr && <span className="ai-grade-error">{importErr}</span>}

@@ -8,6 +8,7 @@ import {
  type AntigravityUsage,
 } from '@/lib/antigravity-agent';
 import { readPromptCache, sha256Hex, writePromptCache } from '@/lib/prompt-cache';
+import { getAiInterviewRecord, saveAiInterviewRecord } from '@/lib/ai-interview-records';
 
 export const dynamic = 'force-dynamic';
 const noCache = { 'Cache-Control': 'no-store' };
@@ -26,6 +27,25 @@ const MOCK_SYSTEM = `你是顶级互联网大厂（P8/Staff 级别）高阶技�
 1. 先精准点评回答的**深度、准确度与遗漏边界**（指出模糊或背八股的地方，给出 10 分制当轮得分）；
 2. 补充生产级底层原理或关键取舍（带具体数字/场景，简洁硬核）；
 3. 顺着候选人回答中最薄弱或最值得深挖的点，抛出 **1–2 个层层递进的真实追问**，等待候选人下一轮继续回答。`;
+
+type StoredTurn = {
+ id: string;
+ userText: string;
+ status: 'running' | 'done' | 'error';
+ text: string;
+ thoughts: string;
+ cached?: boolean;
+ usage?: AntigravityUsage;
+ error?: string;
+ interactionId?: string;
+};
+
+type StoredArchitectPayload = {
+ mode: 'design' | 'mock';
+ topic: string;
+ cacheKey?: string;
+ turns: StoredTurn[];
+};
 
 function signingSecret(): string {
  const e = env as unknown as Record<string, string | undefined>;
@@ -60,6 +80,7 @@ export async function POST(req: Request) {
   const prevSig = typeof body.prevSig === 'string' ? body.prevSig.trim() : '';
   const followupContext =
    typeof body.followupContext === 'string' ? body.followupContext.trim().slice(0, 3000) : '';
+  const existingRid = typeof body.recordId === 'string' ? body.recordId.trim().slice(0, 80) : '';
   const geminiProxy = body.geminiProxy !== false;
 
   if (!answer) throw new AuthError('请填写你的架构方案或回答内容。');
@@ -69,6 +90,12 @@ export async function POST(req: Request) {
    const expected = await signInteraction(user.id, previousInteractionId);
    if (prevSig !== expected) throw new AuthError('会话签名无效，请重新发起评审。', 403);
   }
+
+  const existingRec = existingRid ? await getAiInterviewRecord<StoredArchitectPayload>(user.id, existingRid) : null;
+  const recordId = existingRec ? existingRec.id : 'arch-' + crypto.randomUUID();
+  const priorTurns: StoredTurn[] = Array.isArray(existingRec?.payload?.turns) ? existingRec!.payload.turns : [];
+  const turnId = 't-' + Date.now();
+  const modeLabel = mode === 'mock' ? '高阶模拟面试' : '系统设计评审';
 
   const promptInput = previousInteractionId
    ? `【候选人追问 / 补充回答】\n${answer}\n\n请延续上一轮评审语境继续点评与深入追问。`
@@ -82,8 +109,29 @@ export async function POST(req: Request) {
    cacheKey = 'arch:' + (await sha256Hex([mode, topic, answer]));
    const hit = await readPromptCache<{ text: string; thoughts: string; usage?: AntigravityUsage }>(cacheKey);
    if (hit?.payload?.text) {
+    const doneTurn: StoredTurn = {
+     id: turnId,
+     userText: answer,
+     status: 'done',
+     text: hit.payload.text,
+     thoughts: hit.payload.thoughts || '',
+     cached: true,
+     usage: hit.payload.usage,
+    };
+    await saveAiInterviewRecord({
+     id: recordId,
+     userId: user.id,
+     kind: 'architect',
+     title: topic || existingRec?.title || modeLabel,
+     subtitle: modeLabel,
+     status: 'completed',
+     payload: { mode, topic: topic || existingRec?.payload?.topic || '', cacheKey, turns: [...priorTurns, doneTurn] },
+     createdAt: existingRec?.createdAt,
+    });
     return Response.json(
      {
+      recordId,
+      turnId,
       status: 'completed',
       cached: true,
       text: hit.payload.text,
@@ -105,8 +153,35 @@ export async function POST(req: Request) {
   const sig = await signInteraction(user.id, started.id);
   const ckSig = cacheKey ? await signInteraction(user.id, cacheKey) : '';
 
+  const runningTurn: StoredTurn = {
+   id: turnId,
+   userText: answer,
+   status: 'running',
+   text: '',
+   thoughts: '',
+   interactionId: started.id,
+  };
+  await saveAiInterviewRecord({
+   id: recordId,
+   userId: user.id,
+   kind: 'architect',
+   title: topic || existingRec?.title || modeLabel,
+   subtitle: modeLabel,
+   status: 'running',
+   interactionId: started.id,
+   payload: {
+    mode,
+    topic: topic || existingRec?.payload?.topic || '',
+    cacheKey: cacheKey || existingRec?.payload?.cacheKey,
+    turns: [...priorTurns, runningTurn],
+   },
+   createdAt: existingRec?.createdAt,
+  });
+
   return Response.json(
    {
+    recordId,
+    turnId,
     id: started.id,
     sig,
     status: started.status,
@@ -132,6 +207,7 @@ export async function GET(req: Request) {
   const sig = (url.searchParams.get('sig') || '').trim();
   const ck = (url.searchParams.get('ck') || '').trim();
   const ckSig = (url.searchParams.get('ckSig') || '').trim();
+  const rid = (url.searchParams.get('rid') || '').trim();
   const geminiProxy = url.searchParams.get('geminiProxy') !== '0';
 
   if (!id || !sig || id.length > 160) throw new AuthError('缺少任务标识。', 400);
@@ -149,6 +225,30 @@ export async function GET(req: Request) {
      { text: polled.text, thoughts: polled.thoughts, usage: polled.usage },
      3 * 24 * 3600_000,
     );
+   }
+  }
+
+  if (rid && (polled.status === 'completed' || polled.status === 'failed' || polled.status === 'cancelled')) {
+   const prev = await getAiInterviewRecord<StoredArchitectPayload>(user.id, rid);
+   if (prev && Array.isArray(prev.payload?.turns)) {
+    const turns = prev.payload.turns.map(t =>
+     t.interactionId === id || (t.status === 'running' && !t.interactionId)
+      ? polled.status === 'completed'
+        ? { ...t, status: 'done' as const, text: polled.text || '（未返回文本内容）', thoughts: polled.thoughts || '', usage: polled.usage, interactionId: id }
+        : { ...t, status: 'error' as const, error: polled.error || '评审任务中断' }
+      : t,
+    );
+    await saveAiInterviewRecord({
+     id: rid,
+     userId: user.id,
+     kind: 'architect',
+     title: prev.title,
+     subtitle: prev.subtitle,
+     status: polled.status === 'completed' ? 'completed' : 'error',
+     interactionId: id,
+     payload: { ...prev.payload, turns },
+     createdAt: prev.createdAt,
+    });
    }
   }
 

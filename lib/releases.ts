@@ -11,8 +11,8 @@ export function groupReleasesByDay(releases:Release[]):ReleaseDay[]{
 
 export const RELEASES:Release[]=[
  {version:'2026.11.23',date:'2026-11-23',title:'新增高阶模拟面试 / 系统设计深度点评、JD / 面经一键深度调研及全站提示缓存',changes:[
-  '新增「高阶模拟面试 · 系统设计深度点评」（/interview/architect，面试首页「AI 专项实战」直达）：接入 Antigravity 托管 Agent，支持「系统设计评审」与「高阶模拟面试」双模式、6 大高频架构预设题、思考过程按需展开、一键记笔记与多轮连环追问。',
-  '新增「JD / 面经一键深度调研」（/interview/jd-research）：粘贴目标岗位 JD 或真实面经并选择备考周期（3/7/14/30 天）与目标级别，一键生成「考点权重画像与高频扣分点」「直连站内真实学习关卡的分阶段复习路径」及「8–12 道专属专题面试题」，支持一键批量导入「我的题库」刷题、单题直跳高阶模拟面试、导出笔记、复制 Markdown 与本地历史回溯。',
+  '新增「高阶模拟面试 · 系统设计深度点评」（/interview/architect，面试首页「AI 专项实战」直达）：接入 Antigravity 托管 Agent，支持「系统设计评审」与「高阶模拟面试」双模式、6 大高频架构预设题、思考过程按需展开、一键记笔记、多轮连环追问以及云端历史保存与断点续评。',
+  '新增「JD / 面经一键深度调研」（/interview/jd-research）：粘贴目标岗位 JD 或真实面经并选择备考周期（3/7/14/30 天）与目标级别，一键生成「考点权重画像与高频扣分点」「直连站内真实学习关卡的分阶段复习路径」及「8–12 道专属专题面试题」，支持报告顶部与题库页一键批量导入「我的题库」刷题（空题库可直接初始化导入）、单题直跳高阶模拟面试、导出笔记、复制 Markdown 及云端历史自动保存与离开后断点恢复。',
   '全站 AI 接入多层提示缓存（Prompt Caching）：固定多轮对话系统提示与历史前缀（提升 DeepSeek / Gemini / OpenAI / 通义千问隐式前缀缓存命中率），启用 Anthropic cache_control、OpenAI prompt_cache_key 与 Gemini 2.5 显式 cachedContents，并新增 D1 确定性结果缓存（覆盖 AI 评分、规范回答、代码操场补全、系统设计评审与 JD 调研，重复命中零 token 消耗、毫秒直出）。',
  ]},
  {version:'2026.11.22-2',date:'2026-11-22',title:'新增 MySQL 沙盒运行、AI 问答代码直接运行及移动端操场/面试布局优化',changes:[

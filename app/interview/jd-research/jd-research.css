@@ -6,12 +6,14 @@
 .jdr-seg button{border:0;border-radius:7px;padding:6px 6px;background:transparent;color:var(--quiet);font-size:12.5px;font-weight:650;cursor:pointer;white-space:nowrap;transition:background .15s,color .15s}
 .jdr-seg button.on{background:var(--primary);color:var(--primary-foreground,#fff)}
 
-.jdr-history{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
-.jdr-hist-chip{display:inline-flex;align-items:center;gap:6px;max-width:260px;padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:var(--surface-soft);color:var(--ink);font-size:12px;font-weight:600;cursor:pointer}
-.jdr-hist-chip:hover{border-color:var(--primary);color:var(--primary)}
+.jdr-history-bar{display:flex;align-items:center;gap:7px;overflow-x:auto;padding:2px 0 4px;-webkit-overflow-scrolling:touch;scrollbar-width:thin}
+.jdr-hist-chip{display:inline-flex;align-items:center;gap:6px;max-width:240px;padding:5px 11px;border-radius:999px;border:1px solid var(--line);background:var(--surface-soft);color:var(--ink);font-size:12.5px;font-weight:600;cursor:pointer;flex:none;transition:border-color .15s,background .15s,color .15s}
+.jdr-hist-chip:hover,.jdr-hist-chip.on{border-color:var(--primary);background:color-mix(in srgb,var(--primary) 12%,var(--surface));color:var(--primary)}
+.jdr-hist-chip.new-btn{border-style:dashed;color:var(--primary)}
 .jdr-hist-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.jdr-hist-del{display:inline-flex;align-items:center;padding:1px;border:0;background:transparent;color:var(--quiet);cursor:pointer}
+.jdr-hist-del{display:inline-flex;align-items:center;padding:1px;border:0;background:transparent;color:var(--quiet);cursor:pointer;flex:none}
 .jdr-hist-del:hover{color:#ef4444}
+.jdr-hist-dot{width:7px;height:7px;border-radius:50%;background:var(--primary);flex:none}
 
 .jdr-head-card{padding:16px 20px;display:flex;flex-direction:column;gap:12px}
 .jdr-head-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
