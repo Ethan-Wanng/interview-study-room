@@ -14,5 +14,11 @@ export const paperLoaders:Record<string,()=>Promise<Paper>>={
  'fe-exam-1':()=>import('./fe-exam-1').then(m=>m.feExam1),
  'fe-exam-2':()=>import('./fe-exam-2').then(m=>m.feExam2),
  'fe-final':()=>import('./fe-final').then(m=>m.feFinal),
+ 'rust-exam-1':()=>import('./rust-exam-1').then(m=>m.rustExam1),
+ 'rust-exam-2':()=>import('./rust-exam-2').then(m=>m.rustExam2),
+ 'rust-final':()=>import('./rust-final').then(m=>m.rustFinal),
+ 'python-exam-1':()=>import('./python-exam-1').then(m=>m.pythonExam1),
+ 'python-exam-2':()=>import('./python-exam-2').then(m=>m.pythonExam2),
+ 'python-final':()=>import('./python-final').then(m=>m.pythonFinal),
 };
 export const hasPaper=(examId:string)=>examId in paperLoaders;

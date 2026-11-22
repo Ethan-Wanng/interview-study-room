@@ -13,7 +13,7 @@ function store(list:SavedChat[]){let out=[...list].sort((a,b)=>b.at-a.at).slice(
  while(json.length>MAX_BYTES&&out.length>1){out=out.slice(0,-1);json=JSON.stringify(out)}
  try{localStorage.setItem(HISTORY_KEY,json)}catch{return}
  noteLocalWrite(HISTORY_KEY);window.dispatchEvent(new Event(EVENT))}
-const slim=(m:TutorMessage):TutorMessage=>({role:m.role,text:m.images?.length?[m.text,'[图片]'].filter(Boolean).join('\n'):m.text,...(m.think?{think:m.think.slice(0,6000),secs:m.secs}:{})});
+const slim=(m:TutorMessage):TutorMessage=>({role:m.role,text:m.images?.length?[m.text,'[图片]'].filter(Boolean).join('\n'):m.text,...(m.think?{think:m.think.slice(0,6000),secs:m.secs}:{}),...(m.model?{model:m.model}:{})});
 
 export function saveChat(c:{id:string;key:string;title:string;msgs:TutorMessage[]}){const rest=loadChats().filter(x=>x.id!==c.id);
  store(c.msgs.length?[{id:c.id,key:c.key,title:c.title.slice(0,80),at:Date.now(),msgs:c.msgs.slice(-MAX_MSGS).map(slim)},...rest]:rest)}

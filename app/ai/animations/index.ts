@@ -14,10 +14,11 @@ import {hybridRerank} from './hybrid-rerank';
 import {schemaRetry} from './schema-retry';
 import {decision} from './decision';
 import {evalLoop} from './eval-loop';
+import {harnessLoop} from './harness-loop';
 import {injection} from './injection';
 
 export type {Animation} from './types';
 // 按关卡顺序排列，每关至少一个。
-export const animations:Animation[]=[nextToken,statelessChat,ragPipeline,toolLoop,backoff,hnsw,hybridRerank,schemaRetry,decision,selfAttention,agentLoop,evalLoop,kvCache,lora,injection];
+export const animations:Animation[]=[nextToken,statelessChat,ragPipeline,toolLoop,backoff,hnsw,hybridRerank,schemaRetry,decision,selfAttention,agentLoop,evalLoop,harnessLoop,kvCache,lora,injection];
 export const animationsFor=(level:string)=>animations.filter(a=>a.level===level);
 export const animationById=(id:string)=>animations.find(a=>a.id===id);

@@ -1,4 +1,37 @@
 'use client';
+import {useGeminiAutoProxy} from './gemini-proxy-pref';
+import {useModelThinkingLevel,useStoredTutorModel} from './thinking-pref';
+import {getCustomThinkingSpec,getTutorThinkingSpec,THINKING_META} from '@/lib/thinking';
+import {TUTOR_MODELS} from '@/lib/tutor-types';
+function GeminiProxyCfg({L}:{L:(zh:string,en:string)=>string}){const [auto,setAuto]=useGeminiAutoProxy();return <label className="ai-cfg-toggle"><input type="checkbox" checked={auto} onChange={e=>setAuto(e.target.checked)}/><span>{L('开启 Gemini 自动代理（关闭则直连 Gemini，便于排查速度慢来源）','Enable Gemini auto proxy (off = direct to Gemini to check latency)')}</span></label>;}
+function ThinkingLevelCfg({L,custom}:{L:(zh:string,en:string)=>string;custom?:{provider:string;model?:string}|null}){
+ const tutorModel=useStoredTutorModel();
+ const active=custom
+  ?{scopeKey:`custom:${custom.provider}/${custom.model?.trim()||custom.provider}`,spec:getCustomThinkingSpec(custom.provider,custom.model)}
+  :getTutorThinkingSpec(tutorModel,null);
+ const [thinking,setThinking]=useModelThinkingLevel(active.scopeKey,active.spec);
+ const name=custom
+  ?`${providerMeta(custom.provider).badge} · ${custom.model?.trim()||providerMeta(custom.provider).defaultModel}`
+  :(TUTOR_MODELS.find(m=>m.id===tutorModel)?.label[0]??'DeepSeek V4.1 Flash');
+ return (
+  <div className="ai-cfg-field">
+   <span className="ai-cfg-label">{L(`思考强度（${name}）`,`Thinking strength (${name})`)}</span>
+   <div className="ai-think-seg wide" role="group" aria-label={L('AI 思考强度','AI thinking strength')}>
+    {active.spec.levels.map(lv=>{
+     const m=THINKING_META[lv],isDef=lv===active.spec.defaultLevel;
+     return (
+      <button key={lv} type="button" className={thinking===lv?'on':''} aria-pressed={thinking===lv}
+       title={L(m.hintZh,m.hintEn)+(isDef?L('（该模型默认挡位）',' (model default)'):'')}
+       onClick={()=>setThinking(lv)}>
+       <span>{L(m.shortZh,m.shortEn)}</span>
+       {isDef&&<em className="ai-think-def">{L('默认','def')}</em>}
+      </button>
+     );
+    })}
+   </div>
+  </div>
+ );
+}
 import {useCallback,useEffect,useState} from 'react';
 import {Check,KeyRound,Lock,ShieldCheck,SlidersHorizontal,Trash2,X} from 'lucide-react';
 import {useI18n} from '../components/i18n';
@@ -137,6 +170,8 @@ export function AiSettingsPanel({onClose}:{onClose?:()=>void}){
     <p className="muted">{L('当前正在使用站点默认 DeepSeek 助手。登录你自己的账号后，可配置专属 API Key（适配 OpenAI、Anthropic、Gemini、DeepSeek、通义千问），密钥严格绑定你的账号、仅你本人可用，并可设置每日次数上限与 Token 限制。','Currently using the default DeepSeek assistant. Sign in to bind your own private API key (OpenAI, Anthropic, Gemini, DeepSeek, Qwen) and set usage limits.')}</p>
     <a href="/login" className="button primary" style={{marginTop:6,display:'inline-flex'}}><KeyRound size={15}/> {L('去登录 / 注册账号','Sign in / Register')}</a>
    </div>
+   <GeminiProxyCfg L={L}/>
+   <ThinkingLevelCfg L={L}/>
   </div>;
  }
 
@@ -147,6 +182,8 @@ export function AiSettingsPanel({onClose}:{onClose?:()=>void}){
   </div>
   <p className="ai-cfg-owner"><ShieldCheck size={14}/> {L(`账号专属隔离：仅登录用户 @${username} 本人可调用此 API Key，其他用户与游客无法使用。`,`Account-isolated: only @${username} can use this API key.`)}</p>
 
+<GeminiProxyCfg L={L}/>
+<ThinkingLevelCfg L={L} custom={enabled?{provider,model}:null}/>
   <label className="ai-cfg-toggle">
    <input type="checkbox" checked={enabled} onChange={e=>{setEnabled(e.target.checked);setMsg(null)}}/>
    <span>{L('启用我的专属 API Key（关闭则使用站点默认 DeepSeek）','Enable my private API Key (off = site default DeepSeek)')}</span>

@@ -12,7 +12,7 @@ export type WrittenScore={kind:'ai';result:GradeResult}|{kind:'self';score:numbe
 // orders：开考时为每道选择题随机打乱的选项顺序（存原始下标），交卷后复查沿用同一顺序；下载的 PDF 按原始顺序。
 // pausedAt：正在暂停（暂停开始的时间）；pausedMs：之前所有暂停加起来的时长，不计入考试用时。
 // qids：这次实际出的题（每次开考会换一部分题）；没有时就是原试卷。
-export type PaperRecord={startedAt:number;qids?:string[];pausedAt?:number;pausedMs?:number;answers:Record<string,PaperAnswer>;orders?:Record<string,number[]>;submittedAt?:number;written?:Record<string,WrittenScore>;gradeNote?:string};
+export type PaperRecord={startedAt:number;qids?:string[];pausedAt?:number;pausedMs?:number;answers:Record<string,PaperAnswer>;orders?:Record<string,number[]>;submittedAt?:number;written?:Record<string,WrittenScore>;gradeNote?:string;gradeThink?:string;gradeThinkSecs?:number};
 
 // 每道题的题型内序号和满分，按试卷顺序排好。
 export function paperLayout(p:Paper){const at:Record<string,number>={};

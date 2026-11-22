@@ -1,7 +1,12 @@
-// Rust 学习空间：规划 15 个关卡，每关先学习再答题。关卡按难度分为入门、进阶、高级、大神四档。现在先开放第 1–4 关。
+// Rust 学习空间：15 个关卡，每关先学习再答题。关卡按难度分为入门、进阶、高级、大神四档。
 // 每道题都有固定 id（错题本按 id 记录），新增题目请使用新的 id，不要修改或复用已有 id。
-// 学习卡片写在 .sites-runtime/cards/rust-*.mjs，用 node .sites-runtime/lessons.mjs apply 写进来。
+// 第 5–15 关写在 content/rust-levels/ 下，在这里按顺序组装。
 import type {AiLevel,Rank,Tier} from './journey';
+import {rustStruct,rustEnum} from './rust-levels/struct-enum';
+import {rustCollections,rustModules} from './rust-levels/collections-mod';
+import {rustGenerics,rustIterators} from './rust-levels/generics-iter';
+import {rustSmartPtr,rustConcurrency,rustAsync} from './rust-levels/advanced';
+import {rustUnsafeMacros,rustEngineering} from './rust-levels/master';
 
 export const rustPassRate=0.65;
 export const rustTiers:Tier[]=[{name:'入门',nameEn:'Beginner',from:0,to:3},{name:'进阶',nameEn:'Intermediate',from:4,to:9},{name:'高级',nameEn:'Advanced',from:10,to:12},{name:'大神',nameEn:'Master',from:13,to:14}];
@@ -424,4 +429,15 @@ fn main() {
   {id:'rust-lifetime-15',q:'省略规则中，方法的第一个参数是 &self 时，返回的引用默认用谁的生命周期？',options:['self 的生命周期','最后一个参数的','\'static 生命周期','调用者自己指定'],why:['','规则三说的是 self，不是最后一个参数。','只有字面量这类数据才是 \'static，规则不会默认用它。','省略规则会自动补全，调用的地方不需要也不能指定。'],answer:0,explain:'规则三：方法的第一个参数是 &self 或 &mut self 时，返回的引用自动使用 self 的生命周期。'},
   {id:'rust-lifetime-16',type:'code',q:'写一个函数 pick_first，接收两个 &str 参数 a 和 b，打印 b 后返回 a。要求只给需要的参数标注生命周期，让调用时 b 可以是一个很快就被释放的临时 String。再写出 main 演示这种调用。',reference:'fn pick_first<\'a>(a: &\'a str, b: &str) -> &\'a str {\n    println!("{b}");\n    a\n}\n\nfn main() {\n    let name = String::from("Ferris");\n    let kept;\n    {\n        let temp = String::from("临时");\n        kept = pick_first(&name, &temp);\n    }\n    println!("{kept}");\n}',points:['在函数名后声明 <\'a>','只给 a 和返回值标 \'a，b 不标','函数体最后返回 a','main 中 temp 在内层释放后仍能使用返回值'],explain:'返回值只和 a 绑定，b 的生命周期不影响返回值；如果 b 也标 \'a，temp 就必须活到 kept 用完为止。'},
  ]},
+ rustStruct,
+ rustEnum,
+ rustCollections,
+ rustModules,
+ rustGenerics,
+ rustIterators,
+ rustSmartPtr,
+ rustConcurrency,
+ rustAsync,
+ rustUnsafeMacros,
+ rustEngineering,
 ];

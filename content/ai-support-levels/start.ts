@@ -9,7 +9,7 @@ export const csOverview:AiLevel={
  lessons:[
   {
    title:'我们要做一个什么样的智能 AI 客服',
-   body:'学完大模型理论后，最好的练手项目就是亲手做一个“企业级智能 AI 客服系统”。为什么几乎所有公司的第一个 AI 落地项目都是客服？因为它恰好把 AI 开发最核心的五项基本功串在了一起：\n一、角色与护栏（Prompt 工程）：让模型只回答客服职责内的问题，语气专业温和，遇到刁钻或未知问题主动引导转人工，而不是胡编乱造；\n二、多模型统一网关：一套代码同时适配 DeepSeek、OpenAI、Anthropic（Claude）、Google Gemini、阿里通义千问，支持已登录用户绑定自己的专属 API Key 并设置每日调用限额；\n三、流式多轮对话（SSE + Session）：像真人打字一样边想边回，并记住当前顾客前几句说了什么；\n四、企业知识库检索（RAG）：退换货规则、运费标准、保修政策随时在变，先从知识库搜出条文再交给模型回答，有据可查；\n五、业务工具调用（Function Calling）：顾客报出订单号时，自动查数据库里的物流状态、自动创建售后退货工单。\n一共 4 关，每一关你都会写出可运行的代码，并用自动化验收脚本检验成果。还可以随时点页面顶部的「在线 AI 客服演练场」直观调试效果。',
+   body:'学完大模型理论后，最好的练手项目就是亲手做一个“企业级智能 AI 客服系统”。为什么几乎所有公司的第一个 AI 落地项目都是客服？因为它恰好把 AI 开发最核心的基本功串在了一起：\n一、角色与护栏（Prompt 工程）：让模型只回答客服职责内的问题，语气专业温和，遇到刁钻或未知问题主动引导转人工，而不是胡编乱造；\n二、多模型统一网关：一套代码同时适配 DeepSeek、OpenAI、Anthropic（Claude）、Google Gemini、阿里通义千问，支持已登录用户绑定自己的专属 API Key 并设置每日调用限额；\n三、流式多轮对话（SSE + Session）：像真人打字一样边想边回，并记住当前顾客前几句说了什么；\n四、企业知识库与混合检索（RAG + Rerank）：退换货规则、运费标准、保修政策随时在变，结合关键词与语义向量搜出条文再交给模型回答，有据可查；\n五、业务工具、多步状态机与人机协同：查物流、自动创建售后工单、看图定损、情绪安抚升级、坐席摘要脱敏，再到自动化评测、语义缓存与容器化上线。\n一共 12 关，每一关你都会写出可运行的代码，并用自动化验收脚本检验成果。还可以随时点页面顶部的「在线 AI 客服演练场」直观调试效果。',
   },
   {
    title:'一套代码适配五大主流模型',
@@ -523,15 +523,15 @@ print(f"\\n通过 {passed} / 6")`,
    ],
   },
   {
-   title:'12 关完整路线图（当前开放前 4 关）',
-   body:'整个「智能 AI 客服实战」规划为 12 关，带你从零做出一个生产级 AI 客服系统：\n入门阶段（第 1–3 关）：\n· 第 1 关：接入客服大脑——多模型统一适配（DeepSeek / OpenAI / Claude / Gemini / 通义千问）与角色护栏\n· 第 2 关：流式打字机与多轮会话记忆——SSE 实时推送与滑动窗口上下文\n· 第 3 关：企业知识库检索（RAG 基础）——商城售后政策切分、检索与来源溯源\n进阶阶段（第 4–6 关）：\n· 第 4 关：工具调用与安全护栏——查订单、生成退换货工单、登录用户专属 API 隔离与自设限流\n· 第 5 关（后续开放）：向量数据库与混合检索——接入 Embedding 与重排序（Rerank）提升长文档命中率\n· 第 6 关（后续开放）：多意图路由与情绪识别——售前导购、售后投诉、情绪安抚分流\n高阶阶段（第 7–9 关）：\n· 第 7 关（后续开放）：多步 Agent 状态机——复杂退换货补寄审批工作流\n· 第 8 关（后续开放）：多模态客服——顾客上传破损商品图片自动定损识别\n· 第 9 关（后续开放）：人工坐席工作台协同——AI 生成工单摘要与推荐回复草稿\n专家阶段（第 10–12 关）：\n· 第 10 关（后续开放）：自动化评测集（LLM-as-a-Judge）与回归测试\n· 第 11 关（后续开放）：语义缓存、Token 成本优化与降级熔断\n· 第 12 关（后续开放）：容器化部署上线、监控告警与全链路追踪',
+   title:'12 关完整路线图',
+   body:'整个「智能 AI 客服实战」共 12 关，带你从零做出一个生产级 AI 客服系统：\n入门阶段（第 1–3 关）：\n· 第 1 关：接入客服大脑——多模型统一适配（DeepSeek / OpenAI / Claude / Gemini / 通义千问）与角色护栏\n· 第 2 关：流式打字机与多轮会话记忆——SSE 实时推送与滑动窗口上下文\n· 第 3 关：企业知识库检索（RAG 基础）——商城售后政策切分、检索与来源溯源\n进阶阶段（第 4–6 关）：\n· 第 4 关：工具调用与安全护栏——查订单、生成退换货工单、登录用户专属 API 隔离与自设限流\n· 第 5 关：向量数据库与混合检索——结合关键词、语义向量与重排序（Rerank）提升长文档命中率\n· 第 6 关：多意图路由、情绪识别与前端工作台——售前导购、售后投诉、情绪安抚分流与流式对话页面\n高阶阶段（第 7–9 关）：\n· 第 7 关：多步 Agent 状态机——复杂退换货补寄审批工作流与幂等工单\n· 第 8 关：多模态客服——顾客上传破损商品图片自动定损识别与理赔\n· 第 9 关：人工坐席工作台协同——AI 生成工单摘要、推荐回复草稿与敏感信息脱敏\n专家阶段（第 10–12 关）：\n· 第 10 关：自动化评测集（LLM-as-a-Judge）与上线发版门禁\n· 第 11 关：语义缓存、Token 成本优化与多模型故障降级熔断\n· 第 12 关：容器化部署上线、监控告警与全链路 Trace ID 追踪',
   },
  ],
  quiz:[
-  {id:'cs-ov-1',q:'以下哪三家 AI 提供商可以共用 OpenAI 兼容的 /chat/completions 接口格式（只需切换 URL、Key 和 model）？',options:['DeepSeek、OpenAI、阿里通义千问（百炼兼容模式）','Anthropic、Google Gemini、DeepSeek','只有 OpenAI 自己能用','Anthropic 和 Google Gemini'],why:['','Anthropic 和 Gemini 的原生接口格式与 OpenAI 不同。','多家国产和海外模型都提供了 OpenAI 兼容端点。','这两家各有独立协议。'],answer:0,explain:'DeepSeek 和阿里百炼（compatible-mode）都原生兼容 OpenAI 的 Chat Completions 协议，请求头都是 Authorization: Bearer <KEY>，请求体都是 model + messages。'},
+  {id:'cs-ov-1',q:'以下哪三家 AI 提供商可以共用 OpenAI 兼容的 /chat/completions 接口格式（只需切换 URL、Key 和 model）？',options:['DeepSeek、OpenAI 与阿里百炼兼容模式','Anthropic 原生接口、Gemini 与 DeepSeek','仅 OpenAI 官方接口支持，其余厂商均不兼容','Anthropic Claude 与 Google Gemini 原生端点'],why:['','Anthropic 和 Gemini 的原生接口格式与 OpenAI 不同。','多家国产和海外模型都提供了 OpenAI 兼容端点。','这两家各有独立协议。'],answer:0,explain:'DeepSeek 和阿里百炼（compatible-mode）都原生兼容 OpenAI 的 Chat Completions 协议，请求头都是 Authorization: Bearer <KEY>，请求体都是 model + messages。'},
   {id:'cs-ov-2',type:'multi',q:'编写企业 AI 客服的 System Prompt 时，下面哪些规则是必不可少的？（多选）',options:['明确客服身份、服务范围与礼貌克制的语气','规定只依据已知规则与订单数据作答，未知事项引导转人工，禁止编造','禁止越权承诺免单或修改价格，拒绝“忽略前述规则”的注入指令','允许模型自由发挥编造促销活动来哄顾客开心'],why:['','','','编造促销活动属于严重幻觉，会造成真实资损和客诉。'],answers:[0,1,2],explain:'企业客服的首要原则是准确与可控：人设清晰、事实有据、未知转人工、防注入越权。'},
   {id:'cs-ov-3',type:'judge',q:'为了让前端切换模型更方便，应该把平台内置的 DEEPSEEK_API_KEY 直接写在前端 JavaScript 代码里发请求。',answer:false,explain:'错误。任何写在前端代码里的 API Key 都会被浏览器访客在开发者工具（Network）里直接看光并盗刷。API Key 必须保存在后端环境变量或服务端数据库里。'},
-  {id:'cs-ov-4',q:'当用户传入的 provider 不在后端支持的白名单（deepseek/openai/anthropic/gemini/qwen）中时，接口应该返回什么？',options:['400 Bad Request 和 {"error": "不支持的 AI 提供商"}','200 OK 和空字符串','500 服务器崩溃','404 页面不存在'],why:['','参数错误不能返回 200 假装成功。','客户端传错参数属于 4xx，不是服务器内部崩了。','404 表示路由或资源不存在，这里属于请求体参数校验失败。'],answer:0,explain:'客户端请求参数不合法（空消息、未知 provider）统一返回 400 Bad Request 和约定格式的错误信息。'},
+  {id:'cs-ov-4',q:'当用户传入的 provider 不在后端支持的白名单（deepseek/openai/anthropic/gemini/qwen）中时，接口应该返回什么？',options:['400 状态码与不支持该提供商的错误提示','200 状态码与空字符串回复内容','500 状态码与服务器内部异常堆栈','404 状态码与页面不存在提示信息'],why:['','参数错误不能返回 200 假装成功。','客户端传错参数属于 4xx，不是服务器内部崩了。','404 表示路由或资源不存在，这里属于请求体参数校验失败。'],answer:0,explain:'客户端请求参数不合法（空消息、未知 provider）统一返回 400 Bad Request 和约定格式的错误信息。'},
   {id:'cs-ov-5',type:'fill',q:'调用 DeepSeek 或 OpenAI 接口时，HTTP 请求头 Authorization 的值格式是：＿ <API_KEY>。',accepted:['Bearer','bearer'],explain:'OpenAI 兼容接口统一使用 Bearer Token 认证：Authorization: Bearer sk-...。'},
   {id:'cs-ov-6',type:'short',q:'简述为什么企业级 AI 客服系统通常要设计一层“多模型统一适配网关”，而不是在业务代码里到处直接调某一家模型的 SDK？',reference:'把不同厂商（DeepSeek、OpenAI、Anthropic、Gemini、通义千问）的 URL、认证头和消息格式封装在统一网关层后，上层客服业务只需要传入 provider、model 和 messages。这样当某一家模型故障降级、涨价，或者不同登录用户配置了自己偏好的厂商 API Key 时，无需修改业务代码就能无缝切换。',points:['屏蔽各厂商接口协议差异，对上层业务提供统一调用方式','支持故障降级、成本优化或按用户自定义配置随时切换模型','业务代码与具体模型解耦，便于维护扩展'],explain:'适配器模式让业务逻辑只关心“发消息、收回复”，不关心底层到底是哪家大模型。'},
  ],
@@ -1000,7 +1000,7 @@ print(f"\\n通过 {passed} / 5")`,
  ],
  quiz:[
   {id:'cs-st-1',q:'SSE（Server-Sent Events）流式响应的标准 Content-Type 响应头是什么？',options:['text/event-stream','application/stream+json','text/plain','multipart/form-data'],why:['','这不是标准 SSE 头。','纯文本不会按事件流解析。','这是文件上传表单的格式。'],answer:0,explain:'SSE 协议规定响应头 Content-Type 必须为 text/event-stream，每条事件以 data: 开头、以两个换行符 \\n\\n 结束。'},
-  {id:'cs-st-2',q:'在裁剪多轮对话历史（滑动窗口）时，哪一条消息必须始终保留在 messages 数组的第 0 个位置，绝对不能被挤掉？',options:['System Prompt（系统提示词：客服身份、业务规则与安全护栏）','用户的第一句问候“你好”','3 天前的历史闲聊','模型上一次报错的日志'],why:['','第一句问候没有规则约束作用。','旧闲聊正是应该被滑动窗口裁剪掉的内容。','报错日志不需要放进对话上下文。'],answer:0,explain:'一旦把 System Prompt 裁掉，模型就会忘记自己是客服以及所有安全边界。正确做法是：[system_msg] + history[-MAX_HISTORY:]。'},
+  {id:'cs-st-2',q:'在裁剪多轮对话历史（滑动窗口）时，哪一条消息必须始终保留在 messages 数组的第 0 个位置，绝对不能被挤掉？',options:['规定客服人设与安全边界的 System Prompt','顾客进入会话时发送的第一句日常问候消息','三天前旧会话里已经完结的历史闲聊对话记录','上一次网络抖动时大模型接口返回的错误日志'],why:['','第一句问候没有规则约束作用。','旧闲聊正是应该被滑动窗口裁剪掉的内容。','报错日志不需要放进对话上下文。'],answer:0,explain:'一旦把 System Prompt 裁掉，模型就会忘记自己是客服以及所有安全边界。正确做法是：[system_msg] + history[-MAX_HISTORY:]。'},
   {id:'cs-st-3',type:'judge',q:'所有顾客共用同一个全局 messages 数组保存对话历史也没关系，反正大家问的都是商城问题。',answer:false,explain:'错误！共用全局数组会导致严重的数据串台和隐私泄露（顾客 B 问“我的订单到哪了”，模型把顾客 A 的订单号和地址回答给了 B）。必须按 session_id 或 user_id 严格隔离。'},
   {id:'cs-st-4',type:'fill',q:'在 SSE 协议中，每个事件块之间用两个换行符分隔，每行数据以 ＿: 开头。',accepted:['data'],explain:'标准 SSE 数据行格式为 data: {"delta": "..."}\\n\\n。'},
   {id:'cs-st-5',type:'short',q:'为什么 AI 客服页面要用流式输出（SSE），而不是等大模型整段生成完再一次性返回 JSON？',reference:'大模型生成整段回复往往需要数秒，如果等全部写完再返回，用户在几秒内看不到任何反馈，体验卡顿；用 SSE 流式输出可以让模型每生成几个字就立刻推给前端显示，把首字响应时间（TTFT）缩短到几百毫秒内，像真人客服边打字边回复一样流畅。',points:['降低首字等待时间（TTFT），避免用户面对长时间白屏','边生成边展示，交互体验接近真人打字'],explain:'流式传输虽然不缩短总生成时间，但把用户感知的等待时间从“整段耗时”降到了“首字耗时”。'},
@@ -1322,8 +1322,8 @@ print(f"\\n通过 {passed} / 5")`,
   },
  ],
  quiz:[
-  {id:'cs-rag-1',q:'在 AI 客服系统中引入 RAG（检索增强生成）最核心的作用是什么？',options:['让客服依据最新的企业知识库条文作答，大幅减少胡编乱造（幻觉），且改规则不用重训模型','让模型生成文字的速度提高 10 倍','完全取代数据库，不再需要存订单表','绕过 API Key 认证免费调用大模型'],why:['','RAG 增加了检索步骤，主要是为了准确性和时效性，不是为了提速。','实时结构化业务数据（如订单状态）仍应存数据库并通过 Tool Calling 查询。','RAG 与接口鉴权无关。'],answer:0,explain:'RAG 把“查企业规章制度”变成开卷考试：规则变了只要改知识库文档即可立即生效，并且还能返回引用的文档编号（sources）供质检核对。'},
-  {id:'cs-rag-2',q:'当顾客问了一个知识库里完全没有收录的问题（检索得分低于阈值，sources 为空）时，企业 AI 客服最稳妥的做法是？',options:['坦诚说明知识库暂未收录该信息，并设置 transfer_human: true 引导转接人工客服','让大模型凭常识自由猜测一个听起来合理的政策','直接返回 500 服务器内部错误','假装没听见，重复上一句话'],why:['','自由猜测政策在客服场景下极易引发客诉与赔偿纠纷。','用户问了冷门问题不是服务器崩溃。','重复上一句话体验极差。'],answer:0,explain:'“不知道就坦诚说不知道并转人工”是企业级 AI 客服和玩具聊天机器人最大的分水岭。'},
+  {id:'cs-rag-1',q:'在 AI 客服系统中引入 RAG（检索增强生成）最核心的作用是什么？',options:['依据最新知识库条文作答以减少幻觉，改规则免重训模型','把大模型每秒生成文字的推理速度直接提升十倍以上','彻底取代关系型数据库，不再需要存储用户的实时订单表','绕过服务端 API Key 鉴权机制，免费调用商业大模型'],why:['','RAG 增加了检索步骤，主要是为了准确性和时效性，不是为了提速。','实时结构化业务数据（如订单状态）仍应存数据库并通过 Tool Calling 查询。','RAG 与接口鉴权无关。'],answer:0,explain:'RAG 把“查企业规章制度”变成开卷考试：规则变了只要改知识库文档即可立即生效，并且还能返回引用的文档编号（sources）供质检核对。'},
+  {id:'cs-rag-2',q:'当顾客问了一个知识库里完全没有收录的问题（检索得分低于阈值，sources 为空）时，企业 AI 客服最稳妥的做法是？',options:['坦诚说明暂未收录该信息，并标记 transfer_human 转人工','让大模型凭借通用常识自由猜测一个听起来合理的售后政策','直接中断连接并向客户端返回 500 服务器内部崩溃错误','忽略顾客的当前提问，原样重复上一轮已经发过的欢迎语'],why:['','自由猜测政策在客服场景下极易引发客诉与赔偿纠纷。','用户问了冷门问题不是服务器崩溃。','重复上一句话体验极差。'],answer:0,explain:'“不知道就坦诚说不知道并转人工”是企业级 AI 客服和玩具聊天机器人最大的分水岭。'},
   {id:'cs-rag-3',type:'judge',q:'RAG 知识库里的文档切分得越碎越好，比如每 3 个字切成一段。',answer:false,explain:'错误。切得太碎会丢失完整的语义上下文（比如把“签收 7 天内”和“无理由退货”拆成了两段毫不相干的碎片）。通常按完整的 FAQ 问答对或自然段落切分（约 200～500 字），并保留少量重叠。'},
   {id:'cs-rag-4',type:'fill',q:'RAG 的英文全称是 Retrieval-Augmented Generation，中文通常译为 ＿增强生成。',accepted:['检索'],explain:'先检索（Retrieval）外部知识片段，再增强（Augmented）提示词交给模型生成（Generation）。'},
   {id:'cs-rag-5',type:'short',q:'为什么客服接口返回给前端的 JSON 里，除了 reply（回复文字）之外，还要带上 sources（命中的知识库编号列表）和 transfer_human（是否转人工布尔值）？',reference:'带上 sources 可以让前端展示“参考政策来源”或供运营后台审计客服回答是否有据可查；带上 transfer_human 布尔字段可以让前端页面在 AI 无法解决时自动弹出“一键转接人工客服”按钮，实现人机协同。',points:['sources 用于溯源与审计，确认回复依据哪条规则','transfer_human 让前端能根据结构化状态触发转人工按钮或工单流转'],explain:'结构化元数据（sources、transfer_human）让 AI 从单纯的“聊天框”变成可嵌入业务流程的系统组件。'},
@@ -1345,7 +1345,7 @@ export const csAgent:AiLevel={
   },
   {
    title:'任务：实现查单退货工具与用户专属 API 限流',
-   body:'完成智能 AI 客服的最终关任务：\n一、内置订单表 ORDERS：ORD-1001（已发货，签收 0 天）、ORD-1002（已签收 3 天，金额 299 元）、ORD-1003（已签收 12 天，金额 599 元）；\n二、POST /api/support/agent：接收 {"message": "...", "user_id": "u1"}，支持自动执行 query_order 与 create_refund 工具。例如对 ORD-1002 申请退货时，返回 {"reply": "...", "tool_used": "create_refund", "ticket_id": "RF-ORD-1002", "allowed": true}；对已签收 12 天的 ORD-1003 申请无理由退货时，返回 {"reply": "...", "tool_used": "create_refund", "allowed": false}；\n三、POST /api/support/user-config：当 is_guest 为 true 时返回 403；已登录用户可保存 {"user_id": "alice", "provider": "openai", "api_key": "sk-xxx", "daily_limit": 2}，只有该 user_id 在调用 /api/support/agent 时会使用该配置，且超过 daily_limit（如第 3 次调用）时返回 429。',
+   body:'完成第 4 关的工具调用与权限控制任务：\n一、内置订单表 ORDERS：ORD-1001（已发货，签收 0 天）、ORD-1002（已签收 3 天，金额 299 元）、ORD-1003（已签收 12 天，金额 599 元）；\n二、POST /api/support/agent：接收 {"message": "...", "user_id": "u1"}，支持自动执行 query_order 与 create_refund 工具。例如对 ORD-1002 申请退货时，返回 {"reply": "...", "tool_used": "create_refund", "ticket_id": "RF-ORD-1002", "allowed": true}；对已签收 12 天的 ORD-1003 申请无理由退货时，返回 {"reply": "...", "tool_used": "create_refund", "allowed": false}；\n三、POST /api/support/user-config：当 is_guest 为 true 时返回 403；已登录用户可保存 {"user_id": "alice", "provider": "openai", "api_key": "sk-xxx", "daily_limit": 2}，只有该 user_id 在调用 /api/support/agent 时会使用该配置，且超过 daily_limit（如第 3 次调用）时返回 429。',
    variants:{
     python:{
      practice:{
@@ -1758,7 +1758,7 @@ print(f"\\n通过 {passed} / 6")`,
   },
  ],
  quiz:[
-  {id:'cs-ag-1',q:'关于 AI 客服中的工具调用（Function Calling），下面哪个说法是正确的？',options:['大模型只负责输出“建议调用哪个函数及参数”，真正的数据库查询和 7 天退货资格校验必须由后端代码执行','大模型自己能直接连进公司的 MySQL 数据库修改订单状态','只要在 Prompt 里写上“超过 7 天不准退”，工具函数代码里就不用做任何校验了','工具调用只能在 Python 里用，Go 和 Node.js 不支持'],why:['','大模型运行在厂商服务器，不能也不应该直接连你的数据库。','模型可能被诱导绕过 Prompt，业务规则必须在后端工具代码里硬性校验。','Function Calling 是 HTTP JSON 协议层面的机制，任何语言都支持。'],answer:0,explain:'大模型是“大脑”，工具函数是“手脚”，而权限与业务规则校验（如是否满 7 天、是否属于当前登录用户的订单）必须锁死在后端代码里。'},
+  {id:'cs-ag-1',q:'关于 AI 客服中的工具调用（Function Calling），下面哪个说法是正确的？',options:['模型输出建议调用的函数与参数，数据库查询和退货资格校验由后端代码执行','大模型自己能直接跨公网连进公司的生产 MySQL 数据库修改订单状态','只要在系统提示词里写上超过七天不准退，后端工具函数就无需再写代码校验','工具调用属于 Python 语言特有的语法机制，Go 和 Node.js 后端均不支持'],why:['','大模型运行在厂商服务器，不能也不应该直接连你的数据库。','模型可能被诱导绕过 Prompt，业务规则必须在后端工具代码里硬性校验。','Function Calling 是 HTTP JSON 协议层面的机制，任何语言都支持。'],answer:0,explain:'大模型是“大脑”，工具函数是“手脚”，而权限与业务规则校验（如是否满 7 天、是否属于当前登录用户的订单）必须锁死在后端代码里。'},
   {id:'cs-ag-2',type:'multi',q:'在支持用户自定义更换大模型 API Key 的系统中，下面哪些安全设计是必须遵守的？（多选）',options:['游客模式下禁止更换 API Key（返回 403），仅允许已登录账号配置','用户的 API Key 按 user_id 隔离存储在服务端，仅该用户本人会话可调用，其他用户无法使用','查询配置接口只返回脱敏后的 Key（如 sk-0995****aeac），绝不把完整明文回传前端','允许用户设置每日调用上限（daily_limit）与单次最大 Token 限制，超限返回 429'],why:['','','',''],answers:[0,1,2,3],explain:'这四条正是多租户自带密钥（BYOK，Bring Your Own Key）的核心安全规范：游客禁用、账号隔离、展示脱敏、自主限流。'},
   {id:'cs-ag-3',type:'judge',q:'用户 A 在同一台电脑上登录并配置了自己的 OpenAI API Key，退出登录后，未登录的游客或登录的用户 B 应该也能继续免费用用户 A 的这个 Key。',answer:false,explain:'错误！用户替换的 API Key 必须严格绑定在该登录用户（user_id）名下，存放在服务端数据库中并按当前登录会话校验，其他用户或游客绝不能使用。'},
   {id:'cs-ag-4',type:'fill',q:'当用户的 API 调用次数达到自己设置的每日上限（daily_limit）时，最规范的 HTTP 状态码是 ＿（Too Many Requests）。',accepted:['429'],explain:'HTTP 429 Too Many Requests 专门用于表示触发频率或配额上限。'},

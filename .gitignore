@@ -49,3 +49,4 @@ next-env.d.ts
 
 # 旁白录音由 scripts/gen-tts.mjs 生成，体积大，不进仓库
 /public/tts/
+/gemini-proxy/.bin/

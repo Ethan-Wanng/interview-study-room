@@ -2,12 +2,9 @@
 import '../ai/ai.css';
 import './interview.css';
 import {useEffect,useMemo,useRef,useState} from 'react';
-import {useI18n,LanguageControl} from '../components/i18n';
-import ThemeControl from '../components/theme-control';
-import AccountMenu from '../components/account-menu';
-import SiteNav from '../components/site-nav';
+import {useI18n} from '../components/i18n';
+import SiteHeader from '../components/site-header';
 import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription} from '@/components/ui/dialog';
-import {MessagesSquare} from 'lucide-react';
 import type {StudyBank} from '@/lib/catalog-types';
 import type {LevelLink} from '@/lib/interview-links';
 import {MINE,answerBlocks,type MyQuestion} from '@/lib/my-questions';
@@ -48,11 +45,11 @@ export default function InterviewClient({username,member,bank:rawBank,links,cour
  const editable=rawBank.tracks.map(s=>({id:s.id,name:names.get(s.id)??s.id}));
  const current=track===MINE?mineStat:tracks.find(s=>s.id===track);
  return <div className="ai-shell iv-shell">
-  <header className="ai-header"><a href="/interview" className="ai-brand" onClick={e=>{if(track){e.preventDefault();window.history.back()}}}><MessagesSquare size={23}/><span>{L('面试自习室','Study Room')}<small>{current?L(`面试 · ${current.name}`,`Interview · ${current.name}`):L('面试','Interview')}</small></span></a><SiteNav active="interview"/><div className="top-actions"><LanguageControl/><ThemeControl/><AccountMenu username={username}/></div></header>
+  <SiteHeader active="interview" username={username}/>
   {error&&<div role="alert" className="error iv-error">{error}<button onClick={()=>void call()}>{L('重试','Retry')}</button></div>}
   {!current?<InterviewHome tracks={tracks} mine={mineStat} member={member} today={today} goals={data?.preferences??{new_goal:10,review_goal:20}} onOpen={open} onAdd={()=>setEditor({editing:null})} onGoals={()=>setGoalOpen(true)}/>
-   :<StudyView key={current.id} initial={jump} track={current} tracks={[...tracks,...(mine.length?[mineStat]:[])]} questions={questions.filter(q=>inTrack(q,current.id))} data={data} links={links} member={member}
-     onTrack={id=>{setTrack(id);window.history.replaceState({ivTrack:id},'')}} onRate={(questionId,rating)=>save({action:'rate',questionId,rating})}
+   :<StudyView key={current.id} initial={jump} track={current} questions={questions.filter(q=>inTrack(q,current.id))} data={data} links={links} member={member}
+     onRate={(questionId,rating)=>save({action:'rate',questionId,rating})}
      onAdd={()=>setEditor({editing:null})} onEdit={id=>setEditor({editing:mine.find(m=>m.id===id)??null})}
      onDelete={async id=>{const r=await fetch('/api/my-questions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'delete',id})});const d=await r.json() as {items?:MyQuestion[];error?:string};if(r.ok)setMine(d.items??[]);else setError(d.error??'')}}/>}
   {editor&&<MyEditor open onClose={()=>setEditor(null)} onSaved={setMine} editing={editor.editing} subject={track&&track!==MINE?track:MINE} tracks={editable}/>}

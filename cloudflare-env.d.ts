@@ -6,5 +6,7 @@ declare namespace Cloudflare {
     AUTO_QUESTION_API_TOKEN?: string;
     DEEPSEEK_API_KEY?: string;
     GEMINI_API_KEY?: string;
+    GEMINI_PROXY_URL?: string;
+    GEMINI_ANYTLS_NODE?: string;
   }
 }

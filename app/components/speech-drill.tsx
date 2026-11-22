@@ -62,7 +62,7 @@ function ScoreView({s}:{s:Score}){const L=useL();
 // 听力题的播放按钮：只放声音不显示原文。
 export function ListenButton({text}:{text:string}){const L=useL();
  useEffect(()=>()=>stopSaying(),[]);
- return <div className="sd-listen"><button type="button" className="button secondary" onClick={()=>sayEnglish(text,0.9)}><Volume2 size={16}/>{L('播放录音','Play')}</button><button type="button" className="button secondary" onClick={()=>sayEnglish(text,0.6)}><Turtle size={16}/>{L('慢速再听','Slower')}</button><small>{L('可以反复听，听不清就点慢速','Replay as often as you like')}</small></div>}
+ return <div className="sd-listen"><button type="button" className="button secondary" onClick={()=>sayEnglish(text,0.9)}><Volume2 size={16}/>{L('播放录音','Play')}</button><button type="button" className="button secondary" onClick={()=>sayEnglish(text,0.6)}><Turtle size={16}/>{L('慢速再听','Slower')}</button></div>}
 
 // 一组句子：每句都能听（正常 / 慢速）和跟读打分；整组都有说话人时按对话显示，可以播放整段，或选一个角色和电脑分角色对话。
 // words：单词表，每个词下面有例句（也能听），可以遮住中文自测，点一下遮住的地方再看答案。
@@ -106,7 +106,7 @@ function SentenceList({phrases,words}:{phrases:Phrase[];words?:boolean}){const L
     <button type="button" title={L('慢速听','Listen slowly')} aria-label={L('慢速听','Listen slowly')} onClick={()=>play(i,0.6)}><Turtle size={17}/></button>
     {canRec&&<button type="button" className={listening===i?'rec':''} title={L('跟读打分','Repeat and get scored')} aria-label={L('跟读打分','Repeat and get scored')} onClick={()=>listening===i?(stopRec.current?.(),setListening(null)):repeat(i)}><Mic size={17}/></button>}
    </div></div>})}
-  {!canRec&&<p className="sd-hint">{L('跟读打分需要 Chrome 或 Edge 浏览器并允许使用麦克风；现在可以先点喇叭听，再自己大声跟着说。','Scored repeating needs Chrome or Edge with microphone access; for now, listen and repeat out loud.')}</p>}
+  {!canRec&&<p className="sd-hint">{L('跟读打分需要 Chrome 或 Edge 并允许麦克风','Scoring needs Chrome or Edge with microphone access')}</p>}
  </div>}
 
 // 把一段英文按句子切开，一句一句地读（整段一次性交给语音合成，有的浏览器读到十几秒会自己停）。
@@ -130,7 +130,7 @@ function Passage({phrases}:{phrases:Phrase[]}){const L=useL();
    <button type="button" className="button secondary" onClick={()=>readAll(0.7)}><Turtle size={15}/>{L('慢速读全文','Read article slowly')}</button>
    <button type="button" className={'button secondary'+(zh?' on':'')} onClick={()=>setZh(!zh)}><Languages size={15}/>{zh?L('隐藏中文','Hide Chinese'):L('逐句中文对照','Show Chinese')}</button></div>
   <div className={'sd-paper'+(zh?' zh':'')} lang="en">{paras.map((idx,k)=><p key={k}>{idx.map(i=><Fragment key={i}><span className={'sd-sent'+(active===i?' active':'')} onClick={()=>readOne(i)}><EnWords text={phrases[i].en} noSentenceHorn/><i role="button" tabIndex={0} className="en-sent-horn sentence" title={L(`句子点读：${phrases[i].en}`,`Read sentence: ${phrases[i].en}`)} aria-label={L('句子点读','Read sentence')} onClick={e=>{e.stopPropagation();readOne(i)}} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();readOne(i)}}}><Volume2 size={13}/></i></span>{zh&&<span className="sd-zh" lang="zh">{phrases[i].zh}</span>}{' '}</Fragment>)}</p>)}</div>
-  <p className="sd-hint">{L('点读说明：点任意单词听「单词」· 点句末喇叭听「整句」· 点上方按钮听「整篇文章」。','Tap any word for word audio, the speaker at the end of a sentence for sentence audio, or the buttons above for full-article audio.')}</p>
+  
  </div>}
 
 // 阅读题的原文：同样支持「文章点读（全文 / 慢速）」「句子点读（逐句喇叭 + 高亮）」「单词点读（点任意词）」。
@@ -146,7 +146,7 @@ export function ReadingPassage({text}:{text:string}){const L=useL();const [activ
   <div className="sd-bar">
    <button type="button" className="button secondary" onClick={active!==null?stop:()=>readAll(0.9)}>{active!==null?<><Square size={15}/>{L('停止','Stop')}</>:<><Volume2 size={15}/>{L('文章点读 · 朗读全文','Read passage')}</>}</button>
    <button type="button" className="button secondary" onClick={()=>readAll(0.7)}><Turtle size={15}/>{L('慢速读全文','Read slowly')}</button>
-   <small className="sd-hint">{L('点单词读单词 · 点句末喇叭读整句 · 点按钮读全文','Tap word / sentence speaker / full passage')}</small>
+   
   </div>
   <div className="sd-paper" lang="en">{paras.map((sents,pIdx)=><p key={pIdx}>{sents.map(s=>{const idx=cursor++;return <Fragment key={idx}><span className={'sd-sent'+(active===idx?' active':'')} onClick={()=>readOne(idx)}><EnWords text={s} noSentenceHorn/><i role="button" tabIndex={0} className="en-sent-horn sentence" title={L(`句子点读：${s}`,`Read sentence: ${s}`)} aria-label={L('句子点读','Read sentence')} onClick={e=>{e.stopPropagation();readOne(idx)}} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();readOne(idx)}}}><Volume2 size={13}/></i></span>{' '}</Fragment>})}</p>)}</div>
  </div>}

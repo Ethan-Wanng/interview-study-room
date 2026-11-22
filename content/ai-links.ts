@@ -13,6 +13,7 @@ export const interviewByLevel:Record<string,string[]>={
  'model-internals':['ai-q-attention','ai-q-transformer-block','ai-q-position','ai-q-moe','ai-q-cot','ai-q-self-consistency','ai-q-reasoning-models','ai-q-gqa'],
  'agents':['ai-q-agent-vs-workflow','ai-q-agent-reliability','ai-q-react-plan','ai-q-multi-agent','ai-q-sandbox','ai-q-design-code-assistant','ai-q-context-compaction'],
  'evals':['ai-q-eval','ai-q-observability','ai-q-judge-bias','ai-q-agent-eval','ai-q-hallucination-detect','ai-q-online-ab'],
+ 'harness':['ai-q-harness','ai-q-agent-skills','ai-q-skill-vs-mcp-subagent','ai-q-agent-hooks','ai-q-aci-design','ai-q-coding-agent-arch','ai-q-a2a','ai-q-durable-agent','ai-q-memory-poisoning'],
  'serving':['ai-q-serving','ai-q-quantization','ai-q-paged-attention','ai-q-multimodal','ai-q-speculative-decoding','ai-q-flash-attention'],
  'fine-tuning':['ai-q-lora','ai-q-ft-data','ai-q-ft-methods','ai-q-rlhf-dpo','ai-q-distillation','ai-q-rlvr-grpo'],
  'safety':['ai-q-injection','ai-q-guardrails','ai-q-jailbreak','ai-q-tenant-isolation','ai-q-mcp-security'],

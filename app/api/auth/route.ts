@@ -1,6 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {studyDb} from '@/db/study';
 import {sessionUser,createSession,clearCookie,tokenFrom,hashToken,assertSameOrigin,rateLimit,AuthError,passwordHash,passwordMatches} from '@/lib/site-auth';
+import {currentAdmin} from '@/lib/admin-auth';
 export const dynamic='force-dynamic';
 const headers={'Cache-Control':'no-store'};
 // Accounts come from GitHub / Google (see ./oauth/[provider]) or from email + password (no verification mail is sent);
@@ -39,7 +40,7 @@ async function emailAuth(req:Request,p:EmailBody){
  catch{throw new AuthError('这个邮箱已经注册过了，请直接登录。',409)}
  return Response.json({user:{id,username:name}},{headers:{...headers,'Set-Cookie':await createSession(id)}});
 }
-export async function GET(req:Request){try{return Response.json({user:await sessionUser(req.headers)},{headers})}catch{return Response.json({error:'账号服务暂时不可用，请稍后重试。'},{status:503,headers})}}
+export async function GET(req:Request){try{const [user,admin]=await Promise.all([sessionUser(req.headers),currentAdmin(req.headers)]);return Response.json({user,isAdmin:!!admin},{headers})}catch{return Response.json({error:'账号服务暂时不可用，请稍后重试。'},{status:503,headers})}}
 export async function POST(req:Request){try{assertSameOrigin(req);const text=await req.text();if(text.length>4096)throw new AuthError('输入内容过长。');let p:{action?:unknown}|null;try{p=JSON.parse(text)}catch{throw new AuthError('请求格式无效。')}if(!p||typeof p!=='object')throw new AuthError('请求格式无效。');const db=studyDb();if(p.action==='logout'){const token=tokenFrom(req.headers);if(token)await db.prepare('DELETE FROM sessions WHERE token_hash=?').bind(hashToken(token)).run();return Response.json({ok:true},{headers:{...headers,'Set-Cookie':clearCookie()}})}
 if(p.action==='email-register'||p.action==='email-login')return await emailAuth(req,p as EmailBody);
 if(p.action!=='guest')throw new AuthError('操作无效。');

@@ -55,3 +55,34 @@ export const practicePlanNames=sqliteTable('practice_plan_names',{
  spaceId:text('space_id').notNull(),type:text('type').notNull(),name:text('name').notNull(),
  planId:text('plan_id').notNull().unique().references(()=>practicePlans.id,{onDelete:'cascade'}),
 },t=>[primaryKey({columns:[t.spaceId,t.type,t.name]})]);
+
+export const stories=sqliteTable('stories',{
+ id:text('id').primaryKey(),
+ userId:text('user_id').notNull().default(''),
+ ownerHash:text('owner_hash').notNull().default(''),
+ author:text('author').notNull().default('匿名学友'),
+ roleTag:text('role_tag').notNull().default(''),
+ category:text('category').notNull().default('journey'),
+ quote:text('quote').notNull().default(''),
+ title:text('title').notNull(),
+ content:text('content').notNull(),
+ likes:integer('likes').notNull().default(0),
+ featured:integer('featured').notNull().default(0),
+ createdAt:integer('created_at').notNull(),
+ updatedAt:integer('updated_at').notNull(),
+},t=>[index('idx_stories_created').on(t.createdAt),index('idx_stories_likes').on(t.likes)]);
+
+export const storyLikes=sqliteTable('story_likes',{
+ storyId:text('story_id').notNull().references(()=>stories.id,{onDelete:'cascade'}),
+ voterKey:text('voter_key').notNull(),
+ createdAt:integer('created_at').notNull(),
+},t=>[primaryKey({columns:[t.storyId,t.voterKey]})]);
+
+export const playgroundSnippets=sqliteTable('playground_snippets',{
+ id:text('id').primaryKey(),
+ lang:text('lang').notNull(),
+ code:text('code').notNull(),
+ title:text('title').notNull().default(''),
+ userId:text('user_id').notNull().default(''),
+ createdAt:integer('created_at').notNull(),
+},t=>[index('idx_playground_snippets_created').on(t.createdAt)]);

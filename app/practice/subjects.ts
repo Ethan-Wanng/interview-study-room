@@ -1,10 +1,14 @@
 // 「训练」页用到的学科信息：只传题量、解锁条件等轻量数据，题目本身在进入答题后才加载。
 import {examSize,type AiLevel,type Exam,type Tier} from '@/content/journey';
 import {goLevels,goTiers} from '@/content/go-journey';
+import {rustLevels,rustTiers} from '@/content/rust-journey';
+import {pythonLevels,pythonTiers} from '@/content/python-journey';
 import {aiLevels,aiTiers} from '@/content/ai-journey';
 import {backendLevels,backendTiers} from '@/content/backend-journey';
 import {frontendLevels,frontendTiers} from '@/content/frontend-journey';
 import {goExams} from '@/content/exams/go';
+import {rustExams} from '@/content/exams/rust';
+import {pythonExams} from '@/content/exams/python';
 import {aiExams} from '@/content/exams/ai';
 import {backendExams} from '@/content/exams/backend';
 import {frontendExams} from '@/content/exams/frontend';
@@ -18,6 +22,8 @@ const meta=(id:string,name:string,nameEn:string,icon:string,storageKey:string,le
 
 export const practiceSubjects:HubSubject[]=[
  meta('go','Go 开发','Go development','🐹','go-journey:v1:',goLevels,goTiers,goExams),
+ meta('rust','Rust 开发','Rust development','🦀','rust-journey:v1:',rustLevels,rustTiers,rustExams),
+ meta('python','Python 开发','Python development','🐍','python-journey:v1:',pythonLevels,pythonTiers,pythonExams),
  meta('ai','AI 开发','AI development','🤖','ai-journey:v1:',aiLevels,aiTiers,aiExams),
  meta('backend','后端通用','Backend fundamentals','🗄️','backend-journey:v1:',backendLevels,backendTiers,backendExams),
  meta('frontend','前端开发','Frontend development','🎨','frontend-journey:v1:',frontendLevels,frontendTiers,frontendExams),

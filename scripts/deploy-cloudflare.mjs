@@ -22,3 +22,10 @@ if(existsSync('../2.txt')){
  const dsKey=readFileSync('../2.txt','utf8').trim();
  if(dsKey)run(['secret','put','DEEPSEEK_API_KEY'],dsKey);
 }
+if(existsSync('../1.txt')){
+ const gmKey=readFileSync('../1.txt','utf8').trim();
+ if(gmKey)run(['secret','put','GEMINI_API_KEY'],gmKey);
+}
+if(process.env.GEMINI_PROXY_URL?.trim()){
+ run(['secret','put','GEMINI_PROXY_URL'],process.env.GEMINI_PROXY_URL.trim());
+}

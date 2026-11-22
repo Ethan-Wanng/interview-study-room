@@ -15,29 +15,38 @@ The rule of thumb: when the steps are fixed and the result must be predictable (
 3. Parallelisation: split the task into pieces, run them at the same time, merge at the end, like several people researching separately;
 4. Orchestrator–workers: one model breaks the task down and hands out the work while several others carry it out, like a project manager with a team;
 5. Evaluator–optimizer: one writes, one reviews, and the draft is revised until it passes, like an author and an editor.`},
- {title:'Evaluator–optimizer: a write-and-review loop',body:`The evaluator–optimizer pattern suits tasks with a clear quality bar, such as a report that must follow a format or a translation that must stay faithful. One model (or the same model playing two roles) writes a draft, another reviews it and lists what to fix, and the writer revises until the reviewer is satisfied.
-Always cap the number of rounds. Otherwise the two sides may never agree, and the bill keeps growing. Here is the loop in code; llm(...) stands for one model call that returns the text it wrote.`,
-  code:`MAX_ROUNDS = 3
+ {title:'Try it: evaluator–optimizer (a write-and-review loop)',body:`The evaluator–optimizer pattern suits tasks with a clear quality bar, such as a report that must follow a format or a translation that must stay faithful. One function generate writes a first draft, another review checks it and returns (passed, feedback), and improve revises the draft using that feedback until it passes or hits the round limit.
+Always cap the number of rounds (max_rounds). Otherwise the two sides may never agree, and the bill keeps growing. Let’s run this loop locally.`,
+  practice:{steps:['Check that Python 3 is installed (run python --version in a terminal).','Create a file called refine.py and paste in the code below.','Run python refine.py and watch the first draft get caught by review, revised, and then accepted.'],expect:`Review: Missing the 7-day return window
+Final: We accept returns within 7 days of delivery.`},
+  code:`def generate(task):
+    return "We accept returns."
 
-def write_with_review(task):
-    draft = llm(f"Complete this task: {task}")
-    for _ in range(MAX_ROUNDS):
-        review = llm(f"Task: {task}\\nDraft: {draft}\\n"
-                     "If it fully meets the requirements, reply with PASS only; otherwise list each change needed.")
-        if review.strip() == "PASS":
+def review(task, draft):
+    if "7 days" not in draft:
+        return False, "Missing the 7-day return window"
+    return True, "PASS"
+
+def improve(task, draft, feedback):
+    return "We accept returns within 7 days of delivery."
+
+def refine(task, max_rounds=3):
+    draft = generate(task)
+    for _ in range(max_rounds):
+        passed, feedback = review(task, draft)
+        if passed:
             return draft
-        draft = llm(f"Task: {task}\\nDraft: {draft}\\nReview: {review}\\n"
-                    "Revise it as the review asks and output the full revised draft only.")
-    return draft`,
+        print("Review:", feedback)
+        draft = improve(task, draft, feedback)
+    return draft
+
+print("Final:", refine("Write a one-line return policy"))`,
   explain:[
-   {at:'MAX_ROUNDS = 3',text:'At most three rounds of review and revision. This is what prevents an endless loop.'},
-   {at:'def write_with_review(task):',text:'Define the function. It takes a task description and returns the final draft.'},
-   {at:'draft = llm(f"Complete this task',text:'Step one: have the model write a first draft.'},
-   {at:'for _ in range(MAX_ROUNDS):',text:'Start the loop, at most MAX_ROUNDS times. The underscore means we do not need the loop counter.'},
-   {at:'review = llm(f"Task: {task}',to:'"If it fully meets',text:'Have the model act as the reviewer: check the draft against the task, reply PASS if it is good, and otherwise list specific changes.'},
-   {at:'if review.strip() == "PASS":',to:'return draft',text:'strip() removes surrounding whitespace. If the review passed, return the current draft straight away.'},
-   {at:'draft = llm(f"Task: {task}\\nDraft: {draft}\\nReview',to:'"Revise it as the review asks',text:'Not passed: give the model the task, the draft and the review together, have it produce a revised draft, and go round again.'},
-   {at:'    return draft',text:'If three rounds were not enough, return the latest version (in a real project you might also flag it for a person to look at).'}]},
+   {at:'def generate(task):',to:'return "We accept returns within 7 days of delivery."',text:'Three small functions stand in for the three model calls: generate writes the first draft, review checks whether "7 days" is mentioned and returns (passed, feedback), and improve rewrites the draft from the feedback.'},
+   {at:'def refine(task, max_rounds=3):',to:'draft = generate(task)',text:'Define the evaluator–optimizer loop refine: generate the initial draft first, and cap the loop at max_rounds (3 by default).'},
+   {at:'for _ in range(max_rounds):',to:'return draft',text:'In each round, call review(task, draft) to get passed and feedback; if passed is True, return the draft immediately.'},
+   {at:'print("Review:", feedback)',to:'draft = improve(task, draft, feedback)',text:'When review fails, print the feedback and call improve(task, draft, feedback) to produce a revised draft for the next round.'},
+   {at:'    return draft',to:'print("Final:"',text:'If max_rounds runs out, return the latest draft so the loop always terminates, then print the final result.'}]},
  {title:'The agent loop: observe, think, act',body:`Inside, an agent is simply a loop: give the model everything that has happened so far → the model decides whether to answer directly or call a tool → your program runs the tool and hands the result back → the model decides the next step… until it gives a final answer.
 Note that the tool is actually run by your program. The model only decides what to call and with which arguments. So validate the arguments and check permissions before running anything.`,
   code:`for step in range(MAX_STEPS):

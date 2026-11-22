@@ -1,10 +1,12 @@
 import {sessionUser,assertSameOrigin,AuthError} from '@/lib/site-auth';
 import {studyDb,dayNow} from '@/db/study';
 import {getUserAiSettings,prepareCustomAi} from '@/db/ai-config';
+import type {RuntimeAiConfig} from '@/lib/ai-config';
 import {tutorStream,VisionError} from '@/lib/gemini';
 import {studyCatalog} from '@/db/catalog';
 import {searchForTutor} from '@/lib/site-search';
-import {TUTOR_LIMITS,TUTOR_QUOTA,TUTOR_IMAGES,IMAGE_URL,TUTOR_MODELS,type TutorContext,type TutorEvent,type TutorLesson,type TutorMessage,type TutorQuiz} from '@/lib/tutor-types';
+import {TUTOR_LIMITS,TUTOR_QUOTA,TUTOR_IMAGES,IMAGE_URL,TUTOR_MODELS,type TutorContext,type TutorEvent,type TutorLesson,type TutorMessage,type TutorPlayground,type TutorQuiz} from '@/lib/tutor-types';
+import {parseThinkingLevel,type ThinkingLevel} from '@/lib/thinking';
 
 export const dynamic='force-dynamic';
 const fail=(error:string,message:string,status=400,extra:object={})=>Response.json({error,message,...extra},{status});
@@ -21,12 +23,18 @@ function quizOf(v:unknown):TutorQuiz|null{if(!v||typeof v!=='object')return null
  if(o.code!==undefined&&!str(o.code,6000)||o.given!==undefined&&!str(o.given,8000)||o.correct!==undefined&&typeof o.correct!=='boolean')return null;
  if(o.options!==undefined&&(!Array.isArray(o.options)||o.options.length>8||!o.options.every(x=>str(x,600))))return null;
  return {type:o.type as string,q:o.q as string,code:o.code as string|undefined,options:o.options as string[]|undefined,answer:o.answer as string,explain:o.explain as string,given:o.given as string|undefined,correct:o.correct as boolean|undefined}}
+function playgroundOf(v:unknown):TutorPlayground|null{if(!v||typeof v!=='object')return null;const o=v as Record<string,unknown>;
+ if(!str(o.lang,40)||!str(o.code,50_000))return null;
+ if(o.output!==undefined&&!str(o.output,12_000)||o.error!==undefined&&!str(o.error,12_000))return null;
+ return {lang:o.lang as string,code:o.code as string,output:o.output as string|undefined,error:o.error as string|undefined}}
 function contextOf(v:unknown):TutorContext|null{if(!v||typeof v!=='object')return null;const o=v as Record<string,unknown>;
  if(o.kind==='practice'||o.kind==='lesson'||o.kind==='task'||o.kind==='support'){const lesson=lessonOf(o.lesson);return lesson&&{kind:o.kind,lesson}}
- if(o.kind==='hint'||o.kind==='explain'){const quiz=quizOf(o.quiz);return quiz&&{kind:o.kind,quiz}}
+ if(o.kind==='hint'||o.kind==='explain'||o.kind==='recite'){const quiz=quizOf(o.quiz);return quiz&&{kind:o.kind,quiz}}
+ if(o.kind==='playground'){const playground=playgroundOf(o.playground);return playground&&{kind:'playground',playground}}
  if(o.kind==='site')return str(o.page,300)?{kind:'site',page:o.page as string}:null;
  return null}
-function parse(body:unknown):{context:TutorContext;messages:TutorMessage[];model?:string}|null{if(!body||typeof body!=='object')return null;const {context:c,messages:m,model}=body as Record<string,unknown>;
+const normalizeTutorModel=(m:unknown)=>m==='gemini-flash'?'gemini-4':m;
+function parse(body:unknown):{context:TutorContext;messages:TutorMessage[];model?:string;geminiProxy:boolean;thinkingLevel:ThinkingLevel}|null{if(!body||typeof body!=='object')return null;const {context:c,messages:m,model:rawModel,geminiProxy,thinkingLevel}=body as Record<string,unknown>;const model=normalizeTutorModel(rawModel);
  if(model!==undefined&&model!=='auto'&&model!=='custom'&&!TUTOR_MODELS.some(x=>x.id===model))return null;
  const context=contextOf(c);if(!context||!Array.isArray(m)||!m.length||m.length>TUTOR_LIMITS.messages)return null;
  const messages=m.map(x=>x&&typeof x==='object'?x as Record<string,unknown>:{});
@@ -34,7 +42,7 @@ function parse(body:unknown):{context:TutorContext;messages:TutorMessage[];model
  if(!messages.every(x=>{const imgs=imagesOf(x);return (x.role==='user'||x.role==='model')&&str(x.text,TUTOR_LIMITS.text)&&imgs!==null&&((x.text as string).trim()||imgs.length)&&(x.role==='user'||!imgs.length)&&imgs.length<=TUTOR_IMAGES.perMessage&&imgs.every(u=>typeof u==='string'&&u.length<=TUTOR_IMAGES.size&&IMAGE_URL.test(u))}))return null;
  if(messages.reduce((n,x)=>n+(imagesOf(x)?.length??0),0)>TUTOR_IMAGES.perRequest)return null;
  if(messages[0].role!=='user'||messages[messages.length-1].role!=='user')return null;
- return {context,model:model as string|undefined,messages:messages.map(x=>({role:x.role as TutorMessage['role'],text:x.text as string,...(imagesOf(x)?.length?{images:imagesOf(x) as string[]}:{})}))}}
+ return {context,model:model as string|undefined,geminiProxy:geminiProxy!==false,thinkingLevel:parseThinkingLevel(thinkingLevel),messages:messages.map(x=>({role:x.role as TutorMessage['role'],text:x.text as string,...(imagesOf(x)?.length?{images:imagesOf(x) as string[]}:{})}))}}
 
 // 学习者在问“哪里能学到 / 练到某个关键词”时，先做一次站内搜索，把找到的卡片、题目和面试题（带链接）交给 AI。
 // 全站 AI 老师每次都搜；卡片和题目旁边的 AI 老师只在问到“哪里、哪一关、相关的题”这类话时才搜；答题前的提示和客服演练不搜。
@@ -64,6 +72,33 @@ export async function POST(req:Request){try{assertSameOrigin(req);const user=awa
  let body:unknown;try{body=JSON.parse(await req.text())}catch{return fail('invalid','请求内容无效。')}
  const input=parse(body);if(!input)return fail('invalid','请求内容无效，或者对话太长了，可以点“重新开始”。');
 
+ const streamTutor=(remaining:number,onRefund:()=>Promise<unknown>,errMsg:(e:unknown)=>string,customCfg?:RuntimeAiConfig,site?:string)=>{
+  const enc=new TextEncoder();
+  let closed=false,wrote=false;
+  const ctl=new AbortController();
+  const abort=()=>{closed=true;ctl.abort()};
+  req.signal?.addEventListener('abort',abort,{once:true});
+  const out=new ReadableStream<Uint8Array>({
+   async start(c){
+    const send=(e:TutorEvent)=>{if(closed)return;try{c.enqueue(enc.encode(JSON.stringify(e)+'\n'))}catch{abort()}};
+    send({t:'start'});
+    try{
+     const links=await findLinks(input.context,input.messages);
+     const model=await tutorStream(input.context,input.messages,text=>{wrote=true;send({t:'delta',text})},()=>{wrote=false;send({t:'reset'})},customCfg,site,text=>{wrote=true;send({t:'think',text})},links,input.geminiProxy,m=>send({t:'model',model:m}),ctl.signal,input.thinkingLevel);
+     send({t:'done',remaining,model});
+    }catch(e){
+     if(ctl.signal.aborted){if(!wrote)await onRefund().catch(()=>{})}
+     else{await onRefund().catch(()=>{});send({t:'error',message:errMsg(e)})}
+    }finally{
+     req.signal?.removeEventListener('abort',abort);
+     if(!closed)try{c.close()}catch{}
+    }
+   },
+   cancel(){abort()},
+  });
+  return new Response(out,{headers:{'content-type':'application/x-ndjson; charset=utf-8','cache-control':'no-store, no-transform','x-accel-buffering':'no'}});
+ };
+
  // 学习者在对话框里明确选了站点模型时，不走专属 API，直接用站点模型（算站点每日次数）。
  const siteModel=input.model&&input.model!=='auto'&&input.model!=='custom'?input.model:undefined;
  // 已登录用户如果启用了自己的专属 API Key，则仅该用户本人可用，并执行用户自设的限额与场景限制（游客绝不允许使用自定义 Key）
@@ -71,22 +106,13 @@ export async function POST(req:Request){try{assertSameOrigin(req);const user=awa
   const custom=await prepareCustomAi(user.id,'tutor');
   if(custom.mode==='blocked')return fail('quota',custom.message,429,{remaining:0});
   if(custom.mode==='custom'){
-   const enc=new TextEncoder();
-   const out=new ReadableStream<Uint8Array>({async start(c){const send=(e:TutorEvent)=>c.enqueue(enc.encode(JSON.stringify(e)+'\n'));send({t:'start'});
-    try{await tutorStream(input.context,input.messages,text=>send({t:'delta',text}),()=>send({t:'reset'}),custom.config,undefined,text=>send({t:'think',text}),await findLinks(input.context,input.messages));send({t:'done',remaining:custom.remaining})}
-    catch(e){await custom.refund().catch(()=>{});send({t:'error',message:e instanceof VisionError?e.message:`专属 API（${custom.config.provider} / ${custom.config.model}）调用失败，请检查「AI 设置」中的 API Key 或模型名称是否正确（本次未计入调用次数）。`})}
-    c.close()}});
-   return new Response(out,{headers:{'content-type':'application/x-ndjson; charset=utf-8','cache-control':'no-store, no-transform','x-accel-buffering':'no'}});
+   return streamTutor(custom.remaining,()=>custom.refund(),e=>e instanceof VisionError?e.message:`专属 API（${custom.config.provider} / ${custom.config.model}）调用失败，请检查「AI 设置」中的 API Key 或模型名称是否正确（本次未计入调用次数）。`,custom.config);
   }
  }
 
  const db=studyDb(),day=dayNow(),limit=limitOf(user.is_guest);
  const row=await db.prepare('INSERT INTO ai_tutor_quota(user_id,day,count) VALUES(?,?,1) ON CONFLICT(user_id,day) DO UPDATE SET count=count+1 WHERE count<? RETURNING count').bind(user.id,day,limit).first<{count:number}>();
  if(!row)return fail('quota',user.is_guest?`游客每天可以问 AI 老师 ${limit} 次，今天的次数已用完。登录后每天有 ${TUTOR_QUOTA.user} 次，还可绑定自己的专属 API。`:`今天的 ${limit} 次站点默认 AI 老师已用完，明天再来，或在「AI 设置」中配置你自己的 API Key。`,429,{remaining:0});
- const enc=new TextEncoder(),refund=()=>db.prepare('UPDATE ai_tutor_quota SET count=MAX(count-1,0) WHERE user_id=? AND day=?').bind(user.id,day).run();
- const out=new ReadableStream<Uint8Array>({async start(c){const send=(e:TutorEvent)=>c.enqueue(enc.encode(JSON.stringify(e)+'\n'));send({t:'start'});
-  try{await tutorStream(input.context,input.messages,text=>send({t:'delta',text}),()=>send({t:'reset'}),undefined,siteModel,text=>send({t:'think',text}),await findLinks(input.context,input.messages));send({t:'done',remaining:Math.max(0,limit-row.count)})}
-  catch(e){await refund().catch(()=>{});send({t:'error',message:e instanceof VisionError?e.message+'（这次没有扣次数）':'AI 老师暂时连不上，这次没有扣次数，请稍后再试。'})}
-  c.close()}});
- return new Response(out,{headers:{'content-type':'application/x-ndjson; charset=utf-8','cache-control':'no-store, no-transform','x-accel-buffering':'no'}})}
+ const refund=()=>db.prepare('UPDATE ai_tutor_quota SET count=MAX(count-1,0) WHERE user_id=? AND day=?').bind(user.id,day).run();
+ return streamTutor(Math.max(0,limit-row.count),refund,e=>e instanceof VisionError?e.message+'（这次没有扣次数）':'AI 老师暂时连不上，这次没有扣次数，请稍后再试。',undefined,siteModel)}
  catch(e){if(e instanceof AuthError)return fail('auth',e.message,e.status);return fail('failed','AI 老师暂时不可用。',500)}}

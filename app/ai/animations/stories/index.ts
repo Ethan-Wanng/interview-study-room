@@ -13,12 +13,13 @@ import {tradeoffStories} from './tradeoffs';
 import {internalsStories} from './internals';
 import {agentStories} from './agents';
 import {evalStories} from './evals';
+import {harnessStories} from './harness';
 import {servingStories} from './serving';
 import {finetuneStories} from './finetune';
 import {safetyStories} from './safety';
 import {addedStoriesA} from './added-a';
 import {addedStoriesB} from './added-b';
 
-export const stories:Record<string,Story>={...basicsStories,...callingStories,...ragToolStories,...shipStories,...vectorStories,...ragAdvancedStories,...engineeringStories,...tradeoffStories,...internalsStories,...agentStories,...evalStories,...servingStories,...finetuneStories,...safetyStories,...addedStoriesA,...addedStoriesB};
+export const stories:Record<string,Story>={...basicsStories,...callingStories,...ragToolStories,...shipStories,...vectorStories,...ragAdvancedStories,...engineeringStories,...tradeoffStories,...internalsStories,...agentStories,...evalStories,...harnessStories,...servingStories,...finetuneStories,...safetyStories,...addedStoriesA,...addedStoriesB};
 const levelOf=Object.fromEntries(Object.entries(interviewByLevel).flatMap(([level,ids])=>ids.map(id=>[id,level])));
 export const interviewAnimationFor=(id:string)=>stories[id]?fromStory(id,levelOf[id]??'',stories[id]):null;

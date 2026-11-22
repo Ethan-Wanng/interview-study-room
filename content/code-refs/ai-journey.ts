@@ -481,6 +481,58 @@ fn compare(
     Diff { fixed, broken, net }
 }`},
 
+'harness-13':{base:'python',
+go:String.raw`func formatToolOutput(text string, maxChars int, artifactPath string, writeFile func(string, string)) string {
+    runes := []rune(text) // 按字符切分，避免截断多字节中文
+    if len(runes) <= maxChars {
+        return text
+    }
+    writeFile(artifactPath, text)
+    half := maxChars / 2
+    omitted := len(runes) - half*2
+    head := string(runes[:half])
+    tail := string(runes[len(runes)-half:])
+    return fmt.Sprintf("%s\n...（已省略 %d 字符，完整输出已保存至 %s）...\n%s", head, omitted, artifactPath, tail)
+}`,
+java:String.raw`static String formatToolOutput(String text, int maxChars, String artifactPath, BiConsumer<String, String> writeFile) {
+    if (text.length() <= maxChars) return text;
+    writeFile.accept(artifactPath, text);
+    int half = maxChars / 2;
+    int omitted = text.length() - half * 2;
+    String head = text.substring(0, half);
+    String tail = text.substring(text.length() - half);
+    return head + "\n...（已省略 " + omitted + " 字符，完整输出已保存至 " + artifactPath + "）...\n" + tail;
+}`,
+ts:String.raw`function formatToolOutput(
+  text: string,
+  maxChars: number,
+  artifactPath: string,
+  writeFile: (path: string, content: string) => void,
+): string {
+  if (text.length <= maxChars) return text;
+  writeFile(artifactPath, text);
+  const half = Math.floor(maxChars / 2);
+  const omitted = text.length - half * 2;
+  const head = text.slice(0, half);
+  const tail = text.slice(text.length - half);
+  return ` + "`${head}\\n...（已省略 ${omitted} 字符，完整输出已保存至 ${artifactPath}）...\\n${tail}`" + String.raw`;
+}`,
+rust:String.raw`fn format_tool_output<F>(text: &str, max_chars: usize, artifact_path: &str, write_file: F) -> String
+where
+    F: FnOnce(&str, &str),
+{
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= max_chars {
+        return text.to_string();
+    }
+    write_file(artifact_path, text);
+    let half = max_chars / 2;
+    let omitted = chars.len() - half * 2;
+    let head: String = chars[..half].iter().collect();
+    let tail: String = chars[chars.len() - half..].iter().collect();
+    format!("{head}\n...（已省略 {omitted} 字符，完整输出已保存至 {artifact_path}）...\n{tail}")
+}`},
+
 'serving-12':{base:'python',
 go:String.raw`var bytesPerParam = map[string]float64{"fp32": 4, "fp16": 2, "bf16": 2, "int8": 1, "int4": 0.5}
 

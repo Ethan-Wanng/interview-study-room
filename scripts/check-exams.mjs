@@ -6,7 +6,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 const require=createRequire(import.meta.url),{build}=createRequire(require.resolve('wrangler/package.json'))('esbuild');
-const subjects=[['Go','./content/exams/go','goExams','./content/go-journey','goLevels'],['AI','./content/exams/ai','aiExams','./content/ai-journey','aiLevels'],['后端通用','./content/exams/backend','backendExams','./content/backend-journey','backendLevels'],['前端开发','./content/exams/frontend','frontendExams','./content/frontend-journey','frontendLevels'],['英语','./content/exams/english','englishExams','./content/english-journey','englishLevels']];
+const subjects=[['Go','./content/exams/go','goExams','./content/go-journey','goLevels'],['Rust','./content/exams/rust','rustExams','./content/rust-journey','rustLevels'],['Python','./content/exams/python','pythonExams','./content/python-journey','pythonLevels'],['AI','./content/exams/ai','aiExams','./content/ai-journey','aiLevels'],['后端通用','./content/exams/backend','backendExams','./content/backend-journey','backendLevels'],['前端开发','./content/exams/frontend','frontendExams','./content/frontend-journey','frontendLevels'],['英语','./content/exams/english','englishExams','./content/english-journey','englishLevels']];
 const {existsSync}=await import('node:fs');
 const present=subjects.filter(([,e])=>existsSync(e.replace('./','')+'.ts'));
 const entry=present.map(([,e,x,l,y],i)=>`export {${x} as e${i}} from '${e}';export {${y} as l${i}} from '${l}';`).join('');

@@ -1,8 +1,9 @@
 'use client';
-import {useEffect,useRef,useState,useSyncExternalStore} from 'react';
-import {Bell,CheckCheck,ChevronDown,History,MessageSquareReply,RefreshCw,Sparkles,X} from 'lucide-react';
+import {useEffect,useRef,useState,useSyncExternalStore,type ReactNode,type RefObject} from 'react';
+import {createPortal} from 'react-dom';
+import {Bell,CheckCheck,ChevronDown,ExternalLink,History,MessageSquareReply,RefreshCw,Sparkles,X} from 'lucide-react';
 import {useI18n} from './i18n';
-import {APP_VERSION,type Release} from '@/lib/releases';
+import {APP_VERSION,groupReleasesByDay,type Release} from '@/lib/releases';
 import type {Notice} from '@/lib/notify';
 
 // 通知的共享状态：全站只有 NoticeCenter 负责定时拉取 /api/notifications，铃铛和新版本横幅都从这里读。
@@ -38,6 +39,71 @@ async function markAllRead(){
 
 const when=(t:number,L:(zh:string,en:string)=>string)=>{const m=Math.round((Date.now()-t)/60000);if(m<1)return L('刚刚','just now');if(m<60)return L(`${m} 分钟前`,`${m} min ago`);const h=Math.round(m/60);if(h<24)return L(`${h} 小时前`,`${h} h ago`);return new Date(t).toLocaleDateString()};
 
+// 挂到 body 下的浮层容器：避免被固定导航栏的 backdrop-filter 裁切或丢失背景模糊，且在窄屏下完整居于视口内。
+export function NoticePopover({
+ open,
+ triggerRef,
+ onClose,
+ label,
+ className,
+ children,
+}:{
+ open:boolean;
+ triggerRef:RefObject<HTMLDivElement|null>;
+ onClose:()=>void;
+ label:string;
+ className?:string;
+ children:ReactNode;
+}){
+ const panelRef=useRef<HTMLDivElement>(null);
+ useEffect(()=>{
+  if(!open)return;
+  const place=()=>{
+   const el=triggerRef.current,panel=panelRef.current;if(!el||!panel)return;
+   const r=el.getBoundingClientRect(),vw=window.innerWidth,vh=window.innerHeight;
+   const top=Math.max(8,Math.round(r.bottom+8));
+   const maxH=Math.max(200,Math.round(vh-top-14));
+   panel.style.top=`${top}px`;
+   panel.style.maxHeight=`${maxH}px`;
+   if(vw<=640){
+    panel.style.left='12px';
+    panel.style.right='12px';
+    panel.style.width='auto';
+   }else{
+    const w=Math.min(396,vw-24);
+    const right=Math.max(12,Math.min(vw-w-12,Math.round(vw-r.right)));
+    panel.style.left='auto';
+    panel.style.right=`${right}px`;
+    panel.style.width=`${w}px`;
+   }
+  };
+  place();
+  const close=(e:PointerEvent)=>{
+   const target=e.target as Node|null;
+   if(target&&!triggerRef.current?.contains(target)&&!panelRef.current?.contains(target))onClose();
+  };
+  const esc=(e:KeyboardEvent)=>{if(e.key==='Escape')onClose()};
+  window.addEventListener('resize',place);
+  window.addEventListener('scroll',place,{passive:true,capture:true});
+  document.addEventListener('pointerdown',close);
+  document.addEventListener('keydown',esc);
+  return()=>{
+   window.removeEventListener('resize',place);
+   window.removeEventListener('scroll',place,true);
+   document.removeEventListener('pointerdown',close);
+   document.removeEventListener('keydown',esc);
+  };
+ },[open,triggerRef,onClose]);
+
+ if(!open||typeof document==='undefined')return null;
+ return createPortal(
+  <div ref={panelRef} className={'notice-panel'+(className?' '+className:'')} role="dialog" aria-label={label}>
+   {children}
+  </div>,
+  document.body,
+ );
+}
+
 // 全站挂一个：打开页面、每 3 分钟、切回标签页时检查一次。线上版本和本页代码的版本不同，就在顶部提示刷新，并列出这次改了什么。
 export function NoticeCenter(){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
  const s=useNotices(),[dismissed,setDismissed]=useState(''),[old,setOld]=useState(false);
@@ -55,16 +121,17 @@ export function NoticeCenter(){const {locale}=useI18n(),L=(zh:string,en:string)=
 // 顶栏的「版本更新」：显示当前版本号，点开是每个版本改了什么（来自 lib/releases.ts，每次上线都往里写一条）。有没看过的更新时右上角亮一个白点。
 export function VersionLog(){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
  const s=useNotices(),[open,setOpen]=useState(false),box=useRef<HTMLDivElement>(null),[fresh,setFresh]=useState<Set<string>>(new Set);
- const unread=unreadReleases(s);
- useEffect(()=>{if(!open)return;const close=(e:PointerEvent)=>{if(box.current&&!box.current.contains(e.target as Node))setOpen(false)};const esc=(e:KeyboardEvent)=>{if(e.key==='Escape')setOpen(false)};
-  document.addEventListener('pointerdown',close);document.addEventListener('keydown',esc);return()=>{document.removeEventListener('pointerdown',close);document.removeEventListener('keydown',esc)}},[open]);
+ const unread=unreadReleases(s),days=groupReleasesByDay(s.releases).slice(0,3);
  const toggle=()=>{if(!open){setFresh(new Set(unread.map(r=>r.version)));markReleasesSeen()}setOpen(!open)};
  return <div className="notice-bell version-log" ref={box}><button type="button" className="notice-bell-btn version-btn" aria-label={L(`版本更新${unread.length?`（${unread.length} 条没看过）`:''}`,`Version updates${unread.length?` (${unread.length} new)`:''}`)} title={L(`版本更新 · 当前 v${APP_VERSION}`,`Version updates · v${APP_VERSION}`)} aria-expanded={open} onClick={toggle}><History size={18}/>{unread.length>0&&<span className="version-dot"/>}</button>
-  {open&&<div className="notice-panel" role="dialog" aria-label={L('版本更新','Version updates')}><div className="notice-panel-head"><strong>{L('版本更新','Version updates')}</strong><span>{L(`当前版本 v${APP_VERSION}`,`Current v${APP_VERSION}`)}</span>{s.releases.length>1&&<button type="button" className="version-all" onClick={e=>{const list=e.currentTarget.closest('.notice-panel')?.querySelectorAll('details');if(!list)return;const open=[...list].some(d=>!d.open);list.forEach(d=>{d.open=open})}}>{L('全部展开 / 折叠','Expand / collapse all')}</button>}</div>
+  <NoticePopover open={open} triggerRef={box} onClose={()=>setOpen(false)} label={L('版本更新','Version updates')}>
+   <div className="notice-panel-head"><strong>{L('版本更新','Version updates')}</strong><span>{L(`当前 v${APP_VERSION}`,`v${APP_VERSION}`)}</span>{days.length>1&&<button type="button" className="version-all" onClick={e=>{const list=e.currentTarget.closest('.notice-panel')?.querySelectorAll('details');if(!list)return;const expand=[...list].some(d=>!d.open);list.forEach(d=>{d.open=expand})}}>{L('全部展开 / 折叠','Expand / collapse all')}</button>}</div>
    <div className="notice-list">
-    {s.releases.map((r,i)=><details key={r.version} className={'version-item'+(fresh.has(r.version)?' unread':'')} open={i===0||fresh.has(r.version)}><summary><i className="version-tag">v{r.version}</i><b title={r.title}>{r.title}</b><time>{r.date}</time><ChevronDown size={15}/></summary><ul>{r.changes.map(c=><li key={c}>{c}</li>)}</ul>{r.version!==APP_VERSION&&s.version===r.version&&<small>{L('刷新页面后生效','Refresh to get it')}</small>}</details>)}
+    {days.map((d,i)=>{const dayUnread=d.releases.some(r=>fresh.has(r.version)),head=d.releases[0]?.title??'';return <details key={d.date} className={'version-item version-day'+(dayUnread?' unread':'')} open={i===0||dayUnread}><summary><i className="version-tag version-date-tag">{d.date}</i><b title={d.releases.map(r=>r.title).join(' / ')}>{head}</b>{d.releases.length>1&&<span className="version-day-count">{L(`${d.releases.length} 项`,`${d.releases.length}`)}</span>}<ChevronDown size={15}/></summary><div className="version-day-body">{d.releases.map(r=><div key={r.version} className={'version-sub'+(fresh.has(r.version)?' unread':'')}><div className="version-subhead"><i className="version-tag">v{r.version}</i><b>{r.title}</b></div><ul>{r.changes.map(c=><li key={c}>{c}</li>)}</ul>{r.version!==APP_VERSION&&s.version===r.version&&<small>{L('刷新页面后生效','Refresh to get it')}</small>}</div>)}</div></details>})}
     {!s.releases.length&&<p className="notice-empty">{L('还没有更新记录。','No updates yet.')}</p>}
-   </div></div>}</div>}
+   </div>
+   {s.releases.length>0&&<a href="/releases" target="_blank" rel="noopener noreferrer" className="version-more" onClick={()=>setOpen(false)}><span>{L('查看更多更新内容','View all release notes')}</span><ExternalLink size={14}/></a>}
+  </NoticePopover></div>}
 
 // 顶栏的铃铛：只放发给自己的通知（比如反馈有了回复），未读数用黄色标出。网站更新在旁边的「版本更新」里。打开列表即全部标为已读。
 export function NoticeBell(){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
@@ -73,13 +140,13 @@ export function NoticeBell(){const {locale}=useI18n(),L=(zh:string,en:string)=>l
  useEffect(()=>{const o=onOldSite();setOldSite(o);try{setOldSeen(!o||localStorage.getItem('old-site-seen')==='1')}catch{setOldSeen(!o)}},[]);
  const count=s.items.filter(n=>!n.read).length+(oldSeen?0:1);
  const [snapshot,setSnapshot]=useState<{items:Set<string>}>({items:new Set});
- useEffect(()=>{if(!open)return;const close=(e:PointerEvent)=>{if(box.current&&!box.current.contains(e.target as Node))setOpen(false)};const esc=(e:KeyboardEvent)=>{if(e.key==='Escape')setOpen(false)};
-  document.addEventListener('pointerdown',close);document.addEventListener('keydown',esc);return()=>{document.removeEventListener('pointerdown',close);document.removeEventListener('keydown',esc)}},[open]);
  const toggle=()=>{if(!open){setSnapshot({items:new Set(s.items.filter(n=>!n.read).map(n=>n.id))});if(count)void markAllRead();if(!oldSeen){try{localStorage.setItem('old-site-seen','1')}catch{}setOldSeen(true)}}setOpen(!open)};
  return <div className="notice-bell" ref={box}><button type="button" className="notice-bell-btn" aria-label={L(`通知${count?`（${count} 条未读）`:''}`,`Notifications${count?` (${count} unread)`:''}`)} aria-expanded={open} onClick={toggle}><Bell size={18}/>{count>0&&<span className="notice-count">{count>9?'9+':count}</span>}</button>
-  {open&&<div className="notice-panel" role="dialog" aria-label={L('通知','Notifications')}><div className="notice-panel-head"><strong>{L('通知','Notifications')}</strong>{count===0&&<span><CheckCheck size={14}/>{L('都看过了','All caught up')}</span>}</div>
+  <NoticePopover open={open} triggerRef={box} onClose={()=>setOpen(false)} label={L('通知','Notifications')}>
+   <div className="notice-panel-head"><strong>{L('通知','Notifications')}</strong>{count===0&&<span><CheckCheck size={14}/>{L('都看过了','All caught up')}</span>}</div>
    <div className="notice-list">
     {oldSite&&<a href={newSiteHref()} className="notice-item unread"><Sparkles size={16}/><span><b>{L('网站换新网址了','The site has moved')}</b><small>{MOVE_TEXT}</small><time>{L('点这里打开新网址','Open the new address')}</time></span></a>}
     {s.items.map(n=><a key={n.id} href={n.link||'/feedback'} className={'notice-item'+(snapshot.items.has(n.id)?' unread':'')} onClick={()=>setOpen(false)}><MessageSquareReply size={16}/><span><b>{n.title}</b>{n.body&&<small>{n.body}</small>}<time>{when(n.createdAt,L)}</time></span></a>)}
-    {!s.items.length&&!oldSite&&<p className="notice-empty">{L('还没有通知。网站每次更新了什么，在旁边的「版本更新」里看。','No notifications yet. Site changes are listed under “Version updates”.')}</p>}
-   </div></div>}</div>}
+    {!s.items.length&&!oldSite&&<p className="notice-empty">{L('暂无通知','No notifications')}</p>}
+   </div>
+  </NoticePopover></div>}

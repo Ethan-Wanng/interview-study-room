@@ -18,3 +18,8 @@ export function validTheme(value:string|null){if(value==='day')return 'forenoon'
 export type Lamp='on'|'off';
 export const validLamp=(value:string|null):Lamp|null=>value==='on'||value==='off'?value:null;
 export const naturalLamp=(id:string):Lamp=>dayThemes.find(t=>t.id===id)?.dark?'off':'on';
+export const DEFAULT_GLASS=50;
+export function validGlass(value:string|number|null|undefined){
+ const n=typeof value==='number'?value:Number(value);
+ return Number.isFinite(n)&&n>=0&&n<=100?Math.round(n):DEFAULT_GLASS;
+}

@@ -43,5 +43,5 @@ export function StackPicker({stacks,value,onChange,compact}:{stacks:Stacks;value
   {compact?<select value={value[kind]} onChange={e=>onChange({...value,[kind]:e.target.value})} aria-label={label}>{stacks[kind].map(o=><option key={o.id} value={o.id}>{o.icon} {L(...o.name)}</option>)}</select>
    :<div className="stack-options">{stacks[kind].map(o=><button key={o.id} type="button" className={'stack-option'+(value[kind]===o.id?' on':'')} aria-pressed={value[kind]===o.id} onClick={()=>onChange({...value,[kind]:o.id})}><span>{o.icon}</span>{L(...o.name)}</button>)}</div>}</div>;
  return <section className={'ai-card stack-picker'+(compact?' compact':'')}>
-  {!compact&&<p className="stack-tip">{L('先选好你要用的技术栈。学习卡片、代码骨架和参考答案都会换成对应的版本，随时可以切换，进度不受影响。','Pick your stack first. Cards, code skeletons and reference answers follow your choice; switch any time without losing progress.')}</p>}
+  
   {row('backend',L('后端语言','Backend'))}{row('frontend',L('前端做法','Frontend'))}</section>}

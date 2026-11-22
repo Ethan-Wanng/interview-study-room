@@ -1,12 +1,13 @@
 'use client';
 import '../ai/ai.css';
-import {useState} from 'react';
-import {ArrowLeft,Check,Dices,RotateCcw,Shuffle,Trophy} from 'lucide-react';
+import {useEffect,useMemo,useRef,useState,useSyncExternalStore} from 'react';
+import {ArrowLeft,Check,Dices,Play,RotateCcw,Save,Shuffle,Trash2,Trophy} from 'lucide-react';
 import {Progress} from '@/components/ui/progress';
 import {useI18n} from '../components/i18n';
 import {EnWords} from '../components/keyword-text';
 import QuestionCard,{type Item,type Result} from '../ai/question-card';
 import type {AiQuiz} from '@/content/journey';
+import {answeredCount,cleanDrafts,parseLazyQuiz,readRawQuizStore,removeLazyQuiz,subscribeQuizSessions,writeLazyQuiz} from '@/lib/quiz-session';
 import {Shell} from './training-hub';
 
 // sizes：入门、进阶、高阶、专家四个阶段训练题库和最终考试题库的题数，顺序与 lazyLevels 一致。
@@ -23,6 +24,8 @@ export const lazyLevels:{name:string;nameEn:string;kind:string;kindEn:string}[]=
 type Bank=()=>Promise<AiQuiz[]>;
 const banks:Record<string,Bank[]>={
  go:[()=>import('@/content/exams/go-train-1').then(m=>m.goTrain1),()=>import('@/content/exams/go-train-2').then(m=>m.goTrain2),()=>import('@/content/exams/go-train-3').then(m=>m.goTrain3),()=>import('@/content/exams/go-train-4').then(m=>m.goTrain4),()=>import('@/content/exams/go-tests').then(m=>m.goFinal)],
+ rust:[()=>import('@/content/exams/rust-train-1').then(m=>m.rustTrain1),()=>import('@/content/exams/rust-train-2').then(m=>m.rustTrain2),()=>import('@/content/exams/rust-train-3').then(m=>m.rustTrain3),()=>import('@/content/exams/rust-train-4').then(m=>m.rustTrain4),()=>import('@/content/exams/rust-tests').then(m=>m.rustFinal)],
+ python:[()=>import('@/content/exams/python-train-1').then(m=>m.pythonTrain1),()=>import('@/content/exams/python-train-2').then(m=>m.pythonTrain2),()=>import('@/content/exams/python-train-3').then(m=>m.pythonTrain3),()=>import('@/content/exams/python-train-4').then(m=>m.pythonTrain4),()=>import('@/content/exams/python-tests').then(m=>m.pythonFinal)],
  ai:[()=>import('@/content/exams/ai-train-1').then(m=>m.aiTrain1),()=>import('@/content/exams/ai-train-2').then(m=>m.aiTrain2),()=>import('@/content/exams/ai-train-3').then(m=>m.aiTrain3),()=>import('@/content/exams/ai-train-4').then(m=>m.aiTrain4),()=>import('@/content/exams/ai-tests').then(m=>m.aiFinal)],
  backend:[()=>Promise.all([import('@/content/exams/backend-train'),import('@/content/exams/backend-train-extra1')]).then(([a,b])=>[...a.beTrain1,...b.beTrain1Extra]),
   ()=>Promise.all([import('@/content/exams/backend-train'),import('@/content/exams/backend-train-extra2')]).then(([a,b])=>[...a.beTrain2,...b.beTrain2Extra]),
@@ -45,12 +48,40 @@ export function splitCount(total:number,caps:Record<string,number>){const out:Re
   for(const id of open){const add=Math.min(each,caps[id]-out[id]);out[id]+=add;left-=add}}
  return out}
 
-type Stage={kind:'setup'}|{kind:'loading'}|{kind:'quiz';level:number;items:Item[];index:number;results:(Result|null)[];shares:Record<string,number>}|{kind:'result';level:number;items:Item[];results:Result[];shares:Record<string,number>};
+type QuizStage={kind:'quiz';level:number;items:Item[];index:number;results:(Result|null)[];drafts?:Record<string,string>;shares:Record<string,number>;reviewing?:boolean};
+type Stage={kind:'setup'}|{kind:'loading'}|QuizStage|{kind:'result';level:number;items:Item[];results:Result[];shares:Record<string,number>};
 
 // 「训练」里的懒人模式：选一门或多门学科、自定义题量，从各学科的最终考试里随机抽题，混在一起打乱顺序作答。
 export default function LazyQuiz({username,subjects}:{username:string;subjects:LazySubject[]}){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
  // 语言类学科（英语）默认不选，避免和技术题混在一起。
  const [picked,setPicked]=useState<string[]>(subjects.filter(s=>s.space==='tech').map(s=>s.id)),[level,setLevel]=useState(lazyLevels.length-1),[count,setCount]=useState(20),[stage,setStage]=useState<Stage>({kind:'setup'}),[error,setError]=useState('');
+ const lazyKey='lazy-quiz:v1:'+(username||'guest');
+ const rawSaved=useSyncExternalStore(subscribeQuizSessions,()=>readRawQuizStore(lazyKey),()=>null);
+ const savedLazy=useMemo(()=>parseLazyQuiz(rawSaved),[rawSaved]);
+ const draftsRef=useRef<Record<string,string>>({}),draftTimerRef=useRef<ReturnType<typeof setTimeout>|undefined>(undefined),saveHintTimerRef=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
+ const [justSaved,setJustSaved]=useState(false);
+
+ const persistStage=(s:QuizStage,drafts?:Record<string,string>,force?:boolean)=>{
+  if(!force&&s.reviewing)return;
+  const d=cleanDrafts(drafts??draftsRef.current);
+  if(!force&&s.index===0&&!s.results.some(Boolean)&&!d)return;
+  writeLazyQuiz(lazyKey,{level:s.level,items:s.items.map(it=>({id:it.id,subject:it.level,order:it.order})),index:s.index,results:s.results,drafts:d,shares:s.shares,updatedAt:Date.now()});
+ };
+ const saveNow=(s:QuizStage)=>{
+  clearTimeout(draftTimerRef.current);
+  persistStage(s,draftsRef.current,true);
+  setJustSaved(true);
+  clearTimeout(saveHintTimerRef.current);
+  saveHintTimerRef.current=setTimeout(()=>setJustSaved(false),1600);
+ };
+ useEffect(()=>{
+  if(stage.kind!=='quiz')return;
+  const flush=()=>persistStage(stage,draftsRef.current);
+  window.addEventListener('pagehide',flush);
+  return()=>{window.removeEventListener('pagehide',flush);clearTimeout(draftTimerRef.current)};
+ });
+ useEffect(()=>()=>{clearTimeout(draftTimerRef.current);clearTimeout(saveHintTimerRef.current)},[]);
+
  const chosen=subjects.filter(s=>picked.includes(s.id)),caps=Object.fromEntries(chosen.map(s=>[s.id,s.sizes[level]??0])) as Record<string,number>;
  const max=Object.values(caps).reduce((a,b)=>a+b,0),n=Math.max(1,Math.min(count||1,max||1));
  const name=(id:string)=>{const s=subjects.find(x=>x.id===id);return s?`${s.icon} ${L(s.name,s.nameEn)}`:id};
@@ -59,20 +90,47 @@ export default function LazyQuiz({username,subjects}:{username:string;subjects:L
   try{const shares=splitCount(n,caps),loaded=await Promise.all(chosen.map(s=>banks[s.id][level]().then(qs=>[s.id,qs] as const)));
    // 每门学科先各自随机抽题，合在一起之后再把顺序整体打乱。
    const items=shuffle(loaded.flatMap(([id,qs])=>shuffle(qs).slice(0,shares[id]).map(q=>toItem(id,q))));
-   setStage({kind:'quiz',level,items,index:0,results:items.map(()=>null),shares})}
+   removeLazyQuiz(lazyKey);draftsRef.current={};setJustSaved(false);
+   setStage({kind:'quiz',level,items,index:0,results:items.map(()=>null),drafts:{},shares})}
   catch{setError(L('题目加载失败，请检查网络后重试。','Failed to load questions.'));setStage({kind:'setup'})}};
- const again=(lv:number,items:Item[],shares:Record<string,number>)=>{const next=shuffle(items).map(it=>toItem(it.level,it.quiz));setStage({kind:'quiz',level:lv,items:next,index:0,results:next.map(()=>null),shares})};
- const levelName=(lv:number)=>L(lazyLevels[lv].name,lazyLevels[lv].nameEn);
- const back=<a href="/practice" className="ai-back"><ArrowLeft size={16}/>{L('返回训练','Back to practice')}</a>;
+ const resumeSaved=async()=>{
+  if(!savedLazy)return;
+  setError('');setStage({kind:'loading'});
+  try{
+   const subIds=[...new Set(savedLazy.items.map(x=>x.subject))].filter(id=>banks[id]?.[savedLazy.level]);
+   const loaded=await Promise.all(subIds.map(id=>banks[id][savedLazy.level]().then(qs=>[id,qs] as const)));
+   const lookup=new Map<string,AiQuiz>();
+   for(const [sid,qs] of loaded)for(const q of qs)lookup.set(sid+':'+q.id,q);
+   const items:Item[]=[],results:(Result|null)[]=[];
+   savedLazy.items.forEach((rawIt,i)=>{
+    const quiz=lookup.get(rawIt.subject+':'+rawIt.id);
+    if(!quiz)return;
+    const order='options' in quiz?(rawIt.order.length===quiz.options.length?rawIt.order:quiz.options.map((_,idx)=>idx)):[];
+    items.push({id:rawIt.id,level:rawIt.subject,quiz,order});
+    results.push(savedLazy.results[i]??null);
+   });
+   if(!items.length){removeLazyQuiz(lazyKey);setStage({kind:'setup'});return}
+   const index=Math.min(Math.max(0,savedLazy.index),items.length-1),drafts={...(savedLazy.drafts??{})};
+   draftsRef.current=drafts;setJustSaved(false);
+   setStage({kind:'quiz',level:savedLazy.level,items,index,results,drafts,shares:savedLazy.shares});
+  }catch{
+   setError(L('题目加载失败，请检查网络后重试。','Failed to load questions.'));setStage({kind:'setup'});
+  }
+ };
+ const again=(lv:number,items:Item[],shares:Record<string,number>)=>{const next=shuffle(items).map(it=>toItem(it.level,it.quiz));removeLazyQuiz(lazyKey);draftsRef.current={};setJustSaved(false);setStage({kind:'quiz',level:lv,items:next,index:0,results:next.map(()=>null),drafts:{},shares})};
+ const levelName=(lv:number)=>L(lazyLevels[lv]?.name??'',lazyLevels[lv]?.nameEn??'');
+ const back=<a href="/practice" className="ai-back" onClick={()=>{if(stage.kind==='quiz'){clearTimeout(draftTimerRef.current);persistStage(stage,draftsRef.current)}}}><ArrowLeft size={16}/>{L('返回训练','Back to practice')}</a>;
 
  if(stage.kind==='quiz'){const it=stage.items[stage.index],res=stage.results[stage.index],last=stage.index===stage.items.length-1;
   return <Shell username={username}>{back}
-   <div className="ai-quiz-head"><span className="eyebrow">{L('懒人随机测验','Lazy random quiz')} · {levelName(stage.level)} · {name(it.level)}</span><span>{stage.index+1} / {stage.items.length}</span></div>
+   <div className="ai-quiz-head"><span className="eyebrow">{L('懒人随机测验','Lazy random quiz')} · {levelName(stage.level)} · {name(it.level)}</span><div className="ai-quiz-head-right"><button type="button" className={'ai-quiz-save'+(justSaved?' saved':'')} onClick={()=>saveNow(stage)}>{justSaved?<><Check size={14}/>{L('已保存','Saved')}</>:<><Save size={14}/>{L('保存记录','Save')}</>}</button><span>{stage.index+1} / {stage.items.length}</span></div></div>
    <Progress value={(stage.index+(res?1:0))/stage.items.length*100}/>
-   <QuestionCard key={stage.index+'-'+it.id} item={it} label={L(`${name(it.level)} · ${lazyLevels[stage.level].kind}`,`${name(it.level)} · ${lazyLevels[stage.level].kindEn}`)} result={res} last={last}
-    onAnswer={r=>setStage(s=>s.kind==='quiz'?{...s,results:s.results.map((x,i)=>i===s.index?r:x)}:s)}
-    onPrev={stage.index>0?()=>setStage(s=>s.kind==='quiz'?{...s,index:s.index-1}:s):undefined}
-    onNext={()=>setStage(s=>s.kind!=='quiz'?s:s.index<s.items.length-1?{...s,index:s.index+1}:{kind:'result',level:s.level,items:s.items,results:s.results.map(r=>r??{correct:false,given:''}),shares:s.shares})}/>
+   <QuestionCard key={stage.index+'-'+it.id} item={it} label={L(`${name(it.level)} · ${lazyLevels[stage.level].kind}`,`${name(it.level)} · ${lazyLevels[stage.level].kindEn}`)} result={res} draft={draftsRef.current[it.id]??stage.drafts?.[it.id]}
+    onDraftChange={val=>{if(val.trim())draftsRef.current[it.id]=val;else delete draftsRef.current[it.id];clearTimeout(draftTimerRef.current);draftTimerRef.current=setTimeout(()=>persistStage(stage,draftsRef.current),500)}}
+    last={last}
+    onAnswer={r=>{delete draftsRef.current[it.id];clearTimeout(draftTimerRef.current);const nextStage:QuizStage={...stage,results:stage.results.map((x,i)=>i===stage.index?r:x),drafts:{...draftsRef.current}};setStage(nextStage);persistStage(nextStage,draftsRef.current)}}
+    onPrev={stage.index>0?()=>{clearTimeout(draftTimerRef.current);const nextStage:QuizStage={...stage,index:stage.index-1,drafts:{...draftsRef.current}};setStage(nextStage);persistStage(nextStage,draftsRef.current)}:undefined}
+    onNext={()=>{clearTimeout(draftTimerRef.current);if(stage.index<stage.items.length-1){const nextStage:QuizStage={...stage,index:stage.index+1,drafts:{...draftsRef.current}};setStage(nextStage);persistStage(nextStage,draftsRef.current)}else{removeLazyQuiz(lazyKey);draftsRef.current={};setStage({kind:'result',level:stage.level,items:stage.items,results:stage.results.map(r=>r??{correct:false,given:''}),shares:stage.shares})}}}/>
   </Shell>}
 
  if(stage.kind==='result'){const right=stage.results.filter(r=>r.correct).length,rate=Math.round(right/stage.items.length*100);
@@ -82,12 +140,13 @@ export default function LazyQuiz({username,subjects}:{username:string;subjects:L
    <section className="ai-card ai-result"><Trophy size={40}/><h1>{L(`答对 ${right} / ${stage.items.length} 题`,`${right} / ${stage.items.length} correct`)}</h1><p>{L(`${lazyLevels[stage.level].name}难度，正确率 ${rate}%。`,`${levelName(stage.level)} · ${rate}% correct.`)}{rate>=70?L('状态很好，可以换一组新题继续。','Great — try a fresh set.'):L('错的题看看详解，再打乱顺序练一遍。','Review the explanations and try again shuffled.')}</p>
     <ul className="lazy-score">{by.map(b=><li key={b.id}><span>{name(b.id)}</span><b>{b.right} / {b.total}</b></li>)}</ul>
     {wrong.length>0&&<details className="lazy-wrong"><summary>{L(`查看答错的 ${wrong.length} 题`,`Review ${wrong.length} missed`)}</summary><ol>{wrong.map(({x})=><li key={x.id}><small>{name(x.level)}</small><EnWords text={x.quiz.q}/>{x.quiz.say&&!x.quiz.explain.includes(x.quiz.say)&&<em lang="en">{L('听力原句：','Transcript: ')}<EnWords text={x.quiz.say}/></em>}<em><EnWords text={x.quiz.explain}/></em></li>)}</ol></details>}
-    <div className="ai-result-actions"><button className="button secondary" onClick={()=>setStage({kind:'quiz',level:stage.level,items:stage.items,index:stage.items.length-1,results:stage.results,shares:stage.shares})}><ArrowLeft size={16}/>{L('返回上一题','Back to last question')}</button><button className="button primary" onClick={()=>again(stage.level,stage.items,stage.shares)}><Shuffle size={16}/>{L('打乱顺序再练一次','Shuffle and retry')}</button><button className="button secondary" onClick={()=>void start()}><Dices size={16}/>{L('换一组新题','New set')}</button><button className="button secondary" onClick={()=>setStage({kind:'setup'})}><RotateCcw size={16}/>{L('重新选择','Change settings')}</button></div></section>
+    <div className="ai-result-actions"><button className="button secondary" onClick={()=>setStage({kind:'quiz',level:stage.level,items:stage.items,index:stage.items.length-1,results:stage.results,shares:stage.shares,reviewing:true})}><ArrowLeft size={16}/>{L('返回上一题','Back to last question')}</button><button className="button primary" onClick={()=>again(stage.level,stage.items,stage.shares)}><Shuffle size={16}/>{L('打乱顺序再练一次','Shuffle and retry')}</button><button className="button secondary" onClick={()=>void start()}><Dices size={16}/>{L('换一组新题','New set')}</button><button className="button secondary" onClick={()=>setStage({kind:'setup'})}><RotateCcw size={16}/>{L('重新选择','Change settings')}</button></div></section>
   </Shell>}
 
  const base=chosen.length?Math.floor(n/chosen.length):0,rest=chosen.length?n%chosen.length:0,short=chosen.filter(s=>caps[s.id]<Math.ceil(n/chosen.length));
  return <Shell username={username}>{back}
-  <div className="ai-title"><span className="eyebrow">PRACTICE · LAZY</span><h1>{L('懒人随机测验','Lazy random quiz')}</h1><p>{L('选一门或几门学科和一个难度，定好题量，就从这些学科对应的阶段训练（入门到专家）或最终考试里随机抽题，混在一起、打乱顺序作答。不需要解锁，答完有详解。','Pick subjects, a level and a count; questions are drawn from that level’s training or the final exam, mixed and shuffled.')}</p></div>
+  <div className="ai-title"><span className="eyebrow">PRACTICE · LAZY</span><h1>{L('懒人随机测验','Lazy random quiz')}</h1></div>
+  {savedLazy&&<div className="ai-saved-list"><div className="ai-card ai-saved-row"><span className="ai-saved-meta"><strong>{L('懒人随机测验','Lazy random quiz')} · {levelName(savedLazy.level)}</strong><em>{answeredCount(savedLazy.results)}/{savedLazy.items.length}</em></span><div className="ai-saved-actions"><button type="button" className="button primary ai-saved-resume" disabled={stage.kind==='loading'} onClick={()=>void resumeSaved()}><Play size={14}/>{L('继续答题','Resume')}</button><button type="button" className="ai-saved-del" onClick={()=>removeLazyQuiz(lazyKey)} aria-label={L('删除记录','Delete record')} title={L('删除记录','Delete')}><Trash2 size={14}/></button></div></div></div>}
   <section className="ai-card lazy-setup">
    <h2>{L('1. 选择学科（可多选）','1. Subjects')}</h2>
    <div className="lazy-chips">{subjects.map(s=><button key={s.id} type="button" className={'lazy-chip'+(picked.includes(s.id)?' on':'')} aria-pressed={picked.includes(s.id)} onClick={()=>toggle(s.id)}>{picked.includes(s.id)&&<Check size={15}/>}<span>{s.icon}</span>{L(s.name,s.nameEn)}<small>{L(`${s.sizes[level]??0} 题`,`${s.sizes[level]??0}`)}</small></button>)}</div>
@@ -96,7 +155,7 @@ export default function LazyQuiz({username,subjects}:{username:string;subjects:L
    <h2>{L('3. 题目数量','3. Number of questions')}</h2>
    <div className="lazy-count"><input type="number" min={1} max={max||1} value={count} onChange={e=>setCount(Number(e.target.value))} aria-label={L('题目数量','Number of questions')}/><span>{L(`最多 ${max} 题`,`Up to ${max}`)}</span>{[10,20,30].filter(v=>v<=max).map(v=><button key={v} type="button" className={'lazy-chip'+(count===v?' on':'')} onClick={()=>setCount(v)}>{v}</button>)}</div>
    {chosen.length>0&&(short.length?<p className="muted lazy-plan">{L(`${short.map(s=>`${s.name}${levelName(level)}只有 ${caps[s.id]} 题`).join('、')}，按上限全部抽取，其余平均分给其他学科，共 ${n} 题。抽好之后整体打乱顺序。`,`Some banks are small and are used in full; the rest is split among the others, ${n} in total, shuffled.`)}</p>
-    :<p className="muted lazy-plan">{L(`每门学科 ${base} 题`,`${base} per subject`)}{rest>0&&L(`，余下 ${rest} 题随机补给其中 ${rest} 门`,`, ${rest} extra assigned at random`)}{L(`，共 ${n} 题。抽好之后整体打乱顺序。`,`, ${n} in total, shuffled.`)}</p>)}
+    :<p className="muted lazy-plan">{L(`每门学科 ${base} 题`,`${base} per subject`)}{rest>0&&L(`，余下 ${rest} 题随机补给其中 ${rest} 门`,`, ${rest} extra assigned at random`)}{L(`，共 ${n} 题`,`, ${n} in total`)}</p>)}
    {error&&<p className="ai-exam-lock">{error}</p>}
    <div className="ai-result-actions"><button className="button primary" disabled={!chosen.length||stage.kind==='loading'} onClick={()=>void start()}><Dices size={16}/>{stage.kind==='loading'?L('抽题中…','Drawing…'):L('开始测验','Start')}</button></div>
   </section>

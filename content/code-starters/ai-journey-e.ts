@@ -2,8 +2,60 @@ import type {StarterMap} from './types';
 
 const BT='`'; // Go 结构体标签、原始字符串里的反引号
 
-// AI 闯关题 serving-12、fine-tuning-12、fine-tuning-grpo-adv、safety-12 的作答框架。
+// AI 闯关题 harness-13、serving-12、fine-tuning-12、fine-tuning-grpo-adv、safety-12 的作答框架。
 export const aiJourneyStartersE:StarterMap={
+'harness-13':{
+python:String.raw`def format_tool_output(text, max_chars, artifact_path, write_file):
+    # TODO 1：若 len(text) <= max_chars，直接原样返回 text
+    ...
+    # TODO 2：否则先把完整 text 写入 artifact_path，并计算 half 与 omitted
+    ...
+    # TODO 3：截取开头和结尾各 half 个字符（注意 half 为 0 的边界），拼接省略提示与路径后返回
+    ...`,
+go:String.raw`func formatToolOutput(text string, maxChars int, artifactPath string, writeFile func(string, string)) string {
+    runes := []rune(text)
+    // TODO 1：若 len(runes) <= maxChars，直接原样返回 text
+    ...
+    // TODO 2：否则先把完整 text 写入 artifactPath，并计算 half 与 omitted
+    ...
+    // TODO 3：截取开头和结尾各 half 个字符，拼接省略提示与路径后返回
+    ...
+}`,
+java:String.raw`static String formatToolOutput(String text, int maxChars, String artifactPath, BiConsumer<String, String> writeFile) {
+    // TODO 1：若 text.length() <= maxChars，直接原样返回 text
+    ...
+    // TODO 2：否则先把完整 text 写入 artifactPath，并计算 half 与 omitted
+    ...
+    // TODO 3：截取开头和结尾各 half 个字符，拼接省略提示与路径后返回
+    ...
+}`,
+ts:String.raw`function formatToolOutput(
+  text: string,
+  maxChars: number,
+  artifactPath: string,
+  writeFile: (path: string, content: string) => void,
+): string {
+  // TODO 1：若 text.length <= maxChars，直接原样返回 text
+  ...
+  // TODO 2：否则先把完整 text 写入 artifactPath，并计算 half 与 omitted
+  ...
+  // TODO 3：截取开头和结尾各 half 个字符，拼接省略提示与路径后返回
+  ...
+}`,
+rust:String.raw`fn format_tool_output<F>(text: &str, max_chars: usize, artifact_path: &str, write_file: F) -> String
+where
+    F: FnOnce(&str, &str),
+{
+    let chars: Vec<char> = text.chars().collect();
+    // TODO 1：若 chars.len() <= max_chars，直接原样返回 text
+    ...
+    // TODO 2：否则先把完整 text 写入 artifact_path，并计算 half 与 omitted
+    ...
+    // TODO 3：截取开头和结尾各 half 个字符，拼接省略提示与路径后返回
+    ...
+}`,
+},
+
 'serving-12':{
 python:String.raw`def weight_memory_gb(params_billion, precision="fp16"):
     # TODO 1：写出每种精度对应的每参数字节数（fp32、fp16、bf16、int8、int4）

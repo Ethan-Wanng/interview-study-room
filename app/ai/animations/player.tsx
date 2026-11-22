@@ -1,12 +1,13 @@
 'use client';
 import './animations.css';
 import {useEffect,useMemo,useReducer,useRef,useState,useSyncExternalStore} from 'react';
-import {Download,FastForward,Maximize,Minimize,Pause,Play,Rewind,RotateCcw,Speech,Square,Volume2,VolumeX,ZoomIn,ZoomOut} from 'lucide-react';
+import {createPortal} from 'react-dom';
+import {Download,FastForward,Maximize,Minimize,Pause,Play,Rewind,RotateCcw,Speech,Square,Volume2,VolumeX,X,ZoomIn,ZoomOut} from 'lucide-react';
 import {useI18n} from '../../components/i18n';
 import type {Animation} from './types';
-import {narrationDurations,narrationProgress,playCue,setNarrationRate,speak,stopSpeaking} from './sound';
-import {chunkAt,splitLine} from './subtitle';
-import {canRecord,recordStage,type Recording} from './record';
+import {narrationDurations,narrationProgress,narrationTimings,playCue,setNarrationRate,speak,stopSpeaking} from './sound';
+import {chunkAt,resolveSceneDuration,splitLine,subtitleProgress,type SceneTiming} from './subtitle';
+import {cancelAnimationDownload,startAnimationDownload,useAnimationDownloads} from './download-manager';
 
 // PACE：关掉语音时按字数估的镜头时长再乘的系数；GAP：有录音时读完到下一镜的停顿；W×H：画布尺寸。
 const TICK=50,PACE=0.6,FADE=300,GAP=300,MIN_SCENE=1500,JUMP=10000,W=640,H=360,MAX_ZOOM=3;
@@ -30,11 +31,13 @@ export default function AnimationPlayer({animation,onEnd}:{animation:Animation;o
  const {scenes,Visual}=animation,lines=useMemo(()=>scenes.map(s=>s.speech??s.caption),[scenes]);
  const sound=useSyncExternalStore(subscribeSound,readSound,()=>''),sfx=sound.includes('sfx'),voice=sound.includes('voice');
  const toggleSound=(k:'sfx'|'voice')=>{const on=new Set(readSound().split(',').filter(Boolean));if(on.has(k))on.delete(k);else on.add(k);writeSound([...on].join(','))};
- // 录音时长（毫秒），打开语音后加载；没有录音的句子为 null，按字数估时长并用语音合成朗读。
+ // 录音时长（毫秒）与导演台自定义影片/字幕校准（timing.json），打开语音后加载；没有录音的句子为 null，按字数估时长并用语音合成朗读。
  const [durs,setDurs]=useState<(number|null)[]|null>(null);
+ const [timings,setTimings]=useState<(SceneTiming|null)[]|null>(null);
+ useEffect(()=>{let live=true;narrationTimings(lines).then(t=>{if(live)setTimings(t)}).catch(()=>{});return()=>{live=false}},[lines]);
  useEffect(()=>{if(!voice)return;let live=true;narrationDurations(lines).then(d=>{if(live)setDurs(d)}).catch(()=>{});return()=>{live=false}},[lines,voice]);
  const audioMs=(i:number)=>voice?durs?.[i]??null:null;
- const lengths=scenes.map((sc,i)=>{const d=audioMs(i);return d?Math.max(d+GAP,MIN_SCENE):sc.ms*PACE}),starts=lengths.map((_,i)=>lengths.slice(0,i).reduce((a,b)=>a+b,0)),total=lengths.reduce((a,b)=>a+b,0);
+ const lengths=scenes.map((sc,i)=>resolveSceneDuration(sc.ms,audioMs(i),timings?.[i],GAP,MIN_SCENE,PACE)),starts=lengths.map((_,i)=>lengths.slice(0,i).reduce((a,b)=>a+b,0)),total=lengths.reduce((a,b)=>a+b,0);
  const stepAt=(t:number)=>{let i=0;while(i<starts.length-1&&t>=starts[i+1])i++;return i};
  const [s,dispatch]=useReducer((s:State,a:Action):State=>{const move=(t:number,playing=s.playing):State=>{const from=stepAt(s.t),to=stepAt(t);return {...s,t,playing,...(to!==from?{prev:from,changedAt:t}:{})}};switch(a.type){
   case 'tick':{if(!s.playing)return s;let t=s.t+TICK*s.speed;if(a.hold){const i=stepAt(s.t),end=i<starts.length-1?starts[i+1]:total;t=Math.min(t,Math.max(s.t,end-1))}return t>=total?move(total,false):move(t)}
@@ -53,18 +56,22 @@ export default function AnimationPlayer({animation,onEnd}:{animation:Animation;o
  const step=stepAt(s.t),fading=s.prev>=0&&s.prev!==step&&s.t-s.changedAt<FADE*s.speed,done=s.t>=total;
  const root=useRef<HTMLDivElement>(null),stage=useRef<HTMLDivElement>(null),svg=useRef<SVGSVGElement>(null),bar=useRef<HTMLDivElement>(null);
  const [scrub,setScrub]=useState(false);
- // 旁白没读完时，画面停在当前镜头末尾等它；万一没有回调，按时长估一个最长等待时间兜底。
- const speaking=useRef({on:false,until:0}),played=useRef('');
- useEffect(()=>{if(!s.playing)return;const timer=setInterval(()=>dispatch({type:'tick',hold:speaking.current.on&&Date.now()<speaking.current.until}),TICK);return()=>clearInterval(timer)},[s.playing]);
+ // 旁白没读完时，画面停在当前镜头末尾等它（除非导演台显式设定了分镜影片时长 sceneMs）；万一没有回调，按时长估一个最长等待时间兜底。
+ const speaking=useRef({on:false,until:0}),played=useRef(''),explicitMsRef=useRef(false);
+ useEffect(()=>{explicitMsRef.current=Boolean(timings?.[step]?.sceneMs)},[timings,step]);
+ useEffect(()=>{if(!s.playing)return;const timer=setInterval(()=>dispatch({type:'tick',hold:!explicitMsRef.current&&speaking.current.on&&Date.now()<speaking.current.until}),TICK);return()=>clearInterval(timer)},[s.playing]);
  useEffect(()=>{setNarrationRate(s.speed)},[s.speed]);
  useEffect(()=>()=>stopSpeaking(),[]);
  const endRef=useRef(onEnd);useEffect(()=>{endRef.current=onEnd});
  useEffect(()=>{if(done&&s.round>=0)endRef.current?.()},[done,s.round]);
  // 音效只在进入新镜头时播放，暂停后继续不重复。
  useEffect(()=>{const key=s.round+'-'+step;if(!sfx||!s.playing||played.current===key)return;played.current=key;playCue(scenes[step].cue,s.speed)},[step,s.round,s.playing,sfx]); // eslint-disable-line react-hooks/exhaustive-deps
+ const [full,setFull]=useState(false);
+ const [nativeFull,setNativeFull]=useState(false);
+ const portalFull=full&&!nativeFull;
  // CSS 动画通过 .paused 暂停；SVG 自带的 animateMotion 需要单独暂停。
- useEffect(()=>{const el=svg.current;if(!el)return;if(s.playing||!s.frozen)el.unpauseAnimations();else el.pauseAnimations()},[s.playing,s.frozen,step,s.round]);
- useEffect(()=>{const el=root.current;if(!el)return;const onKey=(e:KeyboardEvent)=>{if(e.key===' '){e.preventDefault();dispatch({type:'toggle'})}else if(e.key==='ArrowRight')dispatch({type:'jump',by:JUMP});else if(e.key==='ArrowLeft')dispatch({type:'jump',by:-JUMP})};el.addEventListener('keydown',onKey);return()=>el.removeEventListener('keydown',onKey)},[]);
+ useEffect(()=>{const el=svg.current;if(!el)return;if(s.playing||!s.frozen)el.unpauseAnimations();else el.pauseAnimations()},[s.playing,s.frozen,step,s.round,portalFull]);
+ useEffect(()=>{const el=root.current;if(!el)return;const onKey=(e:KeyboardEvent)=>{if(e.key===' '){e.preventDefault();dispatch({type:'toggle'})}else if(e.key==='ArrowRight')dispatch({type:'jump',by:JUMP});else if(e.key==='ArrowLeft')dispatch({type:'jump',by:-JUMP})};el.addEventListener('keydown',onKey);return()=>el.removeEventListener('keydown',onKey)},[portalFull]);
 
  // 进度条：按下后拖动，松开时从新位置继续朗读。
  const seekTo=(x:number)=>{const r=bar.current!.getBoundingClientRect();dispatch({type:'seek',t:Math.max(0,Math.min(1,(x-r.left)/r.width))*total})};
@@ -79,19 +86,51 @@ export default function AnimationPlayer({animation,onEnd}:{animation:Animation;o
  const panMove=(e:React.PointerEvent)=>{const p=pan.current,el=svg.current;if(!p||!el)return;const k=W/p.v.z/el.clientWidth;setView(clampView({...p.v,x:p.v.x-(e.clientX-p.x)*k,y:p.v.y-(e.clientY-p.y)*k}))};
  const panUp=()=>{pan.current=null};
 
- // 全屏：优先用浏览器全屏；不支持的（iPhone Safari）退回铺满窗口的样式。
- const [full,setFull]=useState(false);
- useEffect(()=>{const on=()=>setFull(document.fullscreenElement===root.current);document.addEventListener('fullscreenchange',on);return()=>document.removeEventListener('fullscreenchange',on)},[]);
- const toggleFull=()=>{const el=root.current;if(!el)return;if(document.fullscreenElement)void document.exitFullscreen();else if(el.requestFullscreen)el.requestFullscreen().catch(()=>setFull(f=>!f));else setFull(f=>!f)};
+ // 全屏：优先用浏览器全屏；不支持或被拒绝时（iPhone Safari / 移动端 WebView）通过 Portal 挂到 body，避免被祖先 backdrop-filter/transform 截断。
+ useEffect(()=>{
+  const on=()=>{
+   const active=document.fullscreenElement===root.current;
+   setNativeFull(active);
+   setFull(active);
+   if(!active){try{screen.orientation?.unlock?.()}catch{}}
+  };
+  document.addEventListener('fullscreenchange',on);
+  return()=>{document.removeEventListener('fullscreenchange',on);try{screen.orientation?.unlock?.()}catch{}};
+ },[]);
+ useEffect(()=>{
+  if(!portalFull)return;
+  const prevOverflow=document.body.style.overflow;
+  document.body.style.overflow='hidden';
+  const onEsc=(e:KeyboardEvent)=>{if(e.key==='Escape')setFull(false)};
+  window.addEventListener('keydown',onEsc);
+  return()=>{document.body.style.overflow=prevOverflow;window.removeEventListener('keydown',onEsc)};
+ },[portalFull]);
+ const toggleFull=()=>{
+  const el=root.current;if(!el)return;
+  if(document.fullscreenElement){void document.exitFullscreen();return}
+  if(full){setFull(false);return}
+  if(el.requestFullscreen){
+   el.requestFullscreen()
+    .then(()=>{
+     if(window.innerWidth<=900){
+      const ori=screen.orientation as (ScreenOrientation&{lock?:(t:string)=>Promise<void>})|undefined;
+      ori?.lock?.('landscape').catch(()=>{});
+     }
+    })
+    .catch(()=>setFull(true));
+  }else{
+   setFull(true);
+  }
+ };
 
  // 画面内字幕：按舞台宽度切成一行一段；进度来自录音的播放位置，没有录音时按时间估。
  const [stageW,setStageW]=useState(W);
- useEffect(()=>{const el=stage.current;if(!el)return;const ro=new ResizeObserver(([e])=>setStageW(e.contentRect.width));ro.observe(el);return()=>ro.disconnect()},[]);
+ useEffect(()=>{const el=stage.current;if(!el)return;setStageW(el.getBoundingClientRect().width||W);const ro=new ResizeObserver(([e])=>setStageW(e.contentRect.width));ro.observe(el);return()=>ro.disconnect()},[portalFull]);
  const fontSize=Math.round(Math.max(14,Math.min(full?34:22,stageW*0.032))),font=`600 ${fontSize}px system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif`;
  const chunks=useMemo(()=>splitLine(lines[step],stageW*0.92-24,font),[lines,step,stageW,font]);
- // 开着语音时，填色跟着实际朗读的位置走（录音的播放位置，或语音合成读到的字）；关掉语音时按时间估。
- const d=audioMs(step),local=s.t-starts[step],timeProgress=Math.min(1,local/(lengths[step]*(d?1:0.85)));
- const heard=voice&&!scrub?narrationProgress(lines[step],d):null,progress=heard??timeProgress;
+ // 开着语音时，填色跟着实际朗读的位置走（录音的播放位置 + 导演台字幕校准）；关掉语音时按时间估。
+ const d=audioMs(step),tm=timings?.[step]??null,local=s.t-starts[step],timeProgress=d?subtitleProgress(local,d,tm):Math.min(1,local/(lengths[step]*0.85));
+ const heard=voice&&!scrub?narrationProgress(lines[step],d,tm):null,progress=heard??timeProgress;
  const {index:ci,fill}=chunkAt(chunks,progress);
  // 朗读：换镜时从头读；暂停后继续时从字幕当前这一段的开头接着读；拖动进度后按新位置读。
  // 关掉语音时，字幕从语音实际读到的位置接着按时间走；再打开时，从字幕正显示的这一段开头读起。两边始终对得上。
@@ -112,21 +151,21 @@ export default function AnimationPlayer({animation,onEnd}:{animation:Animation;o
   return()=>{state.on=false};
  },[step,s.round,s.playing,s.seeks,voice,scrub]); // eslint-disable-line react-hooks/exhaustive-deps -- 只在换镜、跳转、暂停继续、开关语音时重新朗读
 
- // 下载：从头播放并录下画面和声音，播完自动保存。
- const [rec,setRec]=useState<Recording|null>(null),[msg,setMsg]=useState(''),recRef=useRef<Recording|null>(null);
+ // 下载：交由全局后台静默合成管理器处理，进度和取消入口放在顶栏「下载」按钮下，离开此页也不会停止。
+ const jobs=useAnimationDownloads(),activeJob=jobs.find(j=>j.id===animation.id);
+ const exportPct=activeJob?.status==='running'?activeJob.pct:null;
+ const [msg,setMsg]=useState('');
  useEffect(()=>{if(!msg)return;const t=setTimeout(()=>setMsg(''),8000);return()=>clearTimeout(t)},[msg]);
- const download=async()=>{if(rec){rec.stop();return}
-  if(!canRecord()){setMsg(L('当前浏览器不支持录制视频，请换用电脑版 Chrome、Edge 或 Firefox。','This browser cannot record video; try desktop Chrome, Edge or Firefox.'));return}
-  if(document.fullscreenElement)await document.exitFullscreen().catch(()=>{});setFull(false);setView({z:1,x:0,y:0});
-  try{const r=recordStage(stage.current!,animation.title,ok=>{recRef.current=null;setRec(null);setMsg(ok?L('视频已保存到下载文件夹。','Saved to your downloads.'):L('没有录到内容。','Nothing was recorded.'))});
-   recRef.current=r;setRec(r);setMsg(L('录制中：从头播放一遍，请保持这个标签页在前台，播完会自动保存。','Recording: plays once from the start; keep this tab in front, it saves when playback ends.'));dispatch({type:'replay'})}
-  catch{setMsg(L('录制没有启动，请重试。','Recording could not start. Please try again.'))}};
- useEffect(()=>{if(!done||!rec)return;const t=setTimeout(()=>rec.stop(),800);return()=>clearTimeout(t)},[done,rec]);
- useEffect(()=>()=>recRef.current?.stop(),[]);
+ const download=()=>{if(exportPct!==null){cancelAnimationDownload(animation.id);setMsg(L('已取消视频合成。','Video synthesis cancelled.'));return}
+  const r=startAnimationDownload(animation,stage.current!,{sfx,voice});
+  if(r==='unsupported')setMsg(L('当前浏览器不支持后台合成视频，请换用新版桌面 Chrome、Edge 或 Firefox。','This browser cannot synthesize video; try desktop Chrome, Edge or Firefox.'));
+  else if(r==='failed')setMsg(L('视频合成没有启动，请重试。','Could not start video synthesis; please try again.'));
+  else setMsg(L('已加入顶栏「下载」按钮后台静默合成，离开当前页面也会继续，完成后自动保存。','Added to header Download button — continues silently even if you leave this page.'))};
 
  const clock=(ms:number)=>`${Math.floor(ms/60000)}:${String(Math.floor(ms/1000)%60).padStart(2,'0')}`;
  const vb=`${view.x} ${view.y} ${W/view.z} ${H/view.z}`,chunk=chunks[ci]?.text??'';
- return <div className={'an-player'+(full?' is-full':'')} ref={root} tabIndex={0} aria-label={L('动画播放器：空格暂停或继续，左右方向键快退快进 10 秒','Animation player: Space to pause or resume, arrow keys to seek 10 s')}>
+ const playerEl=<div className={'an-player'+(full?' is-full':'')} ref={root} tabIndex={0} aria-label={L('动画播放器：空格暂停或继续，左右方向键快退快进 10 秒','Animation player: Space to pause or resume, arrow keys to seek 10 s')}>
+  {full&&<button type="button" className="an-full-exit" onClick={toggleFull} aria-label={L('退出全屏','Exit full screen')} title={L('退出全屏','Exit full screen')}><X size={20}/></button>}
   <div className={'an-stage'+(!s.playing&&s.frozen&&!done?' paused':'')+(view.z>1?' zoomed':'')} ref={stage}>
    <svg ref={svg} viewBox={vb} role="img" aria-label={animation.title} key={s.round} onPointerDown={panDown} onPointerMove={panMove} onPointerUp={panUp} onPointerCancel={panUp}>
     {animation.continuous?<Visual step={step}/>:<>
@@ -147,8 +186,9 @@ export default function AnimationPlayer({animation,onEnd}:{animation:Animation;o
     <button className="an-zoom" onClick={()=>setView({z:1,x:0,y:0})} disabled={view.z<=1} title={L('还原大小','Reset zoom')}>{view.z.toFixed(1).replace(/\.0$/,'')}×</button>
     <button onClick={()=>setView(v=>zoomTo(v,v.z+0.5))} disabled={view.z>=MAX_ZOOM} title={L('放大（放大后可拖动画面）','Zoom in (drag to pan)')} aria-label={L('放大','Zoom in')}><ZoomIn size={15}/></button></span>
    <span className="an-speed an-icons"><button onClick={toggleFull} title={full?L('退出全屏','Exit full screen'):L('全屏','Full screen')} aria-label={full?L('退出全屏','Exit full screen'):L('全屏','Full screen')}>{full?<Minimize size={15}/>:<Maximize size={15}/>}</button>
-    <button className={rec?'on rec':''} onClick={()=>void download()} title={rec?L('停止录制并保存','Stop and save'):L('下载视频：从头播放一遍并录制成视频文件','Download video: plays once from the start and records it')} aria-label={rec?L('停止录制','Stop recording'):L('下载视频','Download video')}>{rec?<Square size={15}/>:<Download size={15}/>}</button></span>
+    <button className={exportPct!==null?'on rec':''} onClick={download} title={exportPct!==null?L(`后台合成中 ${exportPct}% · 可在顶栏下载按钮查看或点击取消`,`Synthesizing ${exportPct}% · view in header Download button or click to cancel`):L('下载视频：交由顶栏后台静默合成，离开此页也会继续','Download video: silently synthesizes in header even if you leave this page')} aria-label={exportPct!==null?L('取消下载','Cancel download'):L('下载视频','Download video')}>{exportPct!==null?<><Square size={14}/><span>{exportPct}%</span></>:<Download size={15}/>}</button></span>
   </div>
   {msg&&<p className="an-msg" role="status">{msg}</p>}
- </div>
+ </div>;
+ return portalFull&&typeof document!=='undefined'?createPortal(playerEl,document.body):playerEl;
 }

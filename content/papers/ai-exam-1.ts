@@ -110,7 +110,7 @@ export const aiExam1:Paper={id:'ai-exam-1',subject:'ai',title:'AI 开发阶段�
   explain:'有 Retry-After 响应头时应优先按它等待；抖动能避免大量客户端在同一时刻重试造成二次拥塞。'},
  {id:'ai-p1-c02',type:'code',q:'实现一个简单的检索函数 search(query, docs, k)：docs 是 [{id, text, vector}]，已有 embed(text) 返回向量。要求：1. 计算 query 向量与每个文档向量的余弦相似度；2. 过滤掉相似度低于 0.3 的结果；3. 返回相似度最高的 k 个 {id, score}，按分数降序；4. 处理零向量，避免除零。',
   reference:'async function search(query, docs, k) {\n  const q = await embed(query);\n  const norm = v => Math.sqrt(v.reduce((s, x) => s + x * x, 0));\n  const qn = norm(q);\n  if (qn === 0) return [];\n  const scored = [];\n  for (const d of docs) {\n    const dn = norm(d.vector);\n    if (dn === 0) continue;\n    let dot = 0;\n    for (let i = 0; i < q.length; i++) dot += q[i] * d.vector[i];\n    const score = dot / (qn * dn);\n    if (score >= 0.3) scored.push({ id: d.id, score });\n  }\n  scored.sort((a, b) => b.score - a.score);\n  return scored.slice(0, k);\n}\n// 文档向量可以预先归一化并缓存范数；数据量大时用向量库的 ANN 索引代替全量扫描。',
-  points:['正确计算余弦相似度（点积除以范数之积）','处理查询或文档的零向量，避免除零','按阈值过滤低相似度结果','按分数降序排序并取前 k 个','提到预归一化或用 ANN 索引等性能优化'],scores:[4,2,2,3,3],
+  points:['调用 embed(query) 生成查询向量并遍历文档集合','正确计算余弦相似度（点积除以范数之积）','处理查询或文档的零向量，避免除零','过滤掉相似度低于 0.3 的结果','按分数降序排序并截取前 k 个 {id, score}'],scores:[2,4,2,3,3],
   explain:'全量计算的复杂度是 O(N·d)，适合小数据集；规模变大后用 HNSW 等 ANN 索引。'},
  // 七、综合题（设计 + 代码）
  {id:'ai-p1-d01',type:'design',q:'公司要做一个“内部知识库问答助手”：员工用自然语言提问，助手基于公司的规章制度、技术文档（PDF、Word、Wiki，约 5 万篇，每天有更新）回答，并给出引用来源。要求：答案准确、不知道时明确说不知道；不同部门员工只能看到自己有权限的文档；P95 响应时间不超过 5 秒。\n1. 设计整体架构：文档入库流程、检索流程、生成流程；\n2. 说明如何实现权限控制、增量更新、降低幻觉和评测；\n3. 写出“检索 + 生成”核心流程的代码（可以用伪代码或任意语言），体现权限过滤、混合检索、重排序、引用来源和无结果时拒答。',

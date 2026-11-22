@@ -1,7 +1,10 @@
 'use client';
 import {useSyncExternalStore} from 'react';
+import {Play,Square} from 'lucide-react';
 import {useI18n} from '../components/i18n';
 import {codeLangs,codeRefsFor,type CodeLang} from '@/content/code-refs';
+import {detectPlaygroundLang,type PlaygroundLang} from '@/lib/playground-bridge';
+import {InlineRunOutput,useInlineCodeRun} from '../components/inline-code-run';
 
 const KEY='code-ref-lang';
 const listeners=new Set<()=>void>();
@@ -12,19 +15,49 @@ const save=(l:CodeLang)=>{try{localStorage.setItem(KEY,l)}catch{}listeners.forEa
 export const useCodeLang=()=>useSyncExternalStore(subscribe,read,()=>null);
 export const setCodeLang=save;
 
-// 代码题参考答案：有多语言写法时显示语言切换标签，选择会记住，下一题自动沿用。
-export default function CodeReference({id,reference}:{id:string;reference:string}){
+export type CodeReferencePlayground={
+ hintLang?:PlaygroundLang|null;
+ title?:string;
+ sourceLabel?:string;
+ backHref?:string;
+};
+
+// 代码题参考答案：有多语言写法时显示语言切换标签，选择会记住，下一题自动沿用；支持直接运行验证。
+export default function CodeReference({id,reference,playground}:{id:string;reference:string;playground?:CodeReferencePlayground}){
  const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
  const lang=useSyncExternalStore(subscribe,read,()=>null);
  const data=codeRefsFor(id,reference);
- if(!data)return <pre><code>{reference}</code></pre>;
- const langs=codeLangs.filter(l=>data.refs[l.id]);
- const cur=lang&&data.refs[lang]?lang:data.base;
+ const langs=data?codeLangs.filter(l=>data.refs[l.id]):[];
+ const cur=data?(lang&&data.refs[lang]?lang:data.base):null;
+ const curCode=data?(data.refs[cur!]??reference):reference;
+ const activeLang:PlaygroundLang|null=data?cur:detectPlaygroundLang(reference,playground?.hintLang,{allowThirdParty:true});
+ const runner=useInlineCodeRun(activeLang,curCode,{
+  questionId:id,
+  title:playground?.title??L('参考答案代码','Reference solution'),
+  sourceLabel:playground?.sourceLabel,
+  backHref:playground?.backHref,
+ });
+
+ if(!data){
+  if(!activeLang)return <pre><code>{reference}</code></pre>;
+  return <div className="code-box">
+   <div className="code-box-actions">
+    {runner.busy
+     ?<button type="button" className="code-play stop" onClick={runner.stop}><Square size={12} fill="currentColor"/>{L('停止','Stop')}</button>
+     :<button type="button" className="code-play" onClick={()=>void runner.run()} title={L('直接运行参考代码','Run reference code')}><Play size={13}/>{L('运行','Run')}</button>}
+   </div>
+   <pre><code>{runner.displayCode}</code></pre>
+   <InlineRunOutput running={runner.running} completing={runner.completing} result={runner.result} error={runner.error} onClear={runner.clear} onAiFix={()=>void runner.aiFix()} onOpenPlayground={runner.openPlayground}/>
+  </div>;
+ }
  return <div className="code-ref">
   <div className="code-ref-tabs" role="tablist" aria-label={L('参考答案语言','Reference language')}>
    {langs.map(l=><button key={l.id} type="button" role="tab" aria-selected={cur===l.id} className={cur===l.id?'on':''} onClick={()=>save(l.id)}>{l.label}</button>)}
+   {runner.busy
+    ?<button type="button" className="code-ref-play stop" onClick={runner.stop}><Square size={12} fill="currentColor"/>{L('停止','Stop')}</button>
+    :<button type="button" className="code-ref-play" onClick={()=>void runner.run()} title={L('直接运行当前语言的参考答案','Run this reference code')}><Play size={13}/>{L('运行','Run')}</button>}
   </div>
-  <pre><code>{data.refs[cur]}</code></pre>
-  <p className="code-ref-note">{L('用哪种语言作答都可以，AI 评分按思路和关键逻辑给分。','Answer in any of these languages; grading looks at the approach and key logic.')}</p>
+  <pre><code>{runner.displayCode}</code></pre>
+  <InlineRunOutput running={runner.running} completing={runner.completing} result={runner.result} error={runner.error} onClear={runner.clear} onAiFix={()=>void runner.aiFix()} onOpenPlayground={runner.openPlayground}/>
  </div>;
 }

@@ -2,10 +2,9 @@
 import {useEffect,useMemo,useRef,useState} from 'react';
 import {useSearchParams} from 'next/navigation';
 import {MessageSquareWarning,Bug,Lightbulb,HelpCircle,Send,CheckCircle2,Clock,Trash2} from 'lucide-react';
-import SiteNav from '../components/site-nav';
-import {LanguageControl,useI18n} from '../components/i18n';
-import ThemeControl from '../components/theme-control';
-import AccountMenu from '../components/account-menu';
+import SiteHeader from '../components/site-header';
+import {useI18n} from '../components/i18n';
+import {markdownEditing} from '../ai/code-input';
 import type {FeedbackItem} from '../api/feedback/route';
 import '../ai/ai.css';
 import './feedback.css';
@@ -189,6 +188,9 @@ export default function FeedbackClient({username}:{username:string}){
   english:L('英语学习','English'),
   interview:L('面试复习','Interview'),
   practice:L('综合训练','Training'),
+  playground:L('代码操场','Playground'),
+  stories:L('分享故事','Stories'),
+  about:L('项目关于','About'),
  };
 
  const categoryLabels:Record<FeedbackItem['category'],string>={
@@ -229,22 +231,14 @@ export default function FeedbackClient({username}:{username:string}){
 
  return (
   <div className="ai-shell fb-shell">
-   <header className="ai-header">
-    <a href="/feedback" className="ai-brand"><MessageSquareWarning size={23}/><span>{L('面试自习室','Study Room')}<small>{L('反馈','Feedback')}</small></span></a>
-    <SiteNav active="feedback"/>
-    <div className="top-actions">
-     <LanguageControl/>
-     <ThemeControl/>
-     <AccountMenu username={username}/>
-    </div>
-   </header>
+   <SiteHeader active="feedback" username={username}/>
 
    <main className="fb-main">
     <section className="fb-hero">
      <div className="ai-title">
       <span className="eyebrow">FEEDBACK</span>
       <h1>{L('一起把题库和体验打磨得更好','Help us improve every question')}</h1>
-      <p>{L('无论是题目在实际中不会这样问、选项有歧义、听力解析缺少原句，还是界面遮挡与闪烁问题，都欢迎随时提交。','Report unnatural questions, ambiguous options, missing transcripts, or UI glitches anytime.')}</p>
+
      </div>
      <div className="fb-stats">
       <div className="fb-stat">
@@ -265,7 +259,7 @@ export default function FeedbackClient({username}:{username:string}){
     <div className="fb-grid">
      <section className="fb-card" aria-label={L('提交反馈','Submit Feedback')}>
       <h2><MessageSquareWarning size={18}/>{L('提交新反馈','Submit Feedback')}</h2>
-      <p className="fb-card-sub">{L('支持从答题页一键带入题号，也可以直接提交功能建议。','Pre-filled automatically when clicked from a question card.')}</p>
+      
 
       <form className="fb-form" onSubmit={submit}>
        {questionId&&(
@@ -318,7 +312,7 @@ export default function FeedbackClient({username}:{username:string}){
          required
          value={title}
          onChange={e=>setTitle(e.target.value)}
-         placeholder={L('一句话概括问题，如“这道题在实际开发中不会这样写”','Brief summary of the issue')}
+         placeholder={L('标题','Title')}
          maxLength={120}
         />
        </label>
@@ -326,11 +320,11 @@ export default function FeedbackClient({username}:{username:string}){
        <label className="fb-field">
         <span>{L('详细说明','Description')}</span>
         <textarea
-         ref={contentRef}
+         ref={el=>{contentRef.current=el;markdownEditing(el)}}
          required
          value={content}
          onChange={e=>setContent(e.target.value)}
-         placeholder={L('请描述具体哪里不合理、期望怎样修改，或复现步骤…','Describe what feels unnatural, expected fix, or steps to reproduce...')}
+         placeholder={L('描述','Description')}
          maxLength={2000}
         />
         <small>{content.length} / 2000</small>
@@ -474,8 +468,8 @@ export default function FeedbackClient({username}:{username:string}){
        </div>
       )}
      </section>
-    </div>
-   </main>
-  </div>
- );
-}
+     </div>
+    </main>
+   </div>
+  );
+ }

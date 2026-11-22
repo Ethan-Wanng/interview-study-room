@@ -1,5 +1,6 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
+import {createPortal} from 'react-dom';
 import {BookOpen,ListChecks,Loader2,MessagesSquare,Search,X} from 'lucide-react';
 import {useI18n} from './i18n';
 import type {SearchHit,SearchKind} from '@/lib/site-search';
@@ -25,17 +26,17 @@ export default function GlobalSearch(){const {locale}=useI18n(),L=(zh:string,en:
  const total=res?res.counts.card+res.counts.question+res.counts.interview:0;
  return <>
   <button type="button" className="gs-open" onClick={()=>setOpen(true)} title={L('全局搜索（Ctrl / ⌘ + K）','Search everything (Ctrl / ⌘ + K)')} aria-label={L('全局搜索','Search everything')}><Search size={17}/><span>{L('搜索','Search')}</span></button>
-  {open&&<div className="gs-layer" role="dialog" aria-modal="true" aria-label={L('全局搜索','Search everything')} onClick={e=>{if(e.target===e.currentTarget)setOpen(false)}}>
+  {open&&createPortal(<div className="gs-layer" role="dialog" aria-modal="true" aria-label={L('全局搜索','Search everything')} onClick={e=>{if(e.target===e.currentTarget)setOpen(false)}}>
    <div className="gs-box">
-    <label className="gs-input"><Search size={18}/><input ref={input} value={q} onChange={e=>setQ(e.target.value)} placeholder={L('搜索所有学科的学习卡片、题目和面试题，比如 CoT、索引、闭包…','Search lesson cards, questions and interview questions…')}/>
+    <label className="gs-input"><Search size={18}/><input ref={input} value={q} onChange={e=>setQ(e.target.value)} placeholder={L('搜索','Search')}/>
      {busy&&<Loader2 size={16} className="ai-spin"/>}<button type="button" onClick={()=>setOpen(false)} aria-label={L('关闭','Close')}><X size={17}/></button></label>
     <div className="gs-tabs">{tabs.map(([id,name])=><button key={id} type="button" className={kind===id?'on':''} onClick={()=>setKind(id)}>{name}{res&&<small>{id==='all'?total:res.counts[id]}</small>}</button>)}</div>
     <div className="gs-list">
-     {!q.trim()&&<p className="gs-empty">{L('输入关键词开始搜索。多个关键词用空格分开，比如“Redis 持久化”。','Type a keyword to search. Separate several keywords with spaces.')}</p>}
+     
      {failed&&<p className="gs-empty">{L('搜索没有成功，请稍后再试。','Search failed. Please try again.')}</p>}
-     {q.trim()&&res&&!failed&&!res.hits.length&&<p className="gs-empty">{L('没有找到相关内容，换个关键词试试，或者点右下角问 AI 老师。','Nothing found. Try another keyword, or ask the AI tutor.')}</p>}
+     {q.trim()&&res&&!failed&&!res.hits.length&&<p className="gs-empty">{L('没有找到相关内容','Nothing found')}</p>}
      {res?.hits.map((h,i)=>{const Icon=icons[h.kind];return <a key={h.href+i} href={h.href} className="gs-hit"><Icon size={17}/><span><b>{h.title}</b>{h.snippet&&<small>{h.snippet}</small>}<em><i className={'gs-tag '+h.kind}>{h.tag}</i>{h.where}</em></span></a>})}
-     {res&&res.hits.length>=40&&<p className="gs-empty">{L('只显示最相关的 40 条，可以加关键词缩小范围。','Showing the top 40. Add keywords to narrow it down.')}</p>}
+     {res&&res.hits.length>=40&&<p className="gs-empty">{L('仅显示前 40 条','Top 40 shown')}</p>}
     </div>
-   </div></div>}
+   </div></div>,document.body)}
  </>}

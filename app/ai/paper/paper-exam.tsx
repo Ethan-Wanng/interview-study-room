@@ -1,12 +1,14 @@
 'use client';
 import './paper.css';
 import {useEffect,useMemo,useRef,useState} from 'react';
-import {Clock,Download,FileCheck2,FileText,RotateCcw,Send} from 'lucide-react';
+import {Clock,Download,FileCheck2,FileText,RotateCcw,Send,Square} from 'lucide-react';
 import {useI18n} from '../../components/i18n';
 import {paperLoaders} from '@/content/papers';
 import {paperSections,PAPER_MINUTES,PAPER_TOTAL,type Paper} from '@/content/papers/types';
-import {requestGrade} from '../grade-client';
-import type {GradeResult} from '@/lib/grade-types';
+import {requestGrade,type GradeThinkState} from '../grade-client';
+import ThinkBox from '../think-box';
+import GradeModelPicker from '../grade-model-picker';
+import {gradeModelBadge,type GradeResult} from '@/lib/grade-types';
 import PaperQuestion from './paper-question';
 import {PaperPrint} from './paper-print';
 import {answered,fixFillGrade,isAiGradedQuiz,paperLayout,paperScore,toPaperGradeItem,type PaperAnswer,type PaperRecord} from './paper-score';
@@ -46,7 +48,8 @@ function PaperExamInner({examId,title,passRate,storageKey,onScored,pool=NO_POOL}
  const [printing,setPrinting]=useState<'paper'|'answers'|null>(null);
  // AI 阅卷时正在流式写出的各题评分（只用于显示，不存进答卷）。
  const [live,setLive]=useState<Record<string,GradeResult>>({});
- const printRef=useRef<HTMLDivElement>(null),scored=useRef(onScored);useEffect(()=>{scored.current=onScored});
+ const printRef=useRef<HTMLDivElement>(null),scored=useRef(onScored),gradeAbortRef=useRef<AbortController|null>(null);useEffect(()=>{scored.current=onScored});useEffect(()=>()=>{gradeAbortRef.current?.abort()},[]);
+ const stopGrading=()=>{gradeAbortRef.current?.abort()};
  const setRecord=(r:PaperRecord|null)=>{setRecordState(r);write(key,r)};
  useEffect(()=>{let live=true;const load=paperLoaders[examId];if(!load){setPaper('error');return}
   load().then(p=>{if(live){const r=read(key);setPaper(p);setRecordState(r);setNow(Date.now());if(r&&!r.submittedAt&&!r.pausedAt&&Date.now()>=r.startedAt+PAPER_MINUTES*60000+(r.pausedMs??0))setResumedLate(r.startedAt)}},()=>{if(live)setPaper('error')});return()=>{live=false}},[examId,key]);
@@ -55,6 +58,7 @@ function PaperExamInner({examId,title,passRate,storageKey,onScored,pool=NO_POOL}
  const paper=useMemo(()=>basePaper&&basePaper!=='error'?paperFor(basePaper,pool,record?.qids):basePaper,[basePaper,pool,record?.qids]);
  const layout=useMemo(()=>paper&&paper!=='error'?paperLayout(paper):[],[paper]);
  const [wrongOnly,setWrongOnly]=useState(false);
+ const [gradeModel,setGradeModel]=useState(''),[liveThink,setLiveThink]=useState<GradeThinkState|null>(null);
  // 重新打开时已经超过时限、却还没交卷的答卷（比如页面出错中断了）：不自动交卷，让人接着答完再手动交卷。
  const [resumedLate,setResumedLate]=useState<number|null>(null);
  const answering=!!record&&!record.submittedAt,overtime=!!record&&resumedLate===record.startedAt,deadline=record?record.startedAt+PAPER_MINUTES*60000+(record.pausedMs??0):0,paused=answering&&!!record?.pausedAt;
@@ -63,13 +67,22 @@ function PaperExamInner({examId,title,passRate,storageKey,onScored,pool=NO_POOL}
  // 交卷：填空题与主观题一次性交给 AI 评分（只算一次额度）；AI 不可用时，结果页里逐题对照得分点自评。
  async function submit(r:PaperRecord){const done:PaperRecord={...r,submittedAt:Date.now()};setRecord(done);await grade(done)}
  // 没作答的填空/主观题直接记 0 分；其余的一次请求评完。onlyMissing 为 true 时只补评已有答卷里还没评过的题（比如老答卷补评填空题）。
- async function grade(done:PaperRecord,onlyMissing=false){if(!paper||paper==='error')return;
+ async function grade(done:PaperRecord,onlyMissing=false){if(!paper||paper==='error'||gradeAbortRef.current)return;
   const qMap=Object.fromEntries(layout.map(x=>[x.q.id,x.q]));
   const items=layout.flatMap(x=>{if(onlyMissing&&done.written?.[x.q.id])return [];const it=toPaperGradeItem(x.q,x.max,done.answers[x.q.id]);return it?[it]:[]});
   const blank=Object.fromEntries(layout.filter(x=>isAiGradedQuiz(x.q)&&!answered(x.q,done.answers[x.q.id])).map(x=>[x.q.id,{kind:'self' as const,score:0,got:[]}]));
   if(!items.length){const next={...done,written:{...done.written,...blank}};setRecord(next);scored.current(paperScore(paper,next).total);return}
-  setGrading(true);setLive({});const res=await requestGrade(items,p=>setLive(Object.fromEntries(p.map(r=>[r.id,r]))));setGrading(false);setLive({});
-  const next:PaperRecord=res.ok?{...done,gradeNote:undefined,written:{...done.written,...blank,...Object.fromEntries(res.results.map(g=>[g.id,{kind:'ai' as const,result:qMap[g.id]?fixFillGrade(qMap[g.id],done.answers[g.id],g):g}]))}}:{...done,written:{...done.written,...blank},gradeNote:res.message};
+  const ctl=new AbortController();gradeAbortRef.current=ctl;
+  setGrading(true);setLive({});setLiveThink(null);const res=await requestGrade(items,p=>setLive(Object.fromEntries(p.map(r=>[r.id,r]))),undefined,setLiveThink,ctl.signal);if(gradeAbortRef.current===ctl)gradeAbortRef.current=null;setGrading(false);setLive({});setLiveThink(null);
+  if(ctl.signal.aborted||(!res.ok&&res.aborted)){
+   if(done.submittedAt)autoGraded.current=done.submittedAt;
+   const nextWritten={...done.written,...blank};
+   const hasPending=layout.some(x=>isAiGradedQuiz(x.q)&&!nextWritten[x.q.id]);
+   setRecord({...done,written:nextWritten,gradeNote:hasPending?L('已停止 AI 评分，可切换模型或点击「重新请求 AI 评分」，也可以在下方逐题对照得分点自评。','AI grading stopped. Switch models, retry AI grading, or self-check below.'):done.gradeNote});
+   return;
+  }
+  if(res.ok&&res.model)setGradeModel(res.model);
+  const next:PaperRecord=res.ok?{...done,gradeNote:undefined,gradeThink:res.think,gradeThinkSecs:res.thinkSecs,written:{...done.written,...blank,...Object.fromEntries(res.results.map(g=>[g.id,{kind:'ai' as const,result:qMap[g.id]?fixFillGrade(qMap[g.id],done.answers[g.id],g):g}]))}}:{...done,written:{...done.written,...blank},gradeNote:res.message};
   setRecord(next);if(res.ok)scored.current(paperScore(paper,next).total)}
  // 已有交卷记录但还有未评分的题（例如此前提交的试卷未对填空题做 AI 评分），打开试卷时自动补评。
  const autoGraded=useRef<number|null>(null);
@@ -107,7 +120,7 @@ function PaperExamInner({examId,title,passRate,storageKey,onScored,pool=NO_POOL}
  if(paused){const done=layout.filter(x=>answered(x.q,record.answers[x.q.id])).length,left=deadline-record.pausedAt!;
   return <section className="ai-card paper-paused"><Pause size={28}/><h2>{L('答题已暂停','Paused')}</h2>
    <p>{L(`已答 ${done} / ${count} 题，剩余时间 ${clock(left)}（暂停期间不计时）。`,`${done} / ${count} answered, ${clock(left)} left (the clock is stopped).`)}</p>
-   <p className="muted">{L('答案已自动保存。可以直接关掉页面，下次打开这份试卷，点「继续作答」就能接着答。','Your answers are saved. You can close the page and continue later.')}</p>
+   <p className="muted">{L('答案已自动保存','Answers saved')}</p>
    <button className="button primary" onClick={resume}><Play size={16}/>{L('继续作答','Continue')}</button></section>}
  if(answering){const done=layout.filter(x=>answered(x.q,record.answers[x.q.id])).length,left=deadline-now;
   const setAnswer=(id:string,a:PaperAnswer)=>setRecord({...record,answers:{...record.answers,[id]:a}});
@@ -119,25 +132,25 @@ function PaperExamInner({examId,title,passRate,storageKey,onScored,pool=NO_POOL}
    {paperSections.map((s,si)=>{const rows=layout.map((x,i)=>({...x,no:i+1})).filter(x=>x.section===si),max=rows.reduce((n,x)=>n+x.max,0);
     return <section key={s.type} className="paper-section"><h2>{L(`${cn[si+1]}、${s.title}（共 ${rows.length} 题，${max} 分）`,`${s.titleEn} (${rows.length} questions, ${max} pts)`)}</h2>
      {rows.map(x=><PaperQuestion key={x.q.id} q={x.q} no={x.no} max={x.max} answer={record.answers[x.q.id]} order={record.orders?.[x.q.id]} onChange={a=>setAnswer(x.q.id,a)}/>)}</section>})}
-   <div className="ai-result-actions"><button className="button primary" onClick={()=>void submit(record)}><Send size={16}/>{L('交卷','Submit')}</button></div></div>}
+   <div className="ai-result-actions"><GradeModelPicker disabled={grading}/><button className="button primary" onClick={()=>void submit(record)}><Send size={16}/>{L('交卷','Submit')}</button></div></div>}
 
  const score=paperScore(paper,record),ok=score.total>=pass,pending=layout.filter(x=>isAiGradedQuiz(x.q)&&!record.written?.[x.q.id]).length;
  const selfScore=(id:string)=>(s:number,got:boolean[])=>{const next={...record,written:{...record.written,[id]:{kind:'self' as const,score:s,got}}};setRecord(next);if(layout.every(x=>!isAiGradedQuiz(x.q)||next.written[x.q.id]))scored.current(paperScore(paper,next).total)};
  // 下载答案、下载试卷、重新作答放在试卷最上面，交卷后不用滚到底部就能找到。
  return <div className="paper"><div className="ai-result-actions paper-actions top"><button className="button primary" disabled={!!printing} onClick={()=>download('answers')}><Download size={16}/>{L('下载答案与解析（PDF）','Download answers (PDF)')}</button>
    <button className="button secondary" disabled={!!printing} onClick={()=>download('paper')}><FileText size={16}/>{L('下载试卷（PDF）','Download the paper (PDF)')}</button>
-   <button className="button secondary" onClick={()=>{if(window.confirm(L('重新作答会清空这份答卷（最佳成绩会保留），确定吗？','Start over? This clears the current answers.')))setRecord(null)}}><RotateCcw size={16}/>{L('重新作答','Start over')}</button></div>
+   <button className="button secondary" onClick={()=>{if(window.confirm(L('重新作答会清空这份答卷（最佳成绩会保留），确定吗？','Start over? This clears the current answers.'))){stopGrading();setRecord(null)}}}><RotateCcw size={16}/>{L('重新作答','Start over')}</button></div>
   {pdfNote}<div className="paper-sheet">
   <section className="ai-card paper-score"><h1>{paper.title}</h1>
    <p className="paper-total"><b>{score.total}</b> / {PAPER_TOTAL}<span className={ok?'pass':'fail'}>{grading?L('AI 评分中…','Grading…'):pending?L(`还有 ${pending} 题待评分`,`${pending} to score`):ok?L('通过','Passed'):L(`未通过（${pass} 分及格）`,`Not passed (pass ${pass})`)}</span></p>
    <table><tbody>{score.sections.map(s=><tr key={s.type}><th>{L(s.title,s.titleEn)}</th><td>{s.got} / {s.max}</td></tr>)}</tbody></table>
    <p className="muted">{L(`交卷时间：${new Date(record.submittedAt!).toLocaleString('zh-CN')}，用时 ${clock(record.submittedAt!-record.startedAt)}`,`Submitted ${new Date(record.submittedAt!).toLocaleString()}`)}</p>
    {record.gradeNote&&<p className="ai-grade-error">{record.gradeNote}</p>}
-   {!grading&&<button className="button secondary paper-regrade" onClick={()=>void grade(record,false)}><RotateCcw size={16}/>{pending>0?L('重新请求 AI 评分','Retry AI grading'):L('重新 AI 评分','Re-grade with AI')}</button>}</section>
+   {(grading?liveThink?.text:record.gradeThink)&&<ThinkBox text={(grading?liveThink?.text:record.gradeThink)??''} live={grading&&liveThink?.live} secs={grading?liveThink?.secs:record.gradeThinkSecs} L={L}/>}{grading?<div className="ai-result-actions"><GradeModelPicker disabled/><button type="button" className="button ai-grade-stop" onClick={stopGrading}><Square size={14} fill="currentColor"/>{L('停止评分','Stop grading')}</button></div>:<div className="ai-result-actions"><GradeModelPicker disabled={grading}/><button className="button secondary paper-regrade" onClick={()=>void grade(record,false)}><RotateCcw size={16}/>{pending>0?L('重新请求 AI 评分','Retry AI grading'):L('重新 AI 评分','Re-grade with AI')}</button></div>}{gradeModel&&<small className="ai-grade-model-tag">{gradeModelBadge(gradeModel,locale==='en'?'en':'zh')}</small>}</section>
   <div className="paper-filter" role="group" aria-label={L('显示哪些题','Which questions')}><button type="button" className={!wrongOnly?'on':''} onClick={()=>setWrongOnly(false)}>{L('全部题目','All')}</button><button type="button" className={wrongOnly?'on':''} onClick={()=>setWrongOnly(true)}>{L(`只看错题（${score.rows.filter(x=>x.got<x.max).length}）`,`Wrong only (${score.rows.filter(x=>x.got<x.max).length})`)}</button></div>
   {paperSections.map((s,si)=>{const all=score.rows.map((x,i)=>({...x,no:i+1})).filter(x=>x.section===si),rows=wrongOnly?all.filter(x=>x.got<x.max):all;
    if(!rows.length)return null; // 只看错题时，这个题型全对就不显示
    return <section key={s.type} className="paper-section"><h2>{L(`${cn[si+1]}、${s.title}（${all.reduce((n,x)=>n+x.got,0)} / ${all.reduce((n,x)=>n+x.max,0)} 分）`,`${s.titleEn}`)}</h2>
-    {rows.map(x=><PaperQuestion key={x.q.id} q={x.q} no={x.no} max={x.max} answer={record.answers[x.q.id]} order={record.orders?.[x.q.id]} review={{got:x.got,written:record.written?.[x.q.id],live:grading&&isAiGradedQuiz(x.q)&&answered(x.q,record.answers[x.q.id])?live[x.q.id]??null:undefined,onSelfScore:isAiGradedQuiz(x.q)&&!grading?selfScore(x.q.id):undefined}}/>)}</section>})}
+    {rows.map(x=><PaperQuestion key={x.q.id} q={x.q} no={x.no} max={x.max} answer={record.answers[x.q.id]} order={record.orders?.[x.q.id]} review={{got:x.got,written:record.written?.[x.q.id],live:grading&&isAiGradedQuiz(x.q)&&answered(x.q,record.answers[x.q.id])?live[x.q.id]??null:undefined,onSelfScore:isAiGradedQuiz(x.q)&&!grading?selfScore(x.q.id):undefined,onStop:grading?stopGrading:undefined}}/>)}</section>})}
  </div>
   {printout}</div>}

@@ -3,6 +3,7 @@ import {useState} from 'react';
 import {Dialog,DialogContent,DialogHeader,DialogTitle,DialogDescription} from '@/components/ui/dialog';
 import {useI18n} from '../components/i18n';
 import {MINE,MY_LIMITS,parseBatch,type MyQuestion,type MyQuestionInput} from '@/lib/my-questions';
+import {markdownEditing} from '../ai/code-input';
 
 type Track={id:string;name:string};
 type Draft={title:string;answer:string;keep:boolean};
@@ -27,7 +28,7 @@ export default function MyEditor({open,onClose,onSaved,editing,subject,tracks}:{
   {!editing&&<div className="email-mode iv-ways" role="tablist">{([['one',L('单题','One')],['batch',L('批量粘贴','Paste many')],['ai',L('AI 出题','AI')]] as const).map(([k,label])=><button key={k} type="button" role="tab" aria-selected={way===k} className={way===k?'active':''} onClick={()=>{setWay(k);setError('')}}>{label}</button>)}</div>}
   {subjectPicker}{sectionInput}
   {(editing||way==='one')&&<><label className="iv-field">{L('题目','Question')}<input value={form.title} maxLength={MY_LIMITS.title} onChange={e=>set('title',e.target.value)} placeholder={L('例如：Redis 为什么快？','e.g. Why is Redis fast?')}/></label>
-   <label className="iv-field">{L('参考答案','Answer')}<textarea rows={9} value={form.answer} maxLength={MY_LIMITS.answer} onChange={e=>set('answer',e.target.value)} placeholder={L('空行分段；代码用 ``` 包起来会显示成代码块。','Blank lines split paragraphs; wrap code in ```.')}/></label>
+   <label className="iv-field">{L('参考答案','Answer')}<textarea ref={markdownEditing} rows={9} value={form.answer} maxLength={MY_LIMITS.answer} onChange={e=>set('answer',e.target.value)} placeholder={L('空行分段；代码用 ``` 包起来会显示成代码块。','Blank lines split paragraphs; wrap code in ```.')}/></label>
    <button className="button primary" disabled={busy||!form.title.trim()} onClick={()=>void save()}>{busy?L('保存中…','Saving…'):L('保存','Save')}</button></>}
   {!editing&&way==='batch'&&<><label className="iv-field">{L('粘贴题目和答案','Paste questions and answers')}<textarea rows={11} value={batch} onChange={e=>setBatch(e.target.value)} placeholder={L('问：Redis 为什么快？\n答：基于内存、单线程避免锁竞争、IO 多路复用……\n\n问：MySQL 索引为什么用 B+ 树？\n答：……','Q: Why is Redis fast?\nA: In-memory, single-threaded…\n\nQ: …')}/></label>
    <p className="muted iv-hint">{L('每道题以“问：”“Q:”或“## ”开头，到下一题之前的内容都算答案。','Start each question with “Q:” or “## ”; everything until the next one is the answer.')}</p>

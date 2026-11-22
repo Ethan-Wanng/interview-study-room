@@ -1,18 +1,23 @@
 'use client';
-import {useEffect,useState} from 'react';
 import {Sunrise,Sun,Moon,Clock3,Lightbulb,LightbulbOff} from 'lucide-react';
 import {Select,SelectTrigger,SelectValue,SelectContent,SelectItem} from '@/components/ui/select';
-import {dayThemes,naturalLamp,timeTheme,validLamp,validTheme,type Lamp} from '@/lib/day-themes';
+import {dayThemes} from '@/lib/day-themes';
 import {useI18n} from './i18n';
+import {setLampPreference,setThemePreference,useAppearance} from './appearance';
 export {timeTheme} from '@/lib/day-themes';
-// 背景主题由两部分组合：时间配色（自适应当地时间或手动选时段）+ 灯光（开灯亮色 / 关灯暗色，二选一）。
-export default function ThemeControl(){const {locale,t}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
- const [value,setValue]=useState('auto'),[lamp,setLamp]=useState<Lamp|null>(null),[now,setNow]=useState('forenoon'),[ready,setReady]=useState(false);
- useEffect(()=>{try{setValue(validTheme(localStorage.getItem('study-theme')));setLamp(validLamp(localStorage.getItem('study-lamp')))}catch{}const apply=()=>setNow(timeTheme());apply();setReady(true);const timer=setInterval(apply,30000);return()=>clearInterval(timer)},[]);
- const id=value==='auto'?now:value,effective=lamp??naturalLamp(id);
- useEffect(()=>{if(!ready)return;const root=document.documentElement;root.dataset.theme=id;root.dataset.lamp=effective;root.classList.toggle('dark',effective==='off');root.style.colorScheme=effective==='off'?'dark':'light';root.style.backgroundColor=effective==='off'?'#162032':'';try{document.cookie=`study-theme=${value};path=/;max-age=31536000;SameSite=Lax`;document.cookie=`study-lamp=${lamp??''};path=/;max-age=31536000;SameSite=Lax`}catch{}},[ready,id,effective,value,lamp]);
- const toggle=()=>{const next:Lamp=effective==='on'?'off':'on';setLamp(next);try{localStorage.setItem('study-lamp',next);document.cookie=`study-lamp=${next};path=/;max-age=31536000;SameSite=Lax`}catch{}};
+
+// 背景时段配色下拉（自适应或手动选时段），供登录/后台独立顶栏和账号设置复用。
+export function ThemeSelect({className='theme-select'}:{className?:string}){const {locale,t}=useI18n();
+ const {theme}=useAppearance();
+ return <Select value={theme} onValueChange={setThemePreference}><SelectTrigger className={className} aria-label={t('背景主题')} title={t('自动模式按设备当地时间切换；时段为固定时间表。')}><SelectValue/></SelectTrigger><SelectContent position="popper"><SelectItem value="auto"><Clock3 size={16}/>{t('自适应')}</SelectItem>{[...dayThemes.slice(1),dayThemes[0]].map(c=><SelectItem key={c.id} value={c.id}>{c.dark?<Moon size={16}/>:c.start<7?<Sunrise size={16}/>:<Sun size={16}/>}<span>{locale==='en'?c.en:c.zh}</span><small>{String(c.start).padStart(2,'0')}:00–{String(c.end).padStart(2,'0')}:00</small></SelectItem>)}</SelectContent></Select>;
+}
+
+// 灯光开关 + 时段选择（用于登录页与后台等不挂载用户设置菜单的页面）。
+export default function ThemeControl(){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
+ const {effectiveLamp}=useAppearance();
+ const toggle=()=>setLampPreference(effectiveLamp==='on'?'off':'on');
  return <span className="theme-controls">
-  <button type="button" className={'lamp-toggle '+effective} onClick={toggle} aria-pressed={effective==='on'} aria-label={effective==='on'?L('开灯模式（点击关灯）','Lights on (click to turn off)'):L('关灯模式（点击开灯）','Lights off (click to turn on)')} title={effective==='on'?L('开灯模式：亮色。点击切换到关灯模式','Lights on: bright. Click for lights off'):L('关灯模式：暗色。点击切换到开灯模式','Lights off: dark. Click for lights on')}>{effective==='on'?<Lightbulb size={17}/>:<LightbulbOff size={17}/>}<span>{effective==='on'?L('开灯','On'):L('关灯','Off')}</span></button>
-  <Select value={value} onValueChange={v=>{setValue(v);try{localStorage.setItem('study-theme',v);document.cookie=`study-theme=${v};path=/;max-age=31536000;SameSite=Lax`}catch{}}}><SelectTrigger className="theme-select" aria-label={t('背景主题')} title={t('自动模式按设备当地时间切换；时段为固定时间表。')}><SelectValue/></SelectTrigger><SelectContent position="popper"><SelectItem value="auto"><Clock3 size={16}/>{t('自适应')}</SelectItem>{[...dayThemes.slice(1),dayThemes[0]].map(c=><SelectItem key={c.id} value={c.id}>{c.dark?<Moon size={16}/>:c.start<7?<Sunrise size={16}/>:<Sun size={16}/>}<span>{locale==='en'?c.en:c.zh}</span><small>{String(c.start).padStart(2,'0')}:00–{String(c.end).padStart(2,'0')}:00</small></SelectItem>)}</SelectContent></Select>
- </span>}
+  <button type="button" className={'lamp-toggle '+effectiveLamp} onClick={toggle} aria-pressed={effectiveLamp==='on'} aria-label={effectiveLamp==='on'?L('开灯模式（点击关灯）','Lights on (click to turn off)'):L('关灯模式（点击开灯）','Lights off (click to turn on)')} title={effectiveLamp==='on'?L('开灯模式：亮色。点击切换到关灯模式','Lights on: bright. Click for lights off'):L('关灯模式：暗色。点击切换到开灯模式','Lights off: dark. Click for lights on')}>{effectiveLamp==='on'?<Lightbulb size={17}/>:<LightbulbOff size={17}/>}<span>{effectiveLamp==='on'?L('开灯','On'):L('关灯','Off')}</span></button>
+  <ThemeSelect/>
+ </span>;
+}

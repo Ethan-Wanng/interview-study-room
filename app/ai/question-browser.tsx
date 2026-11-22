@@ -1,11 +1,14 @@
 'use client';
-import {useMemo,useState} from 'react';
+import {useEffect,useMemo,useRef,useState} from 'react';
 import {ArrowRight,BookOpen,Check,Eye,EyeOff,NotebookPen,Play,RotateCcw,Search,Trash2,X} from 'lucide-react';
 import {useI18n} from '../components/i18n';
+import {TitleGear} from '../components/title-tip';
 import KeywordText,{EnWords} from '../components/keyword-text';
 import {ListenButton,ReadingPassage} from '../components/speech-drill';
 import {aiQuizTypes,type AiQuiz,type AiQuizType} from '@/content/journey';
+import {isWritten,toStandardItem} from './grade-client';
 import {answerText} from './question-card';
+import {StandardAnswerPanel} from './standard-answer-box';
 
 export type BankEntry={id:string;level:string;quiz:AiQuiz};
 const letters='ABCDEFGH';
@@ -97,6 +100,7 @@ function QuestionDetailCard({
   </button>}
 
   {ansVisible&&<div className="qb-explain">
+   {isWritten(q)&&<StandardAnswerPanel keyId={`qb:${entry.id}`} item={toStandardItem(q,'')} withPicker/>}
    {written?<>
     <strong>{L('参考答案：','Reference answer:')}</strong>
     <pre className="ai-review-ref">{answerText(q,L)}</pre>
@@ -142,58 +146,63 @@ export function MistakeBookView({
  return <section className="qb-section">
   <div className="ai-title">
    <span className="eyebrow">MISTAKE BOOK</span>
-   <h1><NotebookPen size={28} style={{display:'inline',verticalAlign:'-5px',marginRight:8,color:'var(--primary)'}}/>{L(`错题本（共 ${items.length} 题）`,`Mistake Book (${items.length})`)}</h1>
-   <p>{L('这里完整展示错题本中的全部题目、选项、正确答案与详解。你可以按关键词搜索错题，点击任意英语单词听发音，单题重练或一键重练全部错题。重练答对后会自动移出错题本。','All questions in your mistake book are shown in full here with answers and explanations. Search by keyword, tap any English word to hear it, or practice one or all mistakes.')}</p>
+   <h1>
+    <NotebookPen size={28} style={{display:'inline',verticalAlign:'-5px',marginRight:8,color:'var(--primary)'}}/>
+    {L(`错题本（共 ${items.length} 题）`,`Mistake Book (${items.length})`)}
+    
+    {items.length>0&&<TitleGear active={!!(kw||typeFilter!=='all')} label={L('错题本筛选与重练','Mistake book filters & actions')}>
+     <div className="qb-gear">
+      <label className="qb-search-input">
+       <Search size={17}/>
+       <input
+        value={query}
+        onChange={e=>setQuery(e.target.value)}
+        placeholder={L('搜索错题','Search mistakes')}
+       />
+       {query&&<button type="button" className="qb-clear" onClick={()=>setQuery('')} aria-label={L('清空搜索','Clear search')}><X size={15}/></button>}
+      </label>
+
+      {availableTypes.length>1&&<div className="qb-type-chips">
+       <button type="button" className={'lazy-chip'+(typeFilter==='all'?' on':'')} onClick={()=>setTypeFilter('all')}>
+        {L('全部题型','All types')}<small>{items.length}</small>
+       </button>
+       {availableTypes.map(t=><button key={t} type="button" className={'lazy-chip'+(typeFilter===t?' on':'')} onClick={()=>setTypeFilter(t)}>
+        {aiQuizTypes[t]}<small>{items.filter(x=>(x.quiz.type??'single')===t).length}</small>
+       </button>)}
+      </div>}
+
+      <div className="qb-toolbar-foot">
+       <span className="muted">
+        {kw||typeFilter!=='all'
+         ?L(`已筛选出 ${filtered.length} / ${items.length} 道错题`,`Showing ${filtered.length} of ${items.length} mistakes`)
+         :L(`当前共展示全部 ${items.length} 道错题`,`Showing all ${items.length} mistakes`)}
+       </span>
+       <div className="qb-toolbar-btns">
+        <button type="button" className="button primary" disabled={!filtered.length} onClick={()=>onPractice(filtered)}>
+         <RotateCcw size={15}/>{kw||typeFilter!=='all'?L(`重练筛选错题（${filtered.length} 题）`,`Practice filtered (${filtered.length})`):L(`重练全部错题（${items.length} 题）`,`Practice all (${items.length})`)}
+        </button>
+        {filtered.length>10&&<button type="button" className="button secondary" onClick={()=>onPractice(filtered.slice(0,10))}>
+         <Play size={15}/>{L('随机抽 10 题重练','Practice 10 random')}
+        </button>}
+        <button type="button" className="button secondary qb-remove" onClick={onClearAll}>
+         <Trash2 size={15}/>{L('清空错题本','Clear all')}
+        </button>
+       </div>
+      </div>
+     </div>
+    </TitleGear>}
+   </h1>
   </div>
 
   {items.length===0?<div className="ai-card qb-empty">
    <NotebookPen size={36}/>
    <h2>{L('错题本还是空的','No mistakes yet')}</h2>
-   <p className="muted">{L('闯关答题或训练中答错的题目会自动收进这里，方便随时查阅和针对性重练。','Questions you miss in quizzes or trainings will automatically appear here for review.')}</p>
+   <p className="muted">{L('暂无错题','No mistakes yet')}</p>
    <button type="button" className="button primary" onClick={onBack}>{L('返回关卡地图','Back to levels')}</button>
   </div>:<>
-   <div className="ai-card qb-toolbar">
-    <label className="qb-search-input">
-     <Search size={17}/>
-     <input
-      value={query}
-      onChange={e=>setQuery(e.target.value)}
-      placeholder={L('在错题本中搜索题目、选项、代码、解析或关卡名…','Search mistakes by prompt, option, code, explanation or level…')}
-     />
-     {query&&<button type="button" className="qb-clear" onClick={()=>setQuery('')} aria-label={L('清空搜索','Clear search')}><X size={15}/></button>}
-    </label>
-
-    {availableTypes.length>1&&<div className="qb-type-chips">
-     <button type="button" className={'lazy-chip'+(typeFilter==='all'?' on':'')} onClick={()=>setTypeFilter('all')}>
-      {L('全部题型','All types')}<small>{items.length}</small>
-     </button>
-     {availableTypes.map(t=><button key={t} type="button" className={'lazy-chip'+(typeFilter===t?' on':'')} onClick={()=>setTypeFilter(t)}>
-      {aiQuizTypes[t]}<small>{items.filter(x=>(x.quiz.type??'single')===t).length}</small>
-     </button>)}
-    </div>}
-
-    <div className="qb-toolbar-foot">
-     <span className="muted">
-      {kw||typeFilter!=='all'
-       ?L(`已筛选出 ${filtered.length} / ${items.length} 道错题`,`Showing ${filtered.length} of ${items.length} mistakes`)
-       :L(`当前共展示全部 ${items.length} 道错题`,`Showing all ${items.length} mistakes`)}
-     </span>
-     <div className="qb-toolbar-btns">
-      <button type="button" className="button primary" disabled={!filtered.length} onClick={()=>onPractice(filtered)}>
-       <RotateCcw size={15}/>{kw||typeFilter!=='all'?L(`重练筛选错题（${filtered.length} 题）`,`Practice filtered (${filtered.length})`):L(`重练全部错题（${items.length} 题）`,`Practice all (${items.length})`)}
-      </button>
-      {filtered.length>10&&<button type="button" className="button secondary" onClick={()=>onPractice(filtered.slice(0,10))}>
-       <Play size={15}/>{L('随机抽 10 题重练','Practice 10 random')}
-      </button>}
-      <button type="button" className="button secondary qb-remove" onClick={onClearAll}>
-       <Trash2 size={15}/>{L('清空错题本','Clear all')}
-      </button>
-     </div>
-    </div>
-   </div>
-
    {filtered.length===0?<div className="ai-card qb-empty">
-    <p className="muted">{L('没有找到匹配的错题，试试换个关键词。','No matching mistakes found. Try another keyword.')}</p>
+    <p className="muted">{L('没有匹配的错题','No matches')}</p>
+    <button type="button" className="button secondary" onClick={()=>{setQuery('');setTypeFilter('all')}}>{L('清空筛选条件','Reset filters')}</button>
    </div>:<div className="qb-list">
     {filtered.map((entry,i)=><QuestionDetailCard
      key={entry.id}
@@ -228,8 +237,18 @@ export function SubjectQuestionSearch({
  const [typeFilter,setTypeFilter]=useState<AiQuizType|'all'>('all');
  const [showAllAnswers,setShowAllAnswers]=useState(false);
  const [limit,setLimit]=useState(PAGE_SIZE);
+ const [openTypes,setOpenTypes]=useState(false);
+ const panelRef=useRef<HTMLElement>(null);
  const kw=query.trim().toLowerCase();
  const active=kw.length>0||typeFilter!=='all';
+ const showTypes=openTypes||active;
+
+ useEffect(()=>{
+  if(!openTypes)return;
+  const onDown=(e:PointerEvent)=>{if(!panelRef.current?.contains(e.target as Node))setOpenTypes(false)};
+  document.addEventListener('pointerdown',onDown);
+  return()=>document.removeEventListener('pointerdown',onDown);
+ },[openTypes]);
 
  const availableTypes=useMemo(()=>{
   const s=new Set<AiQuizType>();
@@ -245,27 +264,29 @@ export function SubjectQuestionSearch({
   });
  },[questions,active,typeFilter,kw,sourceName]);
 
- return <section className="ai-card qb-search-panel">
+ return <section className="ai-card qb-search-panel" ref={panelRef}>
   <div className="qb-search-row">
-   <label className="qb-search-input">
+   <label className="qb-search-input" onClick={()=>setOpenTypes(true)}>
     <Search size={17}/>
     <input
      value={query}
+     onFocus={()=>setOpenTypes(true)}
+     onClick={()=>setOpenTypes(true)}
      onChange={e=>{setQuery(e.target.value);setLimit(PAGE_SIZE)}}
-     placeholder={L(`搜索本学科全部 ${questions.length} 道题目（输入题干、选项、代码、知识点或解析关键词）…`,`Search all ${questions.length} questions in this subject…`)}
+     placeholder={L(`搜索 ${questions.length} 道题目`,`Search ${questions.length} questions`)}
     />
     {query&&<button type="button" className="qb-clear" onClick={()=>{setQuery('');setLimit(PAGE_SIZE)}} aria-label={L('清空搜索','Clear search')}><X size={15}/></button>}
    </label>
   </div>
 
-  <div className="qb-type-chips">
-   <button type="button" className={'lazy-chip'+(typeFilter==='all'&&!active?' on':typeFilter==='all'&&active?' on':'')} onClick={()=>{setTypeFilter('all');setLimit(PAGE_SIZE)}}>
+  {showTypes&&<div className="qb-type-chips">
+   <button type="button" className={'lazy-chip'+(typeFilter==='all'?' on':'')} onClick={()=>{setTypeFilter('all');setLimit(PAGE_SIZE)}}>
     {L('全部题型','All')}<small>{questions.length}</small>
    </button>
    {availableTypes.map(t=><button key={t} type="button" className={'lazy-chip'+(typeFilter===t?' on':'')} onClick={()=>{setTypeFilter(prev=>prev===t?'all':t);setLimit(PAGE_SIZE)}}>
     {aiQuizTypes[t]}<small>{questions.filter(x=>(x.quiz.type??'single')===t).length}</small>
    </button>)}
-  </div>
+  </div>}
 
   {active&&<div className="qb-search-results">
    <div className="qb-toolbar-foot">
@@ -279,13 +300,13 @@ export function SubjectQuestionSearch({
        <Play size={14}/>{matched.length>25?L('练习前 25 题','Practice first 25'):L(`练习这 ${matched.length} 题`,`Practice (${matched.length})`)}<ArrowRight size={14}/>
       </button>
      </>}
-     <button type="button" className="button secondary qb-btn" onClick={()=>{setQuery('');setTypeFilter('all')}}>
+     <button type="button" className="button secondary qb-btn" onClick={()=>{setQuery('');setTypeFilter('all');setOpenTypes(false)}}>
       <X size={14}/>{L('关闭搜索','Close')}
      </button>
     </div>
    </div>
 
-   {matched.length===0?<p className="muted qb-no-match">{L('没有找到匹配的题目，试试其他关键词。','No matching questions found.')}</p>:<>
+   {matched.length===0?<p className="muted qb-no-match">{L('没有匹配的题目','No matches')}</p>:<>
     <div className="qb-list">
      {matched.slice(0,limit).map((entry,i)=><QuestionDetailCard
       key={entry.id+'-'+i}

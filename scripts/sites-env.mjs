@@ -34,8 +34,11 @@ if (existsSync(path.dirname(devVars))) {
   }
   if (!process.env.GEMINI_API_KEY && existsSync(gmKeyFile)) {
     lines.push(`GEMINI_API_KEY=${readFileSync(gmKeyFile, "utf8").trim()}`);
+
   }
   if (lines.length) {
+    lines.push(...(process.env.GEMINI_PROXY_URL ? [`GEMINI_PROXY_URL=${process.env.GEMINI_PROXY_URL}`] : []));
+    lines.push(...(process.env.GEMINI_ANYTLS_NODE ? [`GEMINI_ANYTLS_NODE=${process.env.GEMINI_ANYTLS_NODE}`] : []));
     writeFileSync(devVars, lines.join("\n") + "\n");
   }
 }

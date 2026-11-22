@@ -285,4 +285,31 @@ export const aiInterviewQuestions:AiInterviewQuestion[]=[
   p('先做小规模验证：抽几百条做评测集，确定提示、输出 Schema 和模型，测出准确率、平均 token 数，再按“条数 × 平均输入输出 token × 单价”估算总成本和耗时。能用小模型达标就不用大模型；不需要实时结果时优先使用服务商的批处理接口（通常有明显折扣，在一定时间窗口内返回结果），并把固定的 system 提示放在前缀以利用提示缓存。'),
   p('流水线设计：数据分片写入任务队列；每条记录有稳定的 id，结果按 id 幂等写入，支持断点续跑；工作者按服务商的速率限制（每分钟请求数和 token 数）控制并发，遇到 429 和 5xx 用指数退避重试；输出用 JSON Schema 校验，失败的重试一次后进入失败队列，单独处理或换更强的模型重跑；记录每条的模型版本和提示版本，便于追溯。'),
   p('质量与合规：处理过程中持续抽样人工检查，按类别统计准确率，发现系统性错误及时停下来修正提示；发送前对个人信息做脱敏，确认数据可以发给该服务商；全部跑完后输出统计报告（成功率、失败原因分布、实际成本）。面试时要体现“先估算、再小跑、可恢复、可追溯”的工程思维。')]},
+ {id:'ai-q-harness',section:'Harness 与 Skills',title:'什么是 Agent Harness 工程？为什么说“Agent = Model + Harness”？',blocks:[
+  p('Model 是概率性的推理核心，负责理解和生成；Harness（驾驭工程）是包裹在模型外层的确定性控制面与工作台。它包括项目规范注入（如 AGENTS.md / 路径规则）、工具与环境交互接口（ACI）、渐进式技能包（Skills）、生命周期 Hooks、外部持久化进度、沙箱隔离，以及自动化验证与回滚门禁。'),
+  p('之所以说换模型不如改 Harness 明显，是因为很多线上失败并非模型“不会推理”，而是上下文被冗长日志淹没、工具描述含糊、缺少测试门禁导致“假装完成”或缺少失败恢复。工程上应区分两类组件：最小权限、沙箱、测试验收门禁等安全边界长期保留；为了迁就旧模型缺陷写的死板步骤（临时拐杖），在模型升级时要通过评测对比果断做减法。')]},
+ {id:'ai-q-agent-skills',section:'Harness 与 Skills',title:'什么是 Agent Skill？“渐进式披露”是怎么工作的，有什么好处？',blocks:[
+  p('Agent Skill 是把特定领域的工作法（SOP 步骤、规范约束、模板与可执行脚本）打包成可复用模块，典型形式是一个包含 SKILL.md、scripts/ 和 references/ 的目录。它解决的不是“如何连接外部系统”（那是 MCP 的事），而是“遇到某一类专业任务时，该按什么工艺流程和确定性脚本去做”。'),
+  p('为了在挂载几十甚至上百个技能时不撑爆上下文，Skill 采用三层渐进式披露（Progressive Disclosure）：第一层启动时只把每个 Skill 的极简元数据（name + 一句话触发描述）放进上下文；第二层当模型判断任务匹配后，才按需读取完整的 SKILL.md 指令；第三层真正执行时再按需读取 references/ 文档或在沙箱中运行 scripts/ 脚本。这样既显著节省 token、避免工具过多选错，又能保持系统前缀稳定以复用提示缓存。')]},
+ {id:'ai-q-skill-vs-mcp-subagent',section:'Harness 与 Skills',title:'System Prompt、Tool/MCP、Agent Skill 和 Subagent 有什么区别？实际开发怎么配合？',blocks:[
+  p('四者解决的是不同层面的问题：System Prompt 是每次请求必发的常驻底座，放核心身份、不可妥协的安全原则和通用输出规范，应保持精简；Tool / MCP 是原子能力与数据源的接入层，提供读写和执行接口；Agent Skill 是按需激活的领域工作流包，用渐进式披露提供专业 SOP 和确定性脚本；Subagent 是独立的上下文分身，用来隔离海量探索噪音或并行处理子任务，只把精炼结论交回主 Agent。'),
+  p('配合原则：能用极简 System Prompt 讲清的底线不往 Skill 塞；需要跨系统接入的原子操作做成 Tool / MCP；重复出现的复杂任务流程、输出模板和校验脚本封装成 Skill；单次需要翻几十个文件或并发调研的子任务下放给 Subagent（必要时配独立 git worktree）。')]},
+ {id:'ai-q-agent-hooks',section:'Harness 与 Skills',title:'什么是 Agent 生命周期 Hooks？如何解决“假装完成”和越权问题？',blocks:[
+  p('生命周期 Hooks 是 Harness 在 Agent 执行流的关键节点强制运行的确定性代码钩子，不依赖模型在长上下文里“自觉记住”提示词要求。常见有三类：PreToolUse（调用工具前校验参数、拦截越界路径或高危命令、对敏感输入脱敏）；PostToolUse（修改文件后自动运行格式化、Lint 或局部测试，并截断超长输出）；Stop / Completion Gate（结束门禁）。'),
+  p('其中 Stop Gate 专门解决模型“未跑验证就口头宣布完成（Premature Completion）”的问题：当模型不打算继续调用工具、准备输出最终结论时，Harness 自动运行全量测试、构建检查或清单核对；只要门禁不通过，就拦截退出并把具体失败日志作为新消息喂回上下文，迫使模型修好为止（同时配合总步数与预算上限防止死循环）。')]},
+ {id:'ai-q-aci-design',section:'Harness 与 Skills',title:'什么是 ACI（Agent-Computer Interface）？设计供 Agent 使用的工具与环境有哪些要点？',blocks:[
+  p('ACI 是“面向 Agent 的人机工效设计”：普通 UI/API 是给人类点击和阅读的，ACI 则是围绕大模型 token 预算、注意力和纠错特点设计的工具与环境接口。'),
+  p('核心要点：一、局部精准编辑优于整文件重写，用 search-and-replace 或 diff 替换避免模型改 3 行却漏掉后面 500 行；二、控制输出体积，测试日志或大文件超限时自动截断保留头尾摘要，完整内容落盘并返回路径和行号供模型按需 grep；三、可自愈的报错信息，错误返回里直接告知正确格式或下一步排查建议；四、合理取舍 CLI 与专用 Tool，在受控沙箱里成熟的 CLI（如 git、rg、pytest）自带退出码和帮助文档，往往比堆砌几十个参数重叠的 JSON 工具更省 token 也更灵活。')]},
+ {id:'ai-q-coding-agent-arch',section:'Harness 与 Skills',title:'Coding Agent 检索代码库时，为什么通常结合 Repo Map 和 grep，而不只用向量 RAG？',blocks:[
+  p('自然语言文档适合向量语义检索，但代码仓库有三个特点：一是高度依赖精确标识符（函数名、类名、错误码、import 路径），向量近似很容易漏召回或找偏；二是代码在 Agent 修改后立刻变化，向量索引极易过期；三是跨文件依赖靠语法和调用关系，而不是段落相似。'),
+  p('因此现代 Coding Agent 常用组合策略：用文件树和轻量 AST 抽取出 Repo Map（关键文件与函数/类签名骨架）建立全局视角；用 ripgrep / grep 做精确符号与报错字符串定位；再用按行切片工具只读目标代码周边几十行。在工程流程上常配合 Spec 驱动开发（SDD）：改动前先写 Spec/Plan 对齐边界，再分步修改、自动跑测试并交出 diff 人工审查。')]},
+ {id:'ai-q-a2a',section:'Harness 与 Skills',title:'什么是 A2A（Agent2Agent）协议？它和 MCP 分别解决什么问题？',blocks:[
+  p('MCP（Model Context Protocol）解决的是“纵向接入”：让一个 Agent 以统一标准连接外部工具、数据库和资源（Agent ↔ Tools / Data）。A2A（Agent2Agent）解决的是“横向协同”：让不同团队、不同框架开发、甚至跨系统的独立 Agent 能够彼此发现、安全认证、委派任务并流式同步状态（Agent ↔ Agent）。'),
+  p('典型机制包括用 Agent Card 声明一个远端 Agent 擅长什么、支持哪些输入输出模态与认证方式，通过标准 Task 生命周期支持长耗时异步协作和 Artifact 结果回传。在大型企业系统里两者经常配合：单个专业 Agent 内部通过 MCP 调用自己的业务工具和私有数据，不同专业 Agent 之间通过 A2A 协同完成端到端流程。')]},
+ {id:'ai-q-durable-agent',section:'Harness 与 Skills',title:'如何设计能挂起等待人工审批、断点恢复且支持并发改代码的持久型 Agent？',blocks:[
+  p('长程 Agent 的核心挑战是“时间跨度长”和“工作区冲突”。状态持久化方面采用 Durable Execution（持久化执行）思路：把工作流组织成显式状态机，每步完成时将消息历史、进度清单和当前节点写入 Checkpoint；遇到高风险审批或外部异步回调时触发 Interrupt 挂起并释放计算资源，几小时或几天后收到回调再按幂等键从精确断点恢复（Resume），不重复执行已完成的副作用操作。'),
+  p('并发改代码方面，给每个子任务或子 Agent 分配独立的 git worktree 与隔离分支，并配合外部 spec/progress 工件记录进度，避免多人多 Agent 同时改写同一个工作目录导致冲突；验证全部通过后再由主流程审查 diff 并合并，失败则整条 worktree 直接清理回滚。')]},
+ {id:'ai-q-memory-poisoning',section:'安全与合规',title:'什么是 Agent 的“记忆投毒”和第三方 Skill 供应链风险？如何防御？',blocks:[
+  p('记忆投毒（Memory Poisoning）指攻击者通过用户输入或网页/邮件里的间接注入，诱导 Agent 把恶意指令或虚假偏好写入长期记忆库（例如“以后所有财务摘要都抄送至某邮箱”）。与一次性注入不同，记忆投毒具有持久化影响，会在后续无数次正常会话中被自动召回并触发越权操作。'),
+  p('第三方 Skill 同样扩大了攻击面：SKILL.md 正文会作为高可信操作指令进入上下文，scripts/ 更是可执行代码。防御需要全链路把关：长期记忆写入前校验数据来源（禁止直接把外部不可信文档里的规则写入持久化记忆）、按用户和租户严格隔离、提供记忆审计与一键删除入口；第三方 Skill 必须经过源码与描述审核、锁定版本哈希、在最小权限沙箱中执行脚本，并对敏感操作保留人工确认门禁。')]},
 ];

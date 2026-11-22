@@ -1,4 +1,5 @@
 import type {Cue} from './types';
+import {subtitleProgress,type SceneTiming} from './subtitle';
 
 // 动画的声音：音效用 Web Audio 现场合成（不需要音频文件）。旁白优先播放预先生成的 MP3（scripts/gen-tts.mjs，各平台同一个声音），
 // 没有对应文件时退回浏览器自带的语音合成。
@@ -8,34 +9,37 @@ function audio(){if(typeof window==='undefined')return null;
  if(!ctx){const C=window.AudioContext??(window as unknown as {webkitAudioContext?:typeof AudioContext}).webkitAudioContext;if(!C)return null;ctx=new C()}
  if(ctx.state==='suspended')void ctx.resume();return ctx}
 
-// 所有声音（音效、录音旁白）都先汇到 out 再到扬声器；录视频时从 out 再接一路到录制流。
-let out:GainNode|null=null,tap:MediaStreamAudioDestinationNode|null=null,narrSrc:MediaElementAudioSourceNode|null=null;
+// 所有声音（音效、旁白）都先汇到 out 再到扬声器。
+let out:GainNode|null=null;
 const output=(c:AudioContext)=>out??=(()=>{const g=c.createGain();g.connect(c.destination);return g})();
 
 type Note={at:number;freq:number;to?:number;dur:number;type?:OscillatorType;vol?:number};
-function note(c:AudioContext,{at,freq,to,dur,type='sine',vol=0.06}:Note){const o=c.createOscillator(),g=c.createGain(),t=c.currentTime+at;
+function note(c:BaseAudioContext,dest:AudioNode,baseTime:number,{at,freq,to,dur,type='sine',vol=0.06}:Note){const o=c.createOscillator(),g=c.createGain(),t=baseTime+at;
  o.type=type;o.frequency.setValueAtTime(freq,t);if(to)o.frequency.exponentialRampToValueAtTime(to,t+dur);
  g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(vol,t+0.015);g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
- o.connect(g).connect(output(c));o.start(t);o.stop(t+dur+0.05)}
+ o.connect(g).connect(dest);o.start(t);o.stop(t+dur+0.05)}
 
 // 传递时的“嗖”：一段白噪声经过扫频的带通滤波。
-function whoosh(c:AudioContext,at:number,vol=0.05,dur=0.4){const len=Math.floor(c.sampleRate*dur),buf=c.createBuffer(1,len,c.sampleRate),d=buf.getChannelData(0);for(let i=0;i<len;i++)d[i]=Math.random()*2-1;
- const src=c.createBufferSource(),f=c.createBiquadFilter(),g=c.createGain(),t=c.currentTime+at;src.buffer=buf;f.type='bandpass';f.Q.value=1.2;
+function whoosh(c:BaseAudioContext,dest:AudioNode,baseTime:number,at:number,vol=0.05,dur=0.4){const len=Math.floor(c.sampleRate*dur),buf=c.createBuffer(1,len,c.sampleRate),d=buf.getChannelData(0);for(let i=0;i<len;i++)d[i]=Math.random()*2-1;
+ const src=c.createBufferSource(),f=c.createBiquadFilter(),g=c.createGain(),t=baseTime+at;src.buffer=buf;f.type='bandpass';f.Q.value=1.2;
  f.frequency.setValueAtTime(400,t);f.frequency.exponentialRampToValueAtTime(2600,t+dur);
  g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(vol,t+dur*0.4);g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
- src.connect(f).connect(g).connect(output(c));src.start(t);src.stop(t+dur+0.05)}
+ src.connect(f).connect(g).connect(dest);src.start(t);src.stop(t+dur+0.05)}
+
+// 在指定 AudioContext 与时间点安排一组分镜音效（实时播放与离线合成共用）。
+export function scheduleCue(c:BaseAudioContext,dest:AudioNode,cue:Cue|undefined,baseTime=0,speed=1){const k=1/speed;
+ if(!cue){whoosh(c,dest,baseTime,0,0.025,0.3);return}
+ if(cue.memo){[523,659,784,1047].forEach((f,i)=>note(c,dest,baseTime,{at:(0.1+i*0.12)*k,freq:f,dur:0.7,vol:0.05}));return}
+ if(cue.drop)note(c,dest,baseTime,{at:0.05*k,freq:620,to:330,dur:0.16,type:'triangle',vol:0.04});
+ for(let i=0;i<Math.min(cue.add,4);i++)note(c,dest,baseTime,{at:(0.15+i*0.13)*k,freq:520,to:820,dur:0.1,vol:0.06});
+ for(let i=0;i<Math.min(cue.send,3);i++)whoosh(c,dest,baseTime,(0.5+i*0.35)*k);
+ if(cue.bubble){note(c,dest,baseTime,{at:0.45*k,freq:880,dur:0.07,type:'triangle',vol:0.05});note(c,dest,baseTime,{at:0.53*k,freq:1180,dur:0.09,type:'triangle',vol:0.05})}
+ if(cue.ok){note(c,dest,baseTime,{at:0.7*k,freq:880,dur:0.25,type:'triangle',vol:0.05});note(c,dest,baseTime,{at:0.82*k,freq:1320,dur:0.4,type:'triangle',vol:0.05})}
+ if(cue.bad){note(c,dest,baseTime,{at:0.7*k,freq:190,to:150,dur:0.3,type:'square',vol:0.025});note(c,dest,baseTime,{at:1.02*k,freq:170,to:130,dur:0.3,type:'square',vol:0.025})}
+ if(!cue.add&&!cue.send&&!cue.bubble&&!cue.ok&&!cue.bad&&!cue.drop)whoosh(c,dest,baseTime,0,0.025,0.3)}
 
 // 按分镜里发生的事件安排音效；没有事件描述的手绘动画只在换镜头时轻响一下。倍速越快，音效排得越紧。
-export function playCue(cue:Cue|undefined,speed=1){const c=audio();if(!c)return;const k=1/speed;
- if(!cue){whoosh(c,0,0.025,0.3);return}
- if(cue.memo){[523,659,784,1047].forEach((f,i)=>note(c,{at:(0.1+i*0.12)*k,freq:f,dur:0.7,vol:0.05}));return}
- if(cue.drop)note(c,{at:0.05*k,freq:620,to:330,dur:0.16,type:'triangle',vol:0.04});
- for(let i=0;i<Math.min(cue.add,4);i++)note(c,{at:(0.15+i*0.13)*k,freq:520,to:820,dur:0.1,vol:0.06});
- for(let i=0;i<Math.min(cue.send,3);i++)whoosh(c,(0.5+i*0.35)*k);
- if(cue.bubble){note(c,{at:0.45*k,freq:880,dur:0.07,type:'triangle',vol:0.05});note(c,{at:0.53*k,freq:1180,dur:0.09,type:'triangle',vol:0.05})}
- if(cue.ok){note(c,{at:0.7*k,freq:880,dur:0.25,type:'triangle',vol:0.05});note(c,{at:0.82*k,freq:1320,dur:0.4,type:'triangle',vol:0.05})}
- if(cue.bad){note(c,{at:0.7*k,freq:190,to:150,dur:0.3,type:'square',vol:0.025});note(c,{at:1.02*k,freq:170,to:130,dur:0.3,type:'square',vol:0.025})}
- if(!cue.add&&!cue.send&&!cue.bubble&&!cue.ok&&!cue.bad&&!cue.drop)whoosh(c,0,0.025,0.3)}
+export function playCue(cue:Cue|undefined,speed=1){const c=audio();if(!c)return;scheduleCue(c,output(c),cue,c.currentTime,speed)}
 
 // 旁白录音：public/tts/<sha256(声音+换行+台词) 前 16 位>.mp3，时长（毫秒）记在 public/tts/index.json。换声音只改这里，然后重新生成。
 // 现在用本机开源模型 Kokoro 的 50 号中文女声（kokoro-<编号>）；声音名以 Neural 结尾用 Azure，其余用 Gemini TTS。
@@ -56,11 +60,17 @@ export const spoken=(t:string)=>SAY.reduce((s,[re,to])=>s.replace(re,to),t).trim
 export async function ttsHash(text:string,voice=TTS_VOICE){const d=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(voice+'\n'+text));
  return [...new Uint8Array(d).slice(0,8)].map(b=>b.toString(16).padStart(2,'0')).join('')}
 type Index=Record<string,number>;
+type TimingMap=Record<string,SceneTiming>;
 let index:Promise<Index>|null=null;
-const ttsIndex=()=>index??=fetch('/tts/index.json').then(r=>(r.ok?r.json():{}) as Promise<Index>).catch(():Index=>({}));
+let timing:Promise<TimingMap>|null=null;
+const ttsIndex=()=>index??=fetch('/tts/index.json',{cache:'no-cache'}).then(r=>(r.ok?r.json():{}) as Promise<Index>).catch(():Index=>({}));
+const ttsTiming=()=>timing??=fetch('/tts/timing.json',{cache:'no-cache'}).then(r=>(r.ok?r.json():{}) as Promise<TimingMap>).catch(():TimingMap=>({}));
 // 一组台词各自的录音时长（毫秒）；没有录音的为 null。播放器据此提前算好每一镜的长度。
 export async function narrationDurations(texts:string[]):Promise<(number|null)[]>{if(typeof crypto==='undefined'||!crypto.subtle)return texts.map(()=>null);
  const [idx,hashes]=await Promise.all([ttsIndex(),Promise.all(texts.map(t=>ttsHash(t)))]);return hashes.map(h=>idx[h]??null)}
+// 一组台词各自在导演台配置的影片时长与字幕同步参数（timing.json）；没有自定义时为 null。
+export async function narrationTimings(texts:string[]):Promise<(SceneTiming|null)[]>{if(typeof crypto==='undefined'||!crypto.subtle)return texts.map(()=>null);
+ const [map,hashes]=await Promise.all([ttsTiming(),Promise.all(texts.map(t=>ttsHash(t)))]);return hashes.map(h=>map[h]??null)}
 
 export const voiceSupported=()=>typeof window!=='undefined'&&'speechSynthesis' in window;
 // 优先用普通话的神经网络语音（Edge 的“晓晓”等），其次是 Google 普通话，再其次任意中文语音。
@@ -70,11 +80,17 @@ function pickVoice(){const all=speechSynthesis.getVoices(),zh=all.filter(v=>/^zh
 // 同一个 <audio> 反复使用：手机浏览器在第一次点击播放后才允许出声，复用元素能一直保持这个许可。
 let player:HTMLAudioElement|null=null,token=0,playing='';
 const narrator=()=>player??=new Audio();
-// 录视频用的声音：音效和录音旁白（语音合成的声音浏览器不让录，没有录音的台词在视频里是静音）。
-export function recordingAudio():MediaStream|null{const c=audio();if(!c)return null;const o=output(c);
- if(!narrSrc){narrSrc=c.createMediaElementSource(narrator());narrSrc.connect(o)}
- tap=c.createMediaStreamDestination();o.connect(tap);return tap.stream}
-export function stopRecordingAudio(){if(out&&tap)out.disconnect(tap);tap=null}
+// 离线合成视频时直接抓取并解码 MP3 旁白音轨（不在页面里外放声音）。
+export async function fetchNarrationBuffer(c:BaseAudioContext,text:string,ms?:number|null):Promise<AudioBuffer|null>{
+ if(typeof crypto==='undefined'||!crypto.subtle||ms===null)return null;
+ try{
+  const h=await ttsHash(text);
+  const ver=ms??(await ttsIndex())[h];
+  if(!ver)return null;
+  const res=await fetch(`/tts/${h}.mp3?v=${ver}`);
+  if(!res.ok)return null;
+  return await c.decodeAudioData(await res.arrayBuffer());
+ }catch{return null}}
 let current:SpeechSynthesisUtterance|null=null; // 保留引用，避免 Chrome 回收后不触发 onend
 // 语音合成读到了哪里：text 是这句台词，全文按 spoken() 整理后共 len 个字，从第 from 个字开始读。
 // char/at 是最近一次“读到某个词”事件的位置和时间；有的浏览器（Chrome 的 Google 语音）不发这个事件，就按语速估算。
@@ -94,15 +110,15 @@ export function speak(text:string,rate:number,onEnd:()=>void,offset=0,frac=0){st
  pending={text,frac}; // 录音或语音还没真正开始时，字幕先停在起读的位置
  void (async()=>{const h=await ttsHash(text).catch(()=>''),ms=h?(await ttsIndex())[h]:undefined;if(my!==token)return;
   if(!ms){playing='';return webSpeech(text,rate*1.15,startChar(spoken(text),frac),done)}
-  const a=narrator();a.src=`/tts/${h}.mp3`;playing=text;a.preservesPitch=true;(a as unknown as {webkitPreservesPitch:boolean}).webkitPreservesPitch=true;
+  const a=narrator();a.src=`/tts/${h}.mp3?v=${ms}`;playing=text;a.preservesPitch=true;(a as unknown as {webkitPreservesPitch:boolean}).webkitPreservesPitch=true;
   a.playbackRate=rate;a.currentTime=Math.min(offset,ms)/1000;a.onended=done;
   const fail=()=>{if(my===token)playing='';done()};a.onerror=fail; // 加载失败时字幕改按时间估算进度
   a.play().then(()=>{a.playbackRate=rate}).catch(fail)})()}
 let pending:{text:string;frac:number}|null=null;
 // 某句台词实际读到了整句的几分之几（0–1），字幕的填色跟着它走；这句没有在朗读时为 null。
 // 录音按播放位置算；语音合成按“读到某个词”的事件算，两次事件之间、或浏览器不发事件时按语速估算，读完才到 1。
-export function narrationProgress(text:string,ms?:number|null):number|null{
- if(player&&playing===text&&ms)return Math.min(1,player.currentTime*1000/ms);
+export function narrationProgress(text:string,ms?:number|null,sceneTiming?:SceneTiming|null):number|null{
+ if(player&&playing===text&&ms)return subtitleProgress(player.currentTime*1000,ms,sceneTiming);
  if(ws&&ws.text===text)return wsProgress(ws);
  return pending&&pending.text===text?pending.frac:null}
 function wsProgress(w:NonNullable<typeof ws>){if(w.done)return 1;

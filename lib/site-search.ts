@@ -6,6 +6,9 @@ import {aiQuizTypes} from '@/content/journey';
 import {goLevels} from '@/content/go-journey';
 import {goExams} from '@/content/exams/go';
 import {rustLevels} from '@/content/rust-journey';
+import {rustExams} from '@/content/exams/rust';
+import {pythonLevels} from '@/content/python-journey';
+import {pythonExams} from '@/content/exams/python';
 import {aiLevels} from '@/content/ai-journey';
 import {aiExams} from '@/content/exams/ai';
 import {backendLevels} from '@/content/backend-journey';
@@ -27,7 +30,8 @@ const subjects:{id:string;name:string;levels:AiLevel[];exams:Exam[]}[]=[
  {id:'go',name:'Go 开发',levels:goLevels,exams:goExams},
  {id:'backend',name:'后端通用',levels:backendLevels,exams:backendExams},
  {id:'frontend',name:'前端开发',levels:frontendLevels,exams:frontendExams},
- {id:'rust',name:'Rust 开发',levels:rustLevels,exams:[]},
+ {id:'rust',name:'Rust 开发',levels:rustLevels,exams:rustExams},
+ {id:'python',name:'Python 开发',levels:pythonLevels,exams:pythonExams},
  {id:'project',name:'复刻面试自习室',levels:projectLevels,exams:[]},
  {id:'ai-support',name:'智能 AI 客服实战',levels:aiSupportLevels,exams:[]},
 ];
