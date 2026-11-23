@@ -12,7 +12,8 @@ export async function POST(req:Request){
  try{
   assertSameOrigin(req);
   const user=await sessionUser(req.headers);
-  if(!user)throw new AuthError('请先登录或以游客身份进入，再使用语音输入。',401);
+  if(!user)throw new AuthError('请先登录后再使用语音输入。',401);
+  if(user.is_guest)throw new AuthError('游客不支持调用 Gemini 语音识别，请登录后使用或直接打字。',403);
   await rateLimit('transcribe:'+user.id,user.is_guest?20:60);
   const raw=await req.text();
   if(raw.length>MAX_DATA+200)throw new AuthError('录音太长了，请分几段说（每段 90 秒以内）。',413);
@@ -27,12 +28,12 @@ export async function POST(req:Request){
    ?'Transcribe this recording verbatim. Output only the transcript text with normal punctuation, no explanations. If there is no speech, output nothing.'
    :'把这段录音逐字转写成文字。说话人多数在用中文回答技术面试题，可能夹杂英文技术名词（如 Redis、goroutine、HTTP），英文名词保持英文原样。加上正常的标点，只输出转写的文字，不要解释、不要总结、不要改写内容。如果没有人说话，什么都不输出。';
   let last='';
-  for(const model of ['gemini-2.5-flash','gemini-3.5-flash']){
+  for(const model of ['gemini-3.8-flash','gemini-3.6-flash']){
    const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),45000);
    try{
     const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{method:'POST',signal:ctl.signal,
      headers:{'content-type':'application/json','x-goog-api-key':key},
-     body:JSON.stringify({contents:[{role:'user',parts:[{inline_data:{mime_type:m[1]==='audio/x-wav'?'audio/wav':m[1],data:m[2]}},{text:prompt}]}],generationConfig:{temperature:0,...(model.startsWith('gemini-2.5')?{thinkingConfig:{thinkingBudget:0}}:{})}})});
+     body:JSON.stringify({contents:[{role:'user',parts:[{inline_data:{mime_type:m[1]==='audio/x-wav'?'audio/wav':m[1],data:m[2]}},{text:prompt}]}],generationConfig:{temperature:0}})});
     if(!res.ok){last=`${model} ${res.status}`;continue}
     const d=await res.json() as {candidates?:{content?:{parts?:{text?:string;thought?:boolean}[]}}[]};
     const text=(d.candidates?.[0]?.content?.parts??[]).filter(p=>!p.thought&&p.text).map(p=>p.text).join('').trim();

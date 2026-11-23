@@ -10,6 +10,7 @@ function ThinkingLevelCfg({L,custom}:{L:(zh:string,en:string)=>string;custom?:{p
   ?{scopeKey:`custom:${custom.provider}/${custom.model?.trim()||custom.provider}`,spec:getCustomThinkingSpec(custom.provider,custom.model)}
   :getTutorThinkingSpec(tutorModel,null);
  const [thinking,setThinking]=useModelThinkingLevel(active.scopeKey,active.spec);
+ if(active.spec.locked)return null;
  const name=custom
   ?`${providerMeta(custom.provider).badge} · ${custom.model?.trim()||providerMeta(custom.provider).defaultModel}`
   :(TUTOR_MODELS.find(m=>m.id===tutorModel)?.label[0]??'DeepSeek V4.1 Flash');
@@ -170,7 +171,6 @@ export function AiSettingsPanel({onClose}:{onClose?:()=>void}){
     <p className="muted">{L('当前正在使用站点默认 DeepSeek 助手。登录你自己的账号后，可配置专属 API Key（适配 OpenAI、Anthropic、Gemini、DeepSeek、通义千问），密钥严格绑定你的账号、仅你本人可用，并可设置每日次数上限与 Token 限制。','Currently using the default DeepSeek assistant. Sign in to bind your own private API key (OpenAI, Anthropic, Gemini, DeepSeek, Qwen) and set usage limits.')}</p>
     <a href="/login" className="button primary" style={{marginTop:6,display:'inline-flex'}}><KeyRound size={15}/> {L('去登录 / 注册账号','Sign in / Register')}</a>
    </div>
-   <GeminiProxyCfg L={L}/>
    <ThinkingLevelCfg L={L}/>
   </div>;
  }

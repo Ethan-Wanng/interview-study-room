@@ -248,7 +248,7 @@ export type DockRequest={text:string;n:number};
 
 // 常驻的 AI 老师：由顶栏的「AI问答」按钮打开，点开是侧边对话面板（手机上全屏抽屉），在同一道题下保留临时对话。
 // site：全站的 AI 老师（挂在 layout 里）；其余是卡片、题目旁边的 AI 老师，挂上时会让全站的那个让位。hello：没有对话时的开场白。
-export default function AiDock({context,prompts,request,title,chatKey,site,hello,onApplyPlaygroundCode}:{context:TutorContext;prompts:string[];request?:DockRequest;title?:string;chatKey?:string;site?:boolean;hello?:string;onApplyPlaygroundCode?:(code:string,runAfter?:boolean)=>void}){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
+export default function AiDock({context,prompts,request,title,chatKey,site,hello,onApplyPlaygroundCode,noteBackHref,onBeforeNoteLeave}:{context:TutorContext;prompts:string[];request?:DockRequest;title?:string;chatKey?:string;site?:boolean;hello?:string;onApplyPlaygroundCode?:(code:string,runAfter?:boolean)=>void;noteBackHref?:string;onBeforeNoteLeave?:()=>void}){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
  useDockPresence(!site);
  const sessionKey=chatKey??('quiz' in context?'quiz:'+context.quiz.q:'lesson' in context?'lesson:'+context.lesson.title:'playground' in context?'playground:'+context.playground.lang:'site');
  const [liveThink,setLiveThink]=useState(''),[liveModel,setLiveModel]=useState(''),[copiedAt,setCopiedAt]=useState<number|null>(null);
@@ -289,18 +289,21 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
   };
  },[site,setOpen]);
  const {status:aiStatus}=useAiConfigStatus();
- const hasCustom=!aiStatus?.isGuest&&!!aiStatus?.settings?.enabled&&!!aiStatus?.settings?.hasKey,customBadge=hasCustom?providerMeta(aiStatus!.settings!.provider).badge:'';
+ const isGuest=Boolean(aiStatus?.isGuest);
+ const hasCustom=!isGuest&&!!aiStatus?.settings?.enabled&&!!aiStatus?.settings?.hasKey,customBadge=hasCustom?providerMeta(aiStatus!.settings!.provider).badge:'';
  // 选模型：默认（开了专属 API 用专属的，否则 DeepSeek V4.1 Flash）、站点提供的几个模型、自己的专属 API。选择记在浏览器里。
  const customSpecCfg=hasCustom&&aiStatus?.settings?{provider:aiStatus.settings.provider,model:aiStatus.settings.model}:null;
  const [model,setModelState]=useState<string>(()=>{try{const raw=localStorage.getItem(MODEL_KEY)||'auto',v=raw==='gemini-flash'?'gemini-4':raw;return v==='auto'||v==='custom'||TUTOR_MODELS.some(m=>m.id===v)?v:'auto'}catch{return 'auto'}}),modelRef=useRef(model); // 以前存的旧模型名（deepseek-chat 等）已经没有了，回到默认
- const {scopeKey:thinkScope,spec:thinkSpec}=getTutorThinkingSpec(model,customSpecCfg);
+ const visibleTutorModels=useMemo(()=>isGuest?TUTOR_MODELS.filter(m=>m.provider!=='gemini'):TUTOR_MODELS,[isGuest]);
+ const effectiveModel=isGuest&&TUTOR_MODELS.find(m=>m.id===model)?.provider==='gemini'?'auto':model;
+ const {scopeKey:thinkScope,spec:thinkSpec}=getTutorThinkingSpec(effectiveModel,customSpecCfg);
  const [thinking,setThinking]=useModelThinkingLevel(thinkScope,thinkSpec);
  const customRef=useRef(customSpecCfg);useEffect(()=>{customRef.current=customSpecCfg},[customSpecCfg]);
  const setModel=(v:string)=>{modelRef.current=v;setModelState(v);try{localStorage.setItem(MODEL_KEY,v)}catch{};notifyTutorModelChanged()};
- useEffect(()=>{if(model==='custom'&&aiStatus&&!hasCustom)setModel('auto')},[aiStatus,hasCustom]); // eslint-disable-line react-hooks/exhaustive-deps
- const modelPicker=<select className="ai-dock-model" value={model} onChange={e=>setModel(e.target.value)} title={L('选择 AI 模型','Choose the AI model')} aria-label={L('选择 AI 模型','Choose the AI model')}>
-  <option value="auto">{hasCustom?L(`默认（我的 ${customBadge}）`,`Default (my ${customBadge})`):L('默认（自动 · DeepSeek / Gemini 4）','Default (Auto · DeepSeek / Gemini 4)')}</option>
-  {TUTOR_MODELS.map(m=><option key={m.id} value={m.id} title={L(m.note[0],m.note[1])}>{L(m.label[0],m.label[1])}{m.vision?L(' · 识图',' · images'):''}</option>)}
+ useEffect(()=>{if(model==='custom'&&aiStatus&&!hasCustom)setModel('auto');if(isGuest&&TUTOR_MODELS.find(m=>m.id===model)?.provider==='gemini')setModel('auto')},[aiStatus,hasCustom,isGuest,model]); // eslint-disable-line react-hooks/exhaustive-deps
+ const modelPicker=<select className="ai-dock-model" value={effectiveModel} onChange={e=>setModel(e.target.value)} title={L('选择 AI 模型','Choose the AI model')} aria-label={L('选择 AI 模型','Choose the AI model')}>
+  <option value="auto">{hasCustom?L(`默认（我的 ${customBadge}）`,`Default (my ${customBadge})`):isGuest?L('默认（DeepSeek）','Default (DeepSeek)'):L('默认（自动 · DeepSeek / Gemini 4）','Default (Auto · DeepSeek / Gemini 4)')}</option>
+  {visibleTutorModels.map(m=><option key={m.id} value={m.id} title={L(m.note[0],m.note[1])}>{L(m.label[0],m.label[1])}{m.vision?L(' · 识图',' · images'):''}</option>)}
   {hasCustom&&<option value="custom">{L(`我的 API：${customBadge}`,`My API: ${customBadge}`)}</option>}</select>;
  const box=useRef<HTMLDivElement>(null),busy=live!==null,handled=useRef(request?.n??0);
  // images：输入框里待发送的图片；answerAt：AI 正在回复的位置（回复插在这条之后，回复期间新发的消息排在后面）。
@@ -401,17 +404,17 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
    const ctl=new AbortController();abortRef.current=ctl;
    setAnswerAt(at);setLive('');setLiveThink('');setLiveModel('');
    const curSpec=getTutorThinkingSpec(modelRef.current,customRef.current);
-   const curThinking=getModelThinkingLevel(curSpec.scopeKey,curSpec.spec);
+   const curThinking=curSpec.spec.locked?'auto':getModelThinkingLevel(curSpec.scopeKey,curSpec.spec);
    const r=await ask(context,sent,t=>{if(sessionGen.current===gen)setLive(t)},modelRef.current,t=>{if(sessionGen.current===gen)setLiveThink(t)},m=>{if(sessionGen.current===gen)setLiveModel(m)},ctl.signal,curThinking);
    if(abortRef.current===ctl)abortRef.current=null;
    if(sessionGen.current!==gen){
     if(retrySnapshotRef.current?.gen===gen)retrySnapshotRef.current=null;
-    if(r.ok){const prev=chatCache.get(reqKey)??[];const next=[...prev,{role:'model' as const,text:r.text,...(r.think?{think:r.think,secs:r.secs}:{}),...(r.model?{model:r.model}:{})}];chatCache.set(reqKey,next);saveChat({id:reqChatId,key:reqKey,title:reqKey==='site'?(prev.find(m=>m.role==='user')?.text||reqTitle):reqTitle,msgs:next})}
+    if(r.ok){const prev=chatCache.get(reqKey)??[];const next=[...prev,{role:'model' as const,text:r.text,...(r.think?{think:r.think,secs:r.secs}:{}),...(r.model?{model:r.model}:{}),remaining:r.remaining}];chatCache.set(reqKey,next);saveChat({id:reqChatId,key:reqKey,title:reqKey==='site'?(prev.find(m=>m.role==='user')?.text||reqTitle):reqTitle,msgs:next})}
     break;
    }
    setLive(null);setLiveThink('');setLiveModel('');setAnswerAt(-1);
    const now=msgsRef.current;
-   if(r.ok){retrySnapshotRef.current=null;setMsgs([...now.slice(0,at),{role:'model',text:r.text,...(r.think?{think:r.think,secs:r.secs}:{}),...(r.model?{model:r.model}:{})},...now.slice(at)]);setLeft(r.remaining)}
+   if(r.ok){retrySnapshotRef.current=null;setMsgs([...now.slice(0,at),{role:'model',text:r.text,...(r.think?{think:r.think,secs:r.secs}:{}),...(r.model?{model:r.model}:{}),remaining:r.remaining},...now.slice(at)]);setLeft(r.remaining)}
    else if(r.aborted){
     const partial=r.partial?.trim()?r.partial:'';
     if(partial){
@@ -506,7 +509,7 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
       <button type="button" className="ai-dock-icon" onClick={()=>{removeChat(c.id);if(c.id===chatId.current)newChat()}} title={L('删除这段对话','Delete')} aria-label={L('删除这段对话','Delete')}><Trash2 size={14}/></button></div>)}
      {chats.length>1&&<button type="button" className="tutor-history-clear" onClick={()=>{if(confirm(L('确定删除全部历史对话吗？删除后不能恢复。','Delete all history? This cannot be undone.'))){clearChats();newChat()}}}>{L('清空全部历史','Clear all history')}</button>}
     </div>:<>
-   <div className="ai-dock-thinkbar" role="group" aria-label={L('AI 思考强度','AI thinking strength')}>
+   {!thinkSpec.locked&&<div className="ai-dock-thinkbar" role="group" aria-label={L('AI 思考强度','AI thinking strength')}>
     <span className="ai-think-label"><Brain size={13}/>{L('思考强度','Thinking')}</span>
     <div className="ai-think-seg">
      {thinkSpec.levels.map(lv=>{
@@ -521,7 +524,7 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
       );
      })}
     </div>
-   </div>
+   </div>}
    <div className="ai-dock-log" ref={box} onScroll={()=>{onScroll();if(selPop)setSelPop(null)}}>
     {viewing&&<div className="tutor-viewing"><span>{L(`历史对话 · ${viewing.title}`,`History · ${viewing.title}`)}</span><button type="button" onClick={()=>adoptChat(viewing)}>{L("接着这段继续问","Continue this chat")}</button><button type="button" onClick={()=>setViewing(null)}>{L("回到当前对话","Back")}</button></div>}
     {!shown.length&&!busy&&<div className="ai-dock-hello"><p>{hello??L('哪里没看懂都可以问我，我会结合你正在看的内容讲。也可以发截图给我看。点下面的问题也行：','Ask me anything about what you are looking at — screenshots welcome — or tap a question below:')}</p>
@@ -533,7 +536,8 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
      {m.role==='model'&&m.text&&<div className="tutor-msg-actions">
       <button type="button" className={'tutor-msg-btn'+(copiedAt===i?' copied':'')} onClick={()=>void copyMsg(i,m.text)} title={L('复制这段回答','Copy this response')}>{copiedAt===i?<><Check size={12}/><span>{L('已复制','Copied')}</span></>:<><Copy size={12}/><span>{L('复制','Copy')}</span></>}</button>
       {!viewing&&i>0&&shown[i-1]?.role==='user'&&<button type="button" className="tutor-msg-btn" disabled={busy} onClick={()=>retryAt(i)} title={L('用当前所选模型重新生成这段回答','Retry this response with the selected model')}><RotateCcw size={12}/><span>{L('重试','Retry')}</span></button>}
-      <AddToNoteButton compact title={noteTitle} questionOnly={noteQOnly} questionAndAnswer={noteQAndA} modeLabels={[[L('仅添加提问','Question only'),L('只保存这段提问','Save only the prompt')],[L('提问 + AI 回答','Q & AI Answer'),L('保存提问与 AI 回答到笔记本','Save question & AI reply')]]} source={{kind:'learn',label:`${L('AI 问答','AI Q&A')} · ${chatTitle.slice(0,24)}`,href:''}}/>
+      <AddToNoteButton compact title={noteTitle} questionOnly={noteQOnly} questionAndAnswer={noteQAndA} modeLabels={[[L('仅添加提问','Question only'),L('只保存这段提问','Save only the prompt')],[L('提问 + AI 回答','Q & AI Answer'),L('保存提问与 AI 回答到笔记本','Save question & AI reply')]]} source={{kind:'learn',label:`${L('AI 问答','AI Q&A')} · ${chatTitle.slice(0,24)}`,href:noteBackHref||''}} onBeforeNavigate={onBeforeNoteLeave}/>
+      {typeof m.remaining==='number'&&<span className="tutor-msg-rem">{L(`今日还剩 ${m.remaining} 次`,`${m.remaining} left today`)}</span>}
      </div>}
      {busy&&answerAt>=0&&i>=answerAt&&<small className="tutor-queued">{L('等上一条回复完接着回答','Queued')}</small>}</div></Fragment>})}
     {busy&&answerAt>=msgs.length&&liveBubble}
@@ -566,7 +570,8 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
    questionOnly={selNote.text}
    questionAndAnswer={selNote.text}
    defaultMode="question-only"
-   source={{kind:'learn',label:`${L('AI 问答','AI Q&A')} · ${chatTitle.slice(0,24)}`,href:''}}
+   source={{kind:'learn',label:`${L('AI 问答','AI Q&A')} · ${chatTitle.slice(0,24)}`,href:noteBackHref||''}}
+   onBeforeNavigate={onBeforeNoteLeave}
   />
  </>}
 

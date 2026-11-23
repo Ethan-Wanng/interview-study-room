@@ -1,6 +1,7 @@
 // Site-wide atomic D1 rate limiter for shared Gemini API key matching Google AI Studio free-tier quotas:
 //   - gemini-4-hydrogen: 5 RPM, 250,000 TPM, 20 RPD
 //   - gemini-3.8-flash:  5 RPM, 250,000 TPM, 20 RPD
+//   - gemini-3.6-flash:  5 RPM, 250,000 TPM, 20 RPD
 // Uses existing `auth_limits(key, count, reset_at)` table in D1 with prefixed keys (no schema migration required).
 
 import { studyDb } from '@/db/study';
@@ -24,6 +25,13 @@ export const SITE_GEMINI_LIMITS: Record<string, GeminiModelQuota> = {
  'gemini-3.8-flash': {
   model: 'gemini-3.8-flash',
   label: 'Gemini 3.8 Flash',
+  rpm: 5,
+  tpm: 250_000,
+  rpd: 20,
+ },
+ 'gemini-3.6-flash': {
+  model: 'gemini-3.6-flash',
+  label: 'Gemini 3.6 Flash',
   rpm: 5,
   tpm: 250_000,
   rpd: 20,

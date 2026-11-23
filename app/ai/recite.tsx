@@ -191,7 +191,7 @@ function filterList(items:BankEntry[],source:string,kindFilter:'all'|'qa'|'term'
  return order?order.map(id=>base.find(e=>e.id===id)).filter((e):e is BankEntry=>!!e):base;
 }
 
-export default function ReciteView({items,storageKey,sourceName,onOpenSource}:{items:BankEntry[];storageKey:string;sourceName:(levelId:string)=>string;onOpenSource:(e:BankEntry)=>void}){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
+export default function ReciteView({items,storageKey,sourceName,backHref,onOpenSource}:{items:BankEntry[];storageKey:string;sourceName:(levelId:string)=>string;backHref?:string;onOpenSource:(e:BankEntry)=>void}){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
  const [saved,setSaved]=useState<Saved>({known:[],openByDefault:false,writeByDefault:false,drafts:{},grades:{}}),[source,setSource]=useState('all'),[kindFilter,setKindFilter]=useState<'all'|'qa'|'term'>('all'),[onlyNew,setOnlyNew]=useState(false),[order,setOrder]=useState<string[]|null>(null),[index,setIndex]=useState(0),[open,setOpen]=useState(false),[writeOpen,setWriteOpen]=useState(false);
  const [draft,setDraft]=useState(''),[grading,setGrading]=useState(false),[live,setLive]=useState<GradeResult|null>(null),[liveThink,setLiveThink]=useState<GradeThinkState|null>(null),[graded,setGraded]=useState<GradeRecord|null>(null),[editing,setEditing]=useState(false),[gradeError,setGradeError]=useState(''),[left,setLeft]=useState<number|null>(null),[loadedKey,setLoadedKey]=useState('');
  const savedRef=useRef<Saved>({known:[],openByDefault:false,writeByDefault:false,drafts:{},grades:{}}),draftRef=useRef(''),currentIdRef=useRef<string|undefined>(undefined),justRestoredRef=useRef(false),gradeAbortRef=useRef<AbortController|null>(null);
@@ -346,7 +346,7 @@ export default function ReciteView({items,storageKey,sourceName,onOpenSource}:{i
   {!e||!q||q.type!=='short'?<div className="ai-card qb-empty"><p className="muted">{total?L('这个范围里的题都记住了，可以在顶部「⚙ 设置」中换个范围，或取消“只看还没记住的”。','Everything here is memorised. Adjust scope or filters via ⚙ above.'):L('这门课还没有简答题。','This subject has no short-answer questions yet.')}</p>{total>0&&(source!=='all'||kindFilter!=='all'||onlyNew)&&<button type="button" className="button secondary" onClick={()=>{setSource('all');setKindFilter('all');setOnlyNew(false);setIndex(0)}}>{L('显示全部内容','Show all items')}</button>}</div>:
   <CardSideNav key={e.id} className="rc-stage" onPrev={at>0?()=>go(at-1):undefined} onNext={at<list.length-1?()=>go(at+1):undefined} prevLabel={L('上一题（左方向键）','Previous (Left arrow)')} nextLabel={L('下一题（右方向键）','Next (Right arrow)')}>
   <section className="ai-card ai-question rc-card">
-   <div className="ai-tags"><span className={'ai-tag type '+(isTermCard?'t-fill':'t-short')}>{isTermCard?L('名词解释','Term'):L('简答','Short answer')}</span><span className="ai-tag">{sourceName(e.level)}</span><AddToNoteButton title={q.q.slice(0,56)} questionOnly={`### ${q.q}${q.code?`\n\n\`\`\`\n${q.code}\n\`\`\``:''}`} questionAndAnswer={[`### ${q.q}`,q.code?`\`\`\`\n${q.code}\n\`\`\``:'',`**${L('参考回答','Reference')}**：\n${q.reference}`,q.points.length?`**${L('要点','Key Points')}**：\n${q.points.map((p,i)=>`${i+1}. ${p}`).join('\n')}`:''].filter(Boolean).join('\n\n')} source={{kind:'quiz',label:`${L('背题模式','Recite Mode')} · ${sourceName(e.level)}`,href:'',questionId:e.id}}/>{known.has(e.id)&&<span className="ai-tag rc-known"><Check size={13}/>{L('已记住','Memorised')}</span>}<span className="rc-count">{at+1} / {list.length}</span></div>
+   <div className="ai-tags"><span className={'ai-tag type '+(isTermCard?'t-fill':'t-short')}>{isTermCard?L('名词解释','Term'):L('简答','Short answer')}</span><span className="ai-tag">{sourceName(e.level)}</span><AddToNoteButton title={q.q.slice(0,56)} questionOnly={`### ${q.q}${q.code?`\n\n\`\`\`\n${q.code}\n\`\`\``:''}`} questionAndAnswer={[`### ${q.q}`,q.code?`\`\`\`\n${q.code}\n\`\`\``:'',`**${L('参考回答','Reference')}**：\n${q.reference}`,q.points.length?`**${L('要点','Key Points')}**：\n${q.points.map((p,i)=>`${i+1}. ${p}`).join('\n')}`:''].filter(Boolean).join('\n\n')} source={{kind:'quiz',label:`${L('背题模式','Recite Mode')} · ${sourceName(e.level)}`,href:backHref||'',questionId:e.id}} onBeforeNavigate={()=>persistSession(e.id)}/>{known.has(e.id)&&<span className="ai-tag rc-known"><Check size={13}/>{L('已记住','Memorised')}</span>}<span className="rc-count">{at+1} / {list.length}</span></div>
    <h2>{isTermCard?<EnWords text={q.q}/>:<KeywordText text={q.q}/>}</h2>
    {q.code&&<pre className="ai-snippet"><code>{q.code}</code></pre>}
    <div className="rc-toggles">
@@ -396,6 +396,8 @@ export default function ReciteView({items,storageKey,sourceName,onOpenSource}:{i
    context={{kind:'recite',quiz:reciteQuiz}}
    hello={L('我能看到你当前在背的这道题、参考答案和评分要点（有默写和评分也会一并看到）。问我“答案给一下”、“用大白话讲一遍”或让我出追问都可以：','I can see the question you are reciting, along with its reference answer, key points, and any draft or grade you submitted. Ask me for the answer, a plain explanation, or follow-up questions:')}
    prompts={[L('这道题的答案和要点给我讲一下','Give me the answer and key points'),L('用大白话和例子帮我记住这道题','Explain it simply with an example'),L('针对这道题，面试官会怎么追问？','What follow-up questions might an interviewer ask?')]}
+   noteBackHref={backHref}
+   onBeforeNoteLeave={()=>persistSession(e.id)}
   />}
  </>;
 }

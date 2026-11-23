@@ -84,7 +84,7 @@ export async function POST(req:Request){try{assertSameOrigin(req);const user=awa
     send({t:'start'});
     try{
      const links=await findLinks(input.context,input.messages);
-     const model=await tutorStream(input.context,input.messages,text=>{wrote=true;send({t:'delta',text})},()=>{wrote=false;send({t:'reset'})},customCfg,site,text=>{wrote=true;send({t:'think',text})},links,input.geminiProxy,m=>send({t:'model',model:m}),ctl.signal,input.thinkingLevel);
+     const model=await tutorStream(input.context,input.messages,text=>{wrote=true;send({t:'delta',text})},()=>{wrote=false;send({t:'reset'})},customCfg,site,text=>{wrote=true;send({t:'think',text})},links,input.geminiProxy,m=>send({t:'model',model:m}),ctl.signal,input.thinkingLevel,!user.is_guest);
      send({t:'done',remaining,model});
     }catch(e){
      if(ctl.signal.aborted){if(!wrote)await onRefund().catch(()=>{})}
@@ -101,6 +101,9 @@ export async function POST(req:Request){try{assertSameOrigin(req);const user=awa
 
  // 学习者在对话框里明确选了站点模型时，不走专属 API，直接用站点模型（算站点每日次数）。
  const siteModel=input.model&&input.model!=='auto'&&input.model!=='custom'?input.model:undefined;
+ if(user.is_guest&&siteModel&&TUTOR_MODELS.find(m=>m.id===siteModel)?.provider==='gemini'){
+  return fail('auth','游客不支持调用 Gemini 模型，请登录后使用或切换 DeepSeek。',403);
+ }
  // 已登录用户如果启用了自己的专属 API Key，则仅该用户本人可用，并执行用户自设的限额与场景限制（游客绝不允许使用自定义 Key）
  if(!user.is_guest&&!siteModel){
   const custom=await prepareCustomAi(user.id,'tutor');

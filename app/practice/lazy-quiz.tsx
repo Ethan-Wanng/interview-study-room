@@ -93,30 +93,36 @@ export default function LazyQuiz({username,subjects}:{username:string;subjects:L
    removeLazyQuiz(lazyKey);draftsRef.current={};setJustSaved(false);
    setStage({kind:'quiz',level,items,index:0,results:items.map(()=>null),drafts:{},shares})}
   catch{setError(L('题目加载失败，请检查网络后重试。','Failed to load questions.'));setStage({kind:'setup'})}};
- const resumeSaved=async()=>{
-  if(!savedLazy)return;
+ const resumeSaved=async(override?:typeof savedLazy)=>{
+  const target=override??savedLazy;
+  if(!target)return;
   setError('');setStage({kind:'loading'});
   try{
-   const subIds=[...new Set(savedLazy.items.map(x=>x.subject))].filter(id=>banks[id]?.[savedLazy.level]);
-   const loaded=await Promise.all(subIds.map(id=>banks[id][savedLazy.level]().then(qs=>[id,qs] as const)));
+   const subIds=[...new Set(target.items.map(x=>x.subject))].filter(id=>banks[id]?.[target.level]);
+   const loaded=await Promise.all(subIds.map(id=>banks[id][target.level]().then(qs=>[id,qs] as const)));
    const lookup=new Map<string,AiQuiz>();
    for(const [sid,qs] of loaded)for(const q of qs)lookup.set(sid+':'+q.id,q);
    const items:Item[]=[],results:(Result|null)[]=[];
-   savedLazy.items.forEach((rawIt,i)=>{
+   target.items.forEach((rawIt,i)=>{
     const quiz=lookup.get(rawIt.subject+':'+rawIt.id);
     if(!quiz)return;
     const order='options' in quiz?(rawIt.order.length===quiz.options.length?rawIt.order:quiz.options.map((_,idx)=>idx)):[];
     items.push({id:rawIt.id,level:rawIt.subject,quiz,order});
-    results.push(savedLazy.results[i]??null);
+    results.push(target.results[i]??null);
    });
    if(!items.length){removeLazyQuiz(lazyKey);setStage({kind:'setup'});return}
-   const index=Math.min(Math.max(0,savedLazy.index),items.length-1),drafts={...(savedLazy.drafts??{})};
+   const index=Math.min(Math.max(0,target.index),items.length-1),drafts={...(target.drafts??{})};
    draftsRef.current=drafts;setJustSaved(false);
-   setStage({kind:'quiz',level:savedLazy.level,items,index,results,drafts,shares:savedLazy.shares});
+   setStage({kind:'quiz',level:target.level,items,index,results,drafts,shares:target.shares});
   }catch{
    setError(L('题目加载失败，请检查网络后重试。','Failed to load questions.'));setStage({kind:'setup'});
   }
  };
+ useEffect(()=>{
+  if(new URLSearchParams(window.location.search).get('resume')!=='1')return;
+  const saved=parseLazyQuiz(readRawQuizStore(lazyKey));
+  if(saved)void resumeSaved(saved);
+ },[lazyKey]); // eslint-disable-line react-hooks/exhaustive-deps
  const again=(lv:number,items:Item[],shares:Record<string,number>)=>{const next=shuffle(items).map(it=>toItem(it.level,it.quiz));removeLazyQuiz(lazyKey);draftsRef.current={};setJustSaved(false);setStage({kind:'quiz',level:lv,items:next,index:0,results:next.map(()=>null),drafts:{},shares})};
  const levelName=(lv:number)=>L(lazyLevels[lv]?.name??'',lazyLevels[lv]?.nameEn??'');
  const back=<a href="/practice" className="ai-back" onClick={()=>{if(stage.kind==='quiz'){clearTimeout(draftTimerRef.current);persistStage(stage,draftsRef.current)}}}><ArrowLeft size={16}/>{L('返回训练','Back to practice')}</a>;
@@ -126,6 +132,8 @@ export default function LazyQuiz({username,subjects}:{username:string;subjects:L
    <div className="ai-quiz-head"><span className="eyebrow">{L('懒人随机测验','Lazy random quiz')} · {levelName(stage.level)} · {name(it.level)}</span><div className="ai-quiz-head-right"><button type="button" className={'ai-quiz-save'+(justSaved?' saved':'')} onClick={()=>saveNow(stage)}>{justSaved?<><Check size={14}/>{L('已保存','Saved')}</>:<><Save size={14}/>{L('保存记录','Save')}</>}</button><span>{stage.index+1} / {stage.items.length}</span></div></div>
    <Progress value={(stage.index+(res?1:0))/stage.items.length*100}/>
    <QuestionCard key={stage.index+'-'+it.id} item={it} label={L(`${name(it.level)} · ${lazyLevels[stage.level].kind}`,`${name(it.level)} · ${lazyLevels[stage.level].kindEn}`)} result={res} draft={draftsRef.current[it.id]??stage.drafts?.[it.id]}
+    noteBackHref="/practice/lazy?resume=1"
+    onBeforeNoteLeave={()=>{clearTimeout(draftTimerRef.current);persistStage(stage,draftsRef.current,true)}}
     onDraftChange={val=>{if(val.trim())draftsRef.current[it.id]=val;else delete draftsRef.current[it.id];clearTimeout(draftTimerRef.current);draftTimerRef.current=setTimeout(()=>persistStage(stage,draftsRef.current),500)}}
     last={last}
     onAnswer={r=>{delete draftsRef.current[it.id];clearTimeout(draftTimerRef.current);const nextStage:QuizStage={...stage,results:stage.results.map((x,i)=>i===stage.index?r:x),drafts:{...draftsRef.current}};setStage(nextStage);persistStage(nextStage,draftsRef.current)}}

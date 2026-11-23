@@ -87,29 +87,21 @@ function resolveEffectiveConcreteLevel(provider:AiProviderId,model:string,level:
 }
 
 function geminiThinkingCfgs(model:string,level:ThinkingLevel,defaultOn:boolean):(Record<string,unknown>|undefined)[]{
- const is25=/gemini-2\.5/i.test(model);
  const isHydrogen=/hydrogen/i.test(model);
+ // Gemini 4 思考强度固定为模型默认，不再传递可调 thinkingLevel。
+ if(isHydrogen){
+  return defaultOn?[{includeThoughts:true},undefined]:[undefined];
+ }
  if(level==='auto'){
   if(!defaultOn)return [undefined];
-  return isHydrogen
-   ?[{includeThoughts:true,thinkingLevel:'MEDIUM'},{includeThoughts:true},undefined]
-   :[{includeThoughts:true},undefined];
+  return [{includeThoughts:true},undefined];
  }
  if(level==='off'){
-  if(isHydrogen)return [{includeThoughts:true,thinkingLevel:'LOW'},{includeThoughts:true},undefined];
-  return is25
-   ?[{includeThoughts:false,thinkingBudget:0},undefined]
-   :[{includeThoughts:false,thinkingLevel:'MINIMAL'},{includeThoughts:false,thinkingBudget:0},undefined];
+  return [{includeThoughts:false,thinkingLevel:'MINIMAL'},{includeThoughts:false,thinkingBudget:0},undefined];
  }
  const budget=level==='low'?1024:level==='medium'?8192:(level==='xhigh'||level==='max')?32768:24576;
- const apiLvl=(level==='xhigh'||level==='max')?(isHydrogen?'XHIGH':'HIGH'):level.toUpperCase();
- if(is25){
-  return [{includeThoughts:true,thinkingBudget:budget},{includeThoughts:true},undefined];
- }
- const out:(Record<string,unknown>|undefined)[]=[{includeThoughts:true,thinkingLevel:apiLvl}];
- if(apiLvl==='XHIGH')out.push({includeThoughts:true,thinkingLevel:'HIGH'});
- out.push({includeThoughts:true,thinkingBudget:budget},{includeThoughts:true},undefined);
- return out;
+ const apiLvl=(level==='xhigh'||level==='max')?'HIGH':level.toUpperCase();
+ return [{includeThoughts:true,thinkingLevel:apiLvl},{includeThoughts:true,thinkingBudget:budget},{includeThoughts:true},undefined];
 }
 
 async function runProviderStream(
@@ -361,8 +353,9 @@ async function runProviderStream(
 
 type TutorCandidate={provider:AiProviderId;model:string;key:string;maxTokens?:number;thinking?:boolean};
 // vision：这次对话带了图片。deepseek-flash 能识图，deepseek-v4-pro 不能。
-// siteModel：学习者在对话框里选的站点模型（TUTOR_MODELS 里的 id）；默认（auto）按 DeepSeek V4.1 Flash -> Gemini 4 Hydrogen -> Gemini 3.8 Flash 顺序支持与回退。
-function resolveRuntime(custom?:RuntimeAiConfig,vision=false,siteModel?:string):TutorCandidate[]{
+// siteModel：学习者在对话框里选的站点模型（TUTOR_MODELS 里的 id）；默认（auto）按 DeepSeek V4.1 Flash -> Gemini 4 Hydrogen -> Gemini 3.8 Flash -> Gemini 3.6 Flash 顺序支持与回退。
+// allowGemini：游客为 false，禁止调用站点 Gemini 模型。
+function resolveRuntime(custom?:RuntimeAiConfig,vision=false,siteModel?:string,allowGemini=true):TutorCandidate[]{
  if(custom?.isCustom&&custom.apiKey){
   const meta=providerMeta(custom.provider);
   const m=custom.model?.trim()||meta.defaultModel;
@@ -371,14 +364,15 @@ function resolveRuntime(custom?:RuntimeAiConfig,vision=false,siteModel?:string):
  }
  const e=env as unknown as Record<string,string|undefined>;
  const dsKey=e?.DEEPSEEK_API_KEY||(typeof process!=='undefined'?process.env?.DEEPSEEK_API_KEY:undefined);
- const gmKey=e?.GEMINI_API_KEY||(typeof process!=='undefined'?process.env?.GEMINI_API_KEY:undefined);
+ const gmKey=allowGemini?(e?.GEMINI_API_KEY||(typeof process!=='undefined'?process.env?.GEMINI_API_KEY:undefined)):undefined;
  const gmCands:TutorCandidate[]=gmKey?[
   {provider:'gemini',model:'gemini-4-hydrogen',key:gmKey,thinking:true},
   {provider:'gemini',model:'gemini-3.8-flash',key:gmKey,thinking:true},
-  {provider:'gemini',model:'gemini-2.5-flash',key:gmKey,thinking:true},
+  {provider:'gemini',model:'gemini-3.6-flash',key:gmKey,thinking:true},
  ]:[];
  const norm=siteModel==='gemini-flash'?'gemini-4':siteModel;
  let picked=TUTOR_MODELS.find(m=>m.id===norm)??DEFAULT_TUTOR_MODEL;
+ if(!allowGemini&&picked.provider==='gemini')picked=DEFAULT_TUTOR_MODEL;
  if(vision&&!picked.vision)picked=DEFAULT_TUTOR_MODEL;
  const dsCand:TutorCandidate|null=dsKey?{provider:'deepseek',model:picked.provider==='deepseek'?picked.model:DEFAULT_TUTOR_MODEL.model,key:dsKey,thinking:picked.provider==='deepseek'?picked.thinking:DEFAULT_TUTOR_MODEL.thinking}:null;
  if(picked.provider==='gemini')return [...gmCands,...(dsCand?[dsCand]:[])];
@@ -403,10 +397,10 @@ function normalize(items:GradeItem[],raw:Raw):GradeResult[]{return items.map((it
 type GradeCandidate={provider:AiProviderId;model:string;key:string;maxTokens?:number;thinking?:boolean;label:string};
 
 // AI 评分模型与 AI 对话模型完全独立：
-// - Gemini 默认使用 gemini-4-hydrogen，失败自动降级 gemini-3.8-flash（走 Gemini 代理模式）；
+// - Gemini 默认使用 gemini-4-hydrogen（默认思考强度），失败依次降级 gemini-3.8-flash -> gemini-3.6-flash（走 Gemini 代理模式）；
 // - DeepSeek 使用 deepseek-flash（DeepSeek V4.1 Flash）思考模式；
-// - auto 按「自定义专属（若已开启） -> Gemini 4 Hydrogen -> Gemini 3.8 Flash -> DeepSeek V4.1 Flash（思考）」顺序逐级保底。
-function resolveGradeRuntime(custom?:RuntimeAiConfig,gradeModel?:GradeModelId):GradeCandidate[]{
+// - auto 按「自定义专属（若已开启） -> Gemini 4 Hydrogen -> Gemini 3.8 Flash -> Gemini 3.6 Flash -> DeepSeek V4.1 Flash（思考）」顺序逐级保底（游客禁止 Gemini，直接用 DeepSeek）。
+function resolveGradeRuntime(custom?:RuntimeAiConfig,gradeModel?:GradeModelId,allowGemini=true):GradeCandidate[]{
  const picked=parseGradeModel(gradeModel);
  const customCand=():GradeCandidate|null=>{
   if(!(custom?.isCustom&&custom.apiKey))return null;
@@ -416,11 +410,11 @@ function resolveGradeRuntime(custom?:RuntimeAiConfig,gradeModel?:GradeModelId):G
  };
  const e=env as unknown as Record<string,string|undefined>;
  const dsKey=e?.DEEPSEEK_API_KEY||(typeof process!=='undefined'?process.env?.DEEPSEEK_API_KEY:undefined);
- const gmKey=e?.GEMINI_API_KEY||(typeof process!=='undefined'?process.env?.GEMINI_API_KEY:undefined);
+ const gmKey=allowGemini?(e?.GEMINI_API_KEY||(typeof process!=='undefined'?process.env?.GEMINI_API_KEY:undefined)):undefined;
  const gmCands:GradeCandidate[]=gmKey?[
   {provider:'gemini',model:'gemini-4-hydrogen',key:gmKey,thinking:true,label:'gemini-4-hydrogen'},
   {provider:'gemini',model:'gemini-3.8-flash',key:gmKey,thinking:true,label:'gemini-3.8-flash'},
-  {provider:'gemini',model:'gemini-2.5-flash',key:gmKey,thinking:true,label:'gemini-2.5-flash'},
+  {provider:'gemini',model:'gemini-3.6-flash',key:gmKey,thinking:true,label:'gemini-3.6-flash'},
  ]:[];
  const dsCands:GradeCandidate[]=dsKey?[
   {provider:'deepseek',model:'deepseek-flash',key:dsKey,thinking:true,label:'deepseek-flash (thinking)'},
@@ -433,22 +427,25 @@ function resolveGradeRuntime(custom?:RuntimeAiConfig,gradeModel?:GradeModelId):G
 }
 
 const resolveModelLabel=(cand:{provider:AiProviderId;model:string;thinking?:boolean},level:ThinkingLevel,custom?:RuntimeAiConfig)=>{
- const lv=resolveEffectiveConcreteLevel(cand.provider,cand.model,level,cand.thinking);
  const base=custom?.isCustom
   ?`${cand.provider}/${cand.model}`
-  :cand.provider==='deepseek'&&cand.model==='deepseek-flash'&&lv!=='off'
+  :cand.provider==='deepseek'&&cand.model==='deepseek-flash'&&resolveEffectiveConcreteLevel(cand.provider,cand.model,level,cand.thinking)!=='off'
    ?'deepseek-flash (thinking)'
    :cand.model;
+ if(cand.provider==='gemini'&&(/hydrogen/i.test(cand.model)||level==='auto')){
+  return base;
+ }
+ const lv=resolveEffectiveConcreteLevel(cand.provider,cand.model,level,cand.thinking);
  return `${base}@${lv}`;
 };
 
 // 评分：onText 收到模型实时写出的文字；换下一个模型重试前先调用 onReset，让页面清掉上一个模型写了一半的内容。
-export async function gradeStream(items:GradeItem[],onText:(t:string)=>void,onReset:()=>void,custom?:RuntimeAiConfig,gradeModel?:GradeModelId,onThink?:(t:string)=>void,geminiProxy=true,signal?:AbortSignal,thinkingLevel?:ThinkingLevel):Promise<{results:GradeResult[];model:string}>{
+export async function gradeStream(items:GradeItem[],onText:(t:string)=>void,onReset:()=>void,custom?:RuntimeAiConfig,gradeModel?:GradeModelId,onThink?:(t:string)=>void,geminiProxy=true,signal?:AbortSignal,thinkingLevel?:ThinkingLevel,allowGemini=true):Promise<{results:GradeResult[];model:string}>{
  const lv=parseThinkingLevel(thinkingLevel);
- const candidates=resolveGradeRuntime(custom,gradeModel);if(!candidates.length)throw new GradeError('missing key');
+ const candidates=resolveGradeRuntime(custom,gradeModel,allowGemini);if(!candidates.length)throw new GradeError('missing key');
  const promptText=prompt(items);
  const isCustom=Boolean(custom?.isCustom&&custom.apiKey);
- const cacheKey=!isCustom?'grade:'+(await sha256Hex([parseGradeModel(gradeModel),lv,promptText])):'';
+ const cacheKey=!isCustom?'grade:'+(await sha256Hex([allowGemini?'u':'g',parseGradeModel(gradeModel),lv,promptText])):'';
  if(cacheKey){
   const hit=await readPromptCache<{results:GradeResult[]}>(cacheKey);
   if(hit?.payload?.results?.length){
@@ -488,12 +485,12 @@ function standardPrompt(it:GradeItem){const starter=it.kind==='code'?analyzeStar
  ].filter(Boolean).join('\n');
 }
 
-export async function standardAnswerStream(item:GradeItem,onText:(t:string)=>void,onReset:()=>void,custom?:RuntimeAiConfig,gradeModel?:GradeModelId,onThink?:(t:string)=>void,geminiProxy=true,signal?:AbortSignal,thinkingLevel?:ThinkingLevel):Promise<{text:string;model:string}>{
+export async function standardAnswerStream(item:GradeItem,onText:(t:string)=>void,onReset:()=>void,custom?:RuntimeAiConfig,gradeModel?:GradeModelId,onThink?:(t:string)=>void,geminiProxy=true,signal?:AbortSignal,thinkingLevel?:ThinkingLevel,allowGemini=true):Promise<{text:string;model:string}>{
  const lv=parseThinkingLevel(thinkingLevel);
- const candidates=resolveGradeRuntime(custom,gradeModel);if(!candidates.length)throw new GradeError('missing key');
+ const candidates=resolveGradeRuntime(custom,gradeModel,allowGemini);if(!candidates.length)throw new GradeError('missing key');
  const promptText=standardPrompt(item);
  const isCustom=Boolean(custom?.isCustom&&custom.apiKey);
- const cacheKey=!isCustom?'std:'+(await sha256Hex([parseGradeModel(gradeModel),lv,promptText])):'';
+ const cacheKey=!isCustom?'std:'+(await sha256Hex([allowGemini?'u':'g',parseGradeModel(gradeModel),lv,promptText])):'';
  if(cacheKey){
   const hit=await readPromptCache<{text:string}>(cacheKey);
   if(hit?.payload?.text){
@@ -582,9 +579,9 @@ function contextText(c:TutorContext){if(c.kind==='site')return `学生现在所�
 
 // AI 老师回复一条消息：文字实时交给 onText；换模型重试前调用 onReset。
 // found：站内搜索找到的卡片、题目和面试题（已经整理成文字），AI 可以把其中的链接给学习者。
-export async function tutorStream(context:TutorContext,messages:TutorMessage[],onText:(t:string)=>void,onReset:()=>void,custom?:RuntimeAiConfig,siteModel?:string,onThink?:(t:string)=>void,found='',geminiProxy=true,onModel?:(model:string)=>void,signal?:AbortSignal,thinkingLevel?:ThinkingLevel){
+export async function tutorStream(context:TutorContext,messages:TutorMessage[],onText:(t:string)=>void,onReset:()=>void,custom?:RuntimeAiConfig,siteModel?:string,onThink?:(t:string)=>void,found='',geminiProxy=true,onModel?:(model:string)=>void,signal?:AbortSignal,thinkingLevel?:ThinkingLevel,allowGemini=true){
  const lv=parseThinkingLevel(thinkingLevel);
- const candidates=resolveRuntime(custom,messages.some(m=>m.images?.length),siteModel);
+ const candidates=resolveRuntime(custom,messages.some(m=>m.images?.length),siteModel,allowGemini);
  // 保持 system 提示词在多轮对话中完全稳定，把动态站内搜索结果追加到最新一条 user 消息尾部，最大化命中 DeepSeek / Gemini / Anthropic / OpenAI 前缀提示缓存。
  const sys=(context.kind==='support'?'':tutorBase+'\n\n')+modeRule[context.kind]+'\n\n'+contextText(context);
  const chatMsgs:ChatMsg[]=messages.map((m,idx)=>({
@@ -656,8 +653,9 @@ export async function completePlaygroundCode(input:{
  questionId?:string;
  custom?:RuntimeAiConfig;
  geminiProxy?:boolean;
+ allowGemini?:boolean;
 }):Promise<string>{
- const candidates=resolveRuntime(input.custom);
+ const candidates=resolveRuntime(input.custom,false,undefined,input.allowGemini!==false);
  const userParts=[
   pgLangGuide[input.lang],
   input.title?`片段标题：${input.title}`:'',
@@ -700,4 +698,38 @@ export async function completePlaygroundCode(input:{
   }
  }
  throw last instanceof Error?last:new GradeError('complete playground code failed');
+}
+
+const jdImageSystem=`你是岗位 JD 与面经图片文字提取助手。请把用户上传的图片中所有与招聘岗位、职责要求、技术栈、薪资/职级或面经问题相关的文字完整、准确、忠实地提取为纯文本。
+要求：
+1. 保持原有分段与要点结构，不要遗漏任何技术名词、版本号、框架或量化指标；
+2. 忽略页面导航栏、广告、按钮、状态栏时间电量等无关界面元素；
+3. 直接输出提取后的正文，不要添加任何开场白、总结或评论。`;
+
+export async function extractJdFromImages(images:string[],geminiProxy=true,allowGemini=true):Promise<string>{
+ if(!images.length)return '';
+ const candidates=resolveRuntime(undefined,true,'deepseek-flash',allowGemini);
+ let last:unknown;
+ for(const cand of candidates){
+  try{
+   const text=await runProviderStream(
+    cand.provider,
+    cand.model,
+    cand.key,
+    jdImageSystem,
+    [{role:'user',content:'请完整提取图片中的岗位 JD / 面经正文内容：',images}],
+    0.1,
+    false,
+    4096,
+    ()=>{},
+    {thinking:false,thinkingLevel:'off',geminiProxy,siteManaged:true},
+   );
+   const clean=text.trim();
+   if(clean.length>=12)return clean.slice(0,12_000);
+   throw new GradeError('empty image ocr');
+  }catch(e){
+   last=e;
+  }
+ }
+ throw last instanceof Error?last:new GradeError('图片文字识别失败，请重试或直接粘贴文字。');
 }

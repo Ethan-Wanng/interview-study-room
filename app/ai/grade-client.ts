@@ -39,11 +39,12 @@ export const toStandardItem=(q:Written,answer:string,max=PRACTICE_MAX):GradeItem
 };
 
 // 今天还能用几次 AI 评分；查不到时返回 null（不影响作答）。
-export type GradeQuotaInfo={remaining:number;limit:number;custom:boolean;provider?:string;model?:string};
+export type GradeQuotaInfo={remaining:number;limit:number;custom:boolean;isGuest?:boolean;provider?:string;model?:string};
 let cachedGradeCustom:{provider:string;model?:string}|null=null;
-export function setGradeCustomCache(custom:{provider:string;model?:string}|null){cachedGradeCustom=custom}
+let cachedGradeIsGuest=false;
+export function setGradeCustomCache(custom:{provider:string;model?:string}|null,isGuest?:boolean){cachedGradeCustom=custom;if(typeof isGuest==='boolean')cachedGradeIsGuest=isGuest}
 export async function gradeInfo():Promise<GradeQuotaInfo|null>{
- try{const j=await fetch('/api/grade').then(r=>r.json()) as Partial<GradeQuotaInfo>;if(j.custom&&j.provider)cachedGradeCustom={provider:j.provider,model:j.model};else if(typeof j.remaining==='number'&&!j.custom)cachedGradeCustom=null;return typeof j.remaining==='number'?{remaining:j.remaining,limit:Number(j.limit)||0,custom:!!j.custom,provider:j.provider,model:j.model}:null}
+ try{const j=await fetch('/api/grade').then(r=>r.json()) as Partial<GradeQuotaInfo>;if(typeof j.isGuest==='boolean')cachedGradeIsGuest=j.isGuest;if(j.custom&&j.provider)cachedGradeCustom={provider:j.provider,model:j.model};else if(typeof j.remaining==='number'&&!j.custom)cachedGradeCustom=null;return typeof j.remaining==='number'?{remaining:j.remaining,limit:Number(j.limit)||0,custom:!!j.custom,isGuest:Boolean(j.isGuest),provider:j.provider,model:j.model}:null}
  catch{return null}}
 export async function gradeQuota():Promise<number|null>{
  const info=await gradeInfo();return info?info.remaining:null}
@@ -87,11 +88,12 @@ async function runGradeNdjson<T>(
  signal?:AbortSignal,
 ):Promise<NdjsonOutcome<T>>{
  if(signal?.aborted)return ABORTED;
- const gm=parseGradeModel(body.model);
- const {scopeKey,spec}=getGradeThinkingSpec(gm,cachedGradeCustom);
- const thinkingLevel=getModelThinkingLevel(scopeKey,spec);
+ const rawGm=parseGradeModel(body.model);
+ const gm=cachedGradeIsGuest&&rawGm==='gemini'?'deepseek':rawGm;
+ const {scopeKey,spec}=getGradeThinkingSpec(gm,cachedGradeCustom,cachedGradeIsGuest);
+ const thinkingLevel=spec.locked?'auto':getModelThinkingLevel(scopeKey,spec);
  let res:Response;
- try{res=await fetch('/api/grade',{method:'POST',signal,headers:{'content-type':'application/json'},body:JSON.stringify({...body,geminiProxy:getGeminiAutoProxy(),thinkingLevel})})}catch{return signal?.aborted?ABORTED:{ok:false,quota:false,message:NET}}
+ try{res=await fetch('/api/grade',{method:'POST',signal,headers:{'content-type':'application/json'},body:JSON.stringify({...body,model:gm,geminiProxy:getGeminiAutoProxy(),thinkingLevel})})}catch{return signal?.aborted?ABORTED:{ok:false,quota:false,message:NET}}
  if(!(res.headers.get('content-type')??'').includes('ndjson')){
   try{const j=await res.json() as GradeResponse;if(signal?.aborted)return ABORTED;if('results' in j)return {ok:true,data:extract('',{t:'done',results:j.results,model:j.model,remaining:j.remaining}),model:j.model,remaining:j.remaining};return {ok:false,quota:j.error==='quota',message:j.message}}
   catch{return signal?.aborted?ABORTED:{ok:false,quota:false,message:NET}}}

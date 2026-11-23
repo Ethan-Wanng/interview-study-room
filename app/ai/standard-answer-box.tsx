@@ -8,7 +8,7 @@ import GradeModelPicker from './grade-model-picker';
 import ThinkBox from './think-box';
 import {gradeQuota,requestStandardAnswer,type GradeThinkState} from './grade-client';
 
-export type StandardRecord={text:string;model?:string;think?:string;secs?:number};
+export type StandardRecord={text:string;model?:string;think?:string;secs?:number;remaining?:number};
 type SlotState={loading?:boolean;live?:string;think?:GradeThinkState|null;error?:string;record?:StandardRecord};
 
 function stdInline(t:string){
@@ -94,7 +94,7 @@ export function useStandardAnswer({keyId,item,initial,onSaved,onRemaining,onQuot
     if(out.quota)onQuotaOut?.();
     return;
    }
-   const rec:StandardRecord={text:out.text,model:out.model,think:out.think,secs:out.thinkSecs};
+   const rec:StandardRecord={text:out.text,model:out.model,think:out.think,secs:out.thinkSecs,remaining:out.remaining};
    patchSlot(targetKey,()=>({loading:false,live:'',think:null,error:'',record:rec}));
    onRemaining?.(out.remaining);
    onSaved?.(rec,targetKey);
@@ -149,6 +149,7 @@ export function StandardAnswerBox({std}:{std:StandardAnswerState}){
     {loading?<Loader2 size={15} className="ai-spin"/>:<FileCheck2 size={15}/>}
     <strong>{loading?L('AI 正在生成规范回答…','Generating AI model answer…'):L('AI 规范回答','AI Model Answer')}</strong>
     {model&&<span className="ai-grade-model-tag">{gradeModelBadge(model,locale==='en'?'en':'zh')}</span>}
+    {!loading&&typeof record?.remaining==='number'&&<small className="ai-std-rem">{L(`今日还剩 ${record.remaining} 次`,`${record.remaining} left today`)}</small>}
    </span>
    {loading?<div className="ai-std-actions">
     <button type="button" className="am-stop-btn" onClick={stop}>

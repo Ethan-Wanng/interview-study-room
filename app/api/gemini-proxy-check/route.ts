@@ -46,10 +46,10 @@ function compactErr(e: unknown): string {
  return msg.slice(0, 80);
 }
 
-const REGION_PROBE_PATH = '/v1beta/models/gemini-2.5-flash:generateContent';
+const REGION_PROBE_PATH = '/v1beta/models/gemini-3.6-flash:generateContent';
 const REGION_PROBE_BODY = JSON.stringify({
  contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
- generationConfig: { maxOutputTokens: 1, thinkingConfig: { thinkingBudget: 0 } },
+ generationConfig: { maxOutputTokens: 1 },
 });
 
 // Use GET /v1beta/models/gemini-4-hydrogen so network checks consume 0 Gemini 4 RPD/RPM quota.
@@ -252,6 +252,7 @@ export async function POST(req: Request) {
   assertSameOrigin(req);
   const user = await sessionUser(req.headers);
   if (!user) throw new AuthError('请先登录后再检测网络。', 401);
+  if (user.is_guest) throw new AuthError('游客不支持调用 Gemini 服务，请登录后使用。', 403);
   await rateLimit('proxy-check:' + user.id, 40);
 
   const e = env as unknown as Record<string, string | undefined>;

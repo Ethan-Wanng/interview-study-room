@@ -10,14 +10,14 @@ export async function streamNoteAi(
  onDelta:(full:string)=>void,
  onThink:(think:string)=>void,
  signal:AbortSignal,
-):Promise<{ok:true;text:string}|{ok:false;aborted?:boolean;message:string}>{
+):Promise<{ok:true;text:string;remaining?:number}|{ok:false;aborted?:boolean;message:string}>{
  const NET='AI 助手暂时连接失败，本次未扣除额度，请稍后重试。';
  const model=getStoredNoteModel();
  const thinkingLevel=model==='auto'||model==='custom'
   ?'auto'
   :(()=>{
     const {scopeKey,spec}=getTutorThinkingSpec(model,null);
-    return getModelThinkingLevel(scopeKey,spec);
+    return spec.locked?'auto':getModelThinkingLevel(scopeKey,spec);
    })();
  let res:Response;
  try{
@@ -48,6 +48,7 @@ export async function streamNoteAi(
  const reader=res.body!.getReader();
  const dec=new TextDecoder();
  let buf='',got='',think='',err='';
+ let remaining:number|undefined;
  try{
   for(;;){
    if(signal.aborted)break;
@@ -71,6 +72,8 @@ export async function streamNoteAi(
      think='';
      onDelta('');
      onThink('');
+    }else if(ev.t==='done'){
+     remaining=ev.remaining;
     }else if(ev.t==='error'){
      err=ev.message;
     }
@@ -81,5 +84,5 @@ export async function streamNoteAi(
  }
  if(signal.aborted)return {ok:false,aborted:true,message:''};
  if(err||!got.trim())return {ok:false,message:err||NET};
- return {ok:true,text:got.trim()};
+ return {ok:true,text:got.trim(),remaining};
 }

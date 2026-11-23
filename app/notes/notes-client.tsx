@@ -518,6 +518,7 @@ export default function NotesClient({username}:{username:string}){
  const [aiBusy,setAiBusy]=useState(false);
  const [aiOutput,setAiOutput]=useState('');
  const [aiThink,setAiThink]=useState('');
+ const [aiRemaining,setAiRemaining]=useState<number|null>(null);
  const [aiError,setAiError]=useState('');
  const [noticeMsg,setNoticeMsg]=useState('');
  const aiAbortRef=useRef<AbortController|null>(null);
@@ -1111,7 +1112,9 @@ export default function NotesClient({username}:{username:string}){
   );
   if(aiAbortRef.current===ctl)aiAbortRef.current=null;
   setAiBusy(false);
-  if(!res.ok&&!res.aborted){
+  if(res.ok){
+   setAiRemaining(typeof res.remaining==='number'?res.remaining:null);
+  }else if(!res.aborted){
    setAiError(res.message);
   }
  };
@@ -2124,10 +2127,11 @@ export default function NotesClient({username}:{username:string}){
                  <RotateCcw size={14}/>
                  <span>{L('再让 AI 改','Refine')}</span>
                 </button>
-                <button type="button" className="button secondary" onClick={()=>{aiAbortRef.current?.abort();setAiOutput('');setAiThink('');setAiError('');setAiOpen(false)}}>
+                <button type="button" className="button secondary" onClick={()=>{aiAbortRef.current?.abort();setAiOutput('');setAiThink('');setAiRemaining(null);setAiError('');setAiOpen(false)}}>
                  <X size={14}/>
                  <span>{L('取消','Cancel')}</span>
                 </button>
+                {aiRemaining!==null&&<small className="muted" style={{marginLeft:'auto'}}>{L(`今日还剩 ${aiRemaining} 次`,`${aiRemaining} left today`)}</small>}
                </div>
               )}
              </div>

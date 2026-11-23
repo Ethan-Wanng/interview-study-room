@@ -55,6 +55,7 @@ export async function POST(req:Request){
     questionId,
     custom:customCfg,
     geminiProxy,
+    allowGemini:!user.is_guest,
    });
    return Response.json({ok:true,code:completed},{headers:noCache});
   }catch(e){

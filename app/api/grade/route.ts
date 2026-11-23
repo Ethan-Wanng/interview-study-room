@@ -26,10 +26,10 @@ export async function GET(req:Request){const user=await sessionUser(req.headers)
   const s=await getUserAiSettings(user.id);
   if(s.enabled&&s.hasKey&&s.allowGrade){
    const rem=s.dailyLimit>0?Math.max(0,s.dailyLimit-s.usedToday):999;
-   return Response.json({remaining:rem,limit:s.dailyLimit||999,custom:true,provider:s.provider,model:s.model});
+   return Response.json({remaining:rem,limit:s.dailyLimit||999,custom:true,isGuest:false,provider:s.provider,model:s.model});
   }
  }
- const limit=limitOf(user.is_guest);return Response.json({remaining:Math.max(0,limit-await used(user.id)),limit,custom:false})}
+ const limit=limitOf(user.is_guest);return Response.json({remaining:Math.max(0,limit-await used(user.id)),limit,custom:false,isGuest:Boolean(user.is_guest)})}
 
 // 一次请求评一道题或一整份试卷的主观题，计一次额度；评分失败时退回这次额度。
 // 扣完额度后改为流式返回（NDJSON，见 GradeEvent）：模型写出的文字实时转发给页面，最后一行是校正过分数的结果。
@@ -40,6 +40,7 @@ export async function POST(req:Request){try{assertSameOrigin(req);const user=awa
  const mode=bodyObj?.mode==='standard'?'standard':'grade';
  const list=bodyObj?.items;if(!Array.isArray(list)||!list.length||list.length>(mode==='standard'?1:GRADE_LIMITS.items))return fail('invalid','请求内容无效。');
  const gradeModel=parseGradeModel(bodyObj?.model),geminiProxy=bodyObj?.geminiProxy!==false,thinkingLevel=parseThinkingLevel(bodyObj?.thinkingLevel);
+ if(user.is_guest&&gradeModel==='gemini')return fail('auth','游客不支持调用 Gemini 模型，请登录后使用或切换 DeepSeek。',403);
  const items=list.map(parseItem);if(items.some(x=>!x))return fail('invalid','请求内容无效。');
 
  const streamResponse=(remaining:number,onRefund:()=>Promise<unknown>,errMsg:string,customCfg?:RuntimeAiConfig)=>{
@@ -54,10 +55,10 @@ export async function POST(req:Request){try{assertSameOrigin(req);const user=awa
     send({t:'start'});
     try{
      if(mode==='standard'){
-      const {text,model}=await standardAnswerStream(items[0]!,text=>{wrote=true;send({t:'delta',text})},()=>{wrote=false;send({t:'reset'})},customCfg,gradeModel,text=>{wrote=true;send({t:'think',text})},geminiProxy,ctl.signal,thinkingLevel);
+      const {text,model}=await standardAnswerStream(items[0]!,text=>{wrote=true;send({t:'delta',text})},()=>{wrote=false;send({t:'reset'})},customCfg,gradeModel,text=>{wrote=true;send({t:'think',text})},geminiProxy,ctl.signal,thinkingLevel,!user.is_guest);
       send({t:'done',results:[],text,model,remaining});
      }else{
-      const {results,model}=await gradeStream(items as GradeItem[],text=>{wrote=true;send({t:'delta',text})},()=>{wrote=false;send({t:'reset'})},customCfg,gradeModel,text=>{wrote=true;send({t:'think',text})},geminiProxy,ctl.signal,thinkingLevel);
+      const {results,model}=await gradeStream(items as GradeItem[],text=>{wrote=true;send({t:'delta',text})},()=>{wrote=false;send({t:'reset'})},customCfg,gradeModel,text=>{wrote=true;send({t:'think',text})},geminiProxy,ctl.signal,thinkingLevel,!user.is_guest);
       send({t:'done',results,model,remaining});
      }
     }catch(e){

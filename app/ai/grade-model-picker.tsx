@@ -24,27 +24,29 @@ export default function GradeModelPicker({disabled=false}:{disabled?:boolean}){
  const L=(zh:string,en:string)=>locale==='en'?en:zh;
  const lang=locale==='en'?'en':'zh';
  const [model,setModel]=useGradeModel();
- const [customInfo,setCustomInfo]=useState<{hasCustom:boolean;label:string;provider:string;model?:string}>({hasCustom:false,label:'',provider:''});
+ const [customInfo,setCustomInfo]=useState<{hasCustom:boolean;isGuest:boolean;label:string;provider:string;model?:string}>({hasCustom:false,isGuest:false,label:'',provider:''});
 
  useEffect(()=>{
   let alive=true;
   void loadCustomInfo().then(info=>{
    if(!alive)return;
+   const guest=Boolean(info?.isGuest);
    if(info?.custom&&info.provider){
     const lbl=[info.provider,info.model].filter(Boolean).join(' / ');
-    setGradeCustomCache({provider:info.provider,model:info.model});
-    setCustomInfo({hasCustom:true,label:lbl,provider:info.provider,model:info.model});
+    setGradeCustomCache({provider:info.provider,model:info.model},guest);
+    setCustomInfo({hasCustom:true,isGuest:guest,label:lbl,provider:info.provider,model:info.model});
    }else{
-    setGradeCustomCache(null);
-    setCustomInfo({hasCustom:false,label:'',provider:''});
+    setGradeCustomCache(null,guest);
+    setCustomInfo({hasCustom:false,isGuest:guest,label:'',provider:''});
    }
   });
   return ()=>{alive=false};
  },[]);
 
- const effective:GradeModelId=model==='custom'&&!customInfo.hasCustom?'auto':model;
- const {scopeKey,spec}=getGradeThinkingSpec(effective,customInfo.hasCustom?{provider:customInfo.provider,model:customInfo.model}:null);
+ const effective:GradeModelId=model==='custom'&&!customInfo.hasCustom?'auto':(customInfo.isGuest&&model==='gemini'?'deepseek':model);
+ const {scopeKey,spec}=getGradeThinkingSpec(effective,customInfo.hasCustom?{provider:customInfo.provider,model:customInfo.model}:null,customInfo.isGuest);
  const [thinking,setThinking]=useModelThinkingLevel(scopeKey,spec);
+ const visibleModels=customInfo.isGuest?GRADE_MODELS.filter(m=>m.id!=='gemini'):GRADE_MODELS;
  const currentHint=effective==='custom'
   ?L(`使用你在「AI 设置」里绑定的专属模型（${customInfo.label||'自定义'}）进行评分`,`Grade with your custom model (${customInfo.label||'custom'})`)
   :(lang==='en'
@@ -63,13 +65,13 @@ export default function GradeModelPicker({disabled=false}:{disabled?:boolean}){
      aria-label={L('AI 评分模型','AI grading model')}
      onChange={e=>setModel(parseGradeModel(e.target.value))}
     >
-     {GRADE_MODELS.map(m=>(
-      <option key={m.id} value={m.id}>{lang==='en'?PICKER_MODEL_LABEL[m.id][1]:PICKER_MODEL_LABEL[m.id][0]}</option>
+     {visibleModels.map(m=>(
+      <option key={m.id} value={m.id}>{customInfo.isGuest&&m.id==='auto'?L('自动 (DeepSeek)','Auto (DeepSeek)'):(lang==='en'?PICKER_MODEL_LABEL[m.id][1]:PICKER_MODEL_LABEL[m.id][0])}</option>
      ))}
      {customInfo.hasCustom&&<option value="custom">{L('我的 API','My API')}</option>}
     </select>
    </label>
-   <label className="ai-grade-picker ai-think-picker" title={L(curMeta.hintZh,curMeta.hintEn)}>
+   {!spec.locked&&<label className="ai-grade-picker ai-think-picker" title={L(curMeta.hintZh,curMeta.hintEn)}>
     <Brain size={14} aria-hidden="true"/>
     <span className="ai-picker-lbl">{L('思考','Think')}</span>
     <select
@@ -87,7 +89,7 @@ export default function GradeModelPicker({disabled=false}:{disabled?:boolean}){
       );
      })}
     </select>
-   </label>
+   </label>}
   </>
  );
 }

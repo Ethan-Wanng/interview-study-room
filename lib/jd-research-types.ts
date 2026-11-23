@@ -1,3 +1,6 @@
+import { aiQuizTypes, type AiQuiz } from '@/content/journey';
+import type { AntigravityUsage } from './antigravity-agent';
+
 export type JdInputKind = 'jd' | 'experience';
 
 export type JdSkillDimension = {
@@ -17,6 +20,7 @@ export type JdRoadmapStep = {
  title: string;
  goals: string[];
  siteLinks: JdSiteLink[];
+ quizzes?: AiQuiz[];
 };
 
 export type JdQuestionItem = {
@@ -41,6 +45,77 @@ export type JdResearchReport = {
  questions: JdQuestionItem[];
 };
 
+export type JdStageKey = 'profile' | 'roadmap' | 'quizzes' | 'questions';
+
+export type JdLiveProgress = {
+ stage: 1 | 2;
+ activeKey: JdStageKey;
+ roleTitle?: string;
+ inferredLevel?: string;
+ prepDays?: string;
+ companyStyle?: string;
+ dimCount: number;
+ stageCount: number;
+ quizCount: number;
+ questionCount: number;
+ qTitles: string[];
+ stage1Cached?: boolean;
+};
+
+export type JdCacheMeta = {
+ hit?: boolean;
+ stage1Hit?: boolean;
+ usage?: AntigravityUsage;
+};
+
+export function hasStructuredStudyQuizzes(r: JdResearchReport | null | undefined): boolean {
+ return Boolean(r?.roadmap?.some(s => Array.isArray(s.quizzes) && s.quizzes.length > 0));
+}
+
+export function countJdStudyQuizzes(r: JdResearchReport | null | undefined): number {
+ if (!r) return 0;
+ const studyCount = (r.roadmap ?? []).reduce((sum, s) => sum + (Array.isArray(s.quizzes) ? s.quizzes.length : 0), 0);
+ return studyCount > 0 ? studyCount : (r.questions?.length ?? 0);
+}
+
+const LETTERS = 'ABCDEFGH';
+
+function formatStudyQuizMarkdown(qz: AiQuiz, idx: number): string[] {
+ const lines: string[] = [];
+ const typeName = aiQuizTypes[qz.type ?? 'single'];
+ lines.push(`#### 练习 ${idx + 1}（${typeName}）：${qz.q}`);
+ if (qz.code) {
+  lines.push('', '```', qz.code, '```');
+ }
+ if ('options' in qz && Array.isArray(qz.options)) {
+  lines.push('');
+  qz.options.forEach((opt, oi) => {
+   lines.push(`- **${LETTERS[oi] || oi + 1}.** ${opt}`);
+  });
+  if (qz.type === 'multi') {
+   const ansLetters = qz.answers.map(a => LETTERS[a] || String(a + 1)).join('、');
+   lines.push('', `**正确答案**：${ansLetters}`);
+  } else if ('answer' in qz) {
+   lines.push('', `**正确答案**：${LETTERS[qz.answer] || qz.answer + 1}`);
+  }
+ } else if (qz.type === 'fill') {
+  lines.push('', `**参考答案**：${qz.accepted.join(' / ')}`);
+ } else if (qz.type === 'short' || qz.type === 'code' || qz.type === 'design') {
+  if (qz.type === 'code') {
+   lines.push('', '**参考代码**：', '```', qz.reference, '```');
+  } else {
+   lines.push('', `**参考答案**：${qz.reference}`);
+  }
+  if (qz.points?.length) {
+   lines.push('', `**得分要点**：${qz.points.join('；')}`);
+  }
+ }
+ if (qz.explain) {
+  lines.push('', `**解析**：${qz.explain}`);
+ }
+ return lines;
+}
+
 export function reportToMarkdown(r: JdResearchReport): string {
  const lines: string[] = [];
  const meta = [r.inferredLevel, r.prepDays ? `建议周期 ${r.prepDays}` : '', r.companyStyle].filter(Boolean).join(' · ');
@@ -60,12 +135,17 @@ export function reportToMarkdown(r: JdResearchReport): string {
  }
 
  if (r.roadmap.length) {
-  lines.push('', '## 三、分阶段复习路径');
+  lines.push('', '## 三、分阶段复习路径与配套学习题');
   for (const s of r.roadmap) {
    lines.push('', `### ${s.phase} · ${s.title}`);
    for (const g of s.goals) lines.push(`- ${g}`);
    if (s.siteLinks.length) {
     lines.push(`- 站内推荐：${s.siteLinks.map(l => `[${l.label}](${l.href})`).join(' · ')}`);
+   }
+   if (s.quizzes && s.quizzes.length > 0) {
+    for (let qi = 0; qi < s.quizzes.length; qi++) {
+     lines.push('', ...formatStudyQuizMarkdown(s.quizzes[qi], qi));
+    }
    }
   }
  }

@@ -71,7 +71,7 @@ export const AI_PROVIDERS:AiProviderMeta[]=[
   nameEn:'Google Gemini',
   badge:'Gemini',
   defaultModel:'gemini-4-hydrogen',
-  models:['gemini-4-hydrogen','gemini-3.8-flash','gemini-2.5-flash','gemini-2.5-pro'],
+  models:['gemini-4-hydrogen','gemini-3.8-flash','gemini-3.6-flash','gemini-2.5-pro'],
   keyPlaceholder:'AIzaSy...',
   keyHint:['填入 Google AI Studio 的 Gemini API Key（aistudio.google.com）','Enter your Gemini API key from aistudio.google.com'],
  },

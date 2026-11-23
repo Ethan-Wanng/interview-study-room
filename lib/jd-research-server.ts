@@ -1,7 +1,9 @@
 // Server-only JD / Interview Experience deep research helpers:
 //  1. Builds a static, prompt-cache-friendly curriculum catalog of all real in-site courses/levels.
-//  2. Parses Antigravity Agent's JSON output with robust markdown-fence extraction.
-//  3. Verifies every returned in-site link against real routes and enriches missing links via searchSite().
+//  2. Two-stage generation prompts (Stage 1: Profile + Roadmap; Stage 2: Path Study Quizzes + Interview Questions)
+//     to eliminate output-token truncation and surface Stage 1 results immediately while Stage 2 runs.
+//  3. Truncation-resilient JSON salvaging so partial arrays still recover all completed items.
+//  4. Verifies every returned in-site link against real routes and enriches missing links via searchSite().
 
 import { aiLevels } from '@/content/ai-journey';
 import { goLevels } from '@/content/go-journey';
@@ -11,16 +13,18 @@ import { rustLevels } from '@/content/rust-journey';
 import { pythonLevels } from '@/content/python-journey';
 import { projectLevels } from '@/content/project-journey';
 import { aiSupportLevels } from '@/content/ai-support-journey';
-import type { AiLevel } from '@/content/journey';
+import type { AiLevel, AiQuiz } from '@/content/journey';
 import { searchSite } from './site-search';
 import { MY_LIMITS } from './my-questions';
 import type {
  JdInputKind,
+ JdLiveProgress,
  JdQuestionItem,
  JdResearchReport,
  JdRoadmapStep,
  JdSiteLink,
  JdSkillDimension,
+ JdStageKey,
 } from './jd-research-types';
 
 const VALID_SUBJECTS = new Set(['go', 'backend', 'ai-development', 'frontend', 'mine']);
@@ -81,20 +85,33 @@ function getCatalog(): CatalogCache {
  return cachedCatalog;
 }
 
-let cachedSystemPrompt: string | null = null;
+export function normalizeJdSourceForCache(source: string): string {
+ return source
+  .replace(/\r\n?/g, '\n')
+  .split('\n')
+  .map(l => l.replace(/[ \t\f\v]+/g, ' ').trim())
+  .filter(Boolean)
+  .join('\n')
+  .trim();
+}
 
-// Static system instruction (byte-identical across all calls to maximize prompt-cache hits).
-export function getJdResearchSystemPrompt(): string {
- if (cachedSystemPrompt) return cachedSystemPrompt;
+let cachedStage1Prompt: string | null = null;
+let cachedStage2Prompt: string | null = null;
+let cachedFullPrompt: string | null = null;
+
+// Stage 1 Static System Prompt (byte-identical across all calls to maximize upstream prompt cache hits):
+// Outputs ONLY Competency Profile + Review Roadmap (fast, compact, never truncates).
+export function getJdResearchStage1SystemPrompt(): string {
+ if (cachedStage1Prompt) return cachedStage1Prompt;
  const { promptText } = getCatalog();
- cachedSystemPrompt = `你是顶级技术面试教研专家与大厂资深架构面试官。请根据用户提供的「岗位 JD」或「真实面经」，自主判断该岗位的真实职级难度、合理备考周期与需要重点攻克的题目数量，进行深度岗位拆解，生成考点画像、可执行复习路径（关联真实站内课程链接）与高质量专题面试题库。
+ cachedStage1Prompt = `你是顶级技术面试教研专家与大厂资深架构面试官。当前为【第 1 步：生成考点画像与分阶段复习路径】。
+请根据用户提供的「岗位 JD」或「真实面经」，自主判断该岗位的真实职级难度与合理备考周期，进行深度岗位拆解，生成核心考点权重画像、高频扣分点与可执行分阶段复习路径（关联真实站内课程链接）。
 
 严格规则：
-1. 自主决策规模：请依据 JD / 面经的技术广度与考察深度，自主判定 \`inferredLevel\`（如「校招 / 初级」「中高级」「资深 / 架构」）、\`prepDays\`（如「5 天」「7 天」「14 天」「21 天」）、\`roadmap\` 阶段数（3–5 阶段）与 \`questions\` 题数（校招/窄场景 6–8 题，中高级 8–10 题，资深/多轮综合面经 10–14 题）。
+1. 自主决策规模：依据 JD / 面经的技术广度与考察深度，自主判定 \`inferredLevel\`（如「校招 / 初级」「中高级」「资深 / 架构」）、\`prepDays\`（如「5 天」「7 天」「14 天」「21 天」）与 \`roadmap\` 阶段数（3–4 阶段），\`dimensions\` 权重之和尽量为 100。
 2. 必须且只能输出**一个合法 JSON 对象**（用 \`\`\`json 和 \`\`\` 包裹，不要在代码块外写任何解释文字），字段严格按下方顺序输出。
 3. 复习路径中的 \`siteLinks\` 只能从下方「站内真实课程目录」中选择准确存在的相对路径，严禁编造 URL。
-4. 专题面试题必须紧扣 JD / 面经里的真实技术栈、业务场景与高频追问，答案必须深入、结构化、按点清晰换行（可用 \`\`\` 代码块），包含关键原理、边界条件或生产排障思路，拒绝空洞八股。
-5. 所有输出使用简体中文。
+4. 所有输出使用简体中文。
 
 【站内真实课程目录】
 ${promptText}
@@ -128,39 +145,137 @@ ${promptText}
         { "label": "站内课程/关卡名", "href": "/learn/go?level=..." }
       ]
     }
+  ]
+}
+\`\`\``;
+ return cachedStage1Prompt;
+}
+
+// Stage 2 Static System Prompt (byte-identical across all calls to maximize upstream prompt cache hits):
+// Given the Stage 1 roadmap phases + original JD/experience, generates each path's 5-type study quizzes AND the interview question bank.
+export function getJdResearchStage2SystemPrompt(): string {
+ if (cachedStage2Prompt) return cachedStage2Prompt;
+ cachedStage2Prompt = `你是顶级技术面试教研专家与大厂资深架构面试官。当前为【第 2 步：按复习路径生成五题型学习题 + 面试专题题库】。
+请严格依据用户提供的原始「岗位 JD / 面经」以及第 1 步确定的「分阶段复习路径」，为每个复习路径阶段生成 5 道不同题型的学习练习题，并生成一套与学习题完全不重复的高质量面试专题题库。
+
+严格规则：
+1. **学习专题与面试专题严格分离、互不重复**：
+   - \`studyQuizzes[i].quizzes\` 专用于「学习」模块的阶段巩固练习，必须一一对应第 1 步的每个复习路径阶段（\`phaseIndex\` 从 0 开始），紧扣该阶段目标，**每个阶段固定出 5 道不同题型的学习题：单选 (\`single\`)、多选 (\`multi\`)、填空 (\`fill\`)、简答 (\`short\`)、代码 (\`code\`) 各 1 题**（若阶段偏架构/运维，代码题可出核心数据结构、并发控制、SQL、配置脚本或关键伪代码实现）。
+   - \`questions\` 专用于「面试」模块的高频开放式深度问答与追问演练（共 6–10 题），**必须与 \`studyQuizzes\` 中的所有学习题目角度不同、题干绝不重复**。
+2. 面试题 \`questions\` 的 \`answer\` 必须深入、结构化、按点清晰换行（可用 \`\`\` 代码块），包含关键原理、边界条件或生产排障思路（每题 180–450 字，精炼硬核，避免冗长废话以防截断）。
+3. 必须且只能输出**一个合法 JSON 对象**（用 \`\`\`json 和 \`\`\` 包裹，不要在代码块外写任何解释文字），字段严格按下方顺序输出。
+4. 所有输出使用简体中文。
+
+【必须严格遵守的 JSON 结构与字段顺序】
+\`\`\`json
+{
+  "studyQuizzes": [
+    {
+      "phaseIndex": 0,
+      "quizzes": [
+        {
+          "type": "single",
+          "q": "结合该阶段考点的单选题题干",
+          "options": ["选项A", "选项B", "选项C", "选项D"],
+          "answer": 0,
+          "why": ["", "B为什么错", "C为什么错", "D为什么错"],
+          "explain": "一句话讲清核心原理"
+        },
+        {
+          "type": "multi",
+          "q": "结合该阶段考点的多选题题干（至少2个正确项）",
+          "options": ["选项A", "选项B", "选项C", "选项D"],
+          "answers": [0, 2],
+          "why": ["", "B为什么错", "", "D为什么错"],
+          "explain": "简明解析正确组合的原因"
+        },
+        {
+          "type": "fill",
+          "q": "用 ＿＿ 标出空位的填空题题干（填一个精准术语/关键字/数值）",
+          "accepted": ["标准答案", "常见英文或别名"],
+          "explain": "简明解析该概念"
+        },
+        {
+          "type": "short",
+          "q": "紧扣该阶段目标的简答题（与下方 questions 面试题不重复）",
+          "reference": "简洁准确的参考答案（100-220字）",
+          "points": ["得分要点1", "得分要点2", "得分要点3"],
+          "explain": "补充记忆抓手或常见误区"
+        },
+        {
+          "type": "code",
+          "q": "紧扣该阶段技术栈的动手代码题",
+          "code": "可选：题干示例代码或待补全函数签名",
+          "reference": "完整可运行或核心参考代码",
+          "points": ["关键实现逻辑", "边界条件或并发/异常处理"],
+          "explain": "时间/空间复杂度与关键细节"
+        }
+      ]
+    }
   ],
   "questions": [
     {
-      "title": "具体面试题干（直击 JD/面经真实场景）",
+      "title": "具体面试题干（直击 JD/面经真实场景，与上面 studyQuizzes 题目不同）",
       "section": "专题短标签（如：并发调优，16字内）",
       "difficulty": "基础 | 进阶 | 高阶",
       "whyAsked": "对应 JD/面经的哪条要求（30字内）",
-      "answer": "生产级高质量参考答案（分段清晰，可用 \`\`\` 代码块，200-650字）",
+      "answer": "生产级高质量参考答案（分段清晰，可用 \`\`\` 代码块，180-450字）",
       "followups": ["连环追问1", "连环追问2"]
     }
   ]
 }
 \`\`\``;
- return cachedSystemPrompt;
+ return cachedStage2Prompt;
 }
 
-export function buildJdResearchInput(opts: {
+export function getJdResearchSystemPrompt(): string {
+ if (cachedFullPrompt) return cachedFullPrompt;
+ cachedFullPrompt = getJdResearchStage1SystemPrompt();
+ return cachedFullPrompt;
+}
+
+export function buildJdStage1Input(opts: {
  kind: JdInputKind;
  source: string;
 }): string {
  const kindLabel = opts.kind === 'experience' ? '真实面经 / 面试记录' : '目标岗位 JD';
  return [
   `【调研类型】${kindLabel}`,
-  '【决策要求】请完全依据下方内容的真实难度、技术栈广度与考察轮次，自主判断目标级别、建议备考周期、复习阶段数与专题出题数量（6–14 题），dimensions 权重之和尽量为 100。',
+  '【第 1 步任务】请先输出该岗位的「考点画像（dimensions + traps）」与「分阶段复习路径（roadmap，3–4 阶段，含真实站内链接）」，不要在这一步输出题目。',
   '',
   `【原始${opts.kind === 'experience' ? '面经' : '岗位 JD'}内容】`,
   opts.source,
  ].join('\n');
 }
 
+export function buildJdStage2Input(opts: {
+ kind: JdInputKind;
+ source: string;
+ stage1: JdResearchReport;
+}): string {
+ const roadmapText = opts.stage1.roadmap
+  .map((s, idx) => `- phaseIndex=${idx} [${s.phase} · ${s.title}] 目标：${s.goals.join('；')}`)
+  .join('\n');
+ return [
+  `【岗位主题】${opts.stage1.roleTitle}（${[opts.stage1.inferredLevel, opts.stage1.companyStyle].filter(Boolean).join(' · ')}）`,
+  '【已确定的分阶段复习路径】',
+  roadmapText,
+  '',
+  '【第 2 步任务】请先在 studyQuizzes 中为上面每一个 phaseIndex 各生成 5 道学习题（single、multi、fill、short、code 各 1 题），再在 questions 中生成 6–10 道与学习题不重复的高频深度面试题。',
+  '',
+  `【原始${opts.kind === 'experience' ? '面经' : '岗位 JD'}内容】`,
+  opts.source,
+ ].join('\n');
+}
+
+export function buildJdResearchInput(opts: {
+ kind: JdInputKind;
+ source: string;
+}): string {
+ return buildJdStage1Input(opts);
+}
+
 function extractJsonText(raw: string): string | null {
- // Strip ONLY an outer wrapping ```json ... ``` fence (never match non-greedily, because JSON
- // `answer` strings legitimately contain nested ```go / ```sql code blocks!).
  const trimmed = raw
   .trim()
   .replace(/^```(?:json)?\s*\r?\n?/i, '')
@@ -170,7 +285,6 @@ function extractJsonText(raw: string): string | null {
  const start = trimmed.indexOf('{');
  if (start < 0) return null;
 
- // Walk string-aware brace balance to find the exact matching closing `}`.
  let depth = 0;
  let inStr = false;
  let esc = false;
@@ -196,12 +310,9 @@ function extractJsonText(raw: string): string | null {
   }
  }
 
- const end = trimmed.lastIndexOf('}');
- return end > start ? trimmed.slice(start, end + 1) : null;
+ return trimmed.slice(start);
 }
 
-// Repair common LLM JSON glitches inside long strings (raw newlines/tabs, invalid `\d`/`\s` regex escapes,
-// trailing commas) without altering valid JSON escapes.
 function repairJsonText(text: string): string {
  let out = '';
  let inStr = false;
@@ -214,7 +325,6 @@ function repairJsonText(text: string): string {
    continue;
   }
   if (esc) {
-   // Valid JSON escape chars: " \ / b f n r t u
    if ('"\\/bfnrtu'.includes(ch)) {
     out += '\\' + ch;
    } else {
@@ -249,6 +359,60 @@ function repairJsonText(text: string): string {
  return out.replace(/,\s*([}\]])/g, '$1');
 }
 
+// If an LLM output was truncated mid-stream, walk back to the nearest complete object/array boundary
+// and close all open brackets/braces so completed items in arrays are preserved instead of failing altogether.
+export function salvageTruncatedJson(raw: string): unknown {
+ const extracted = extractJsonText(raw);
+ if (!extracted) return null;
+ const repaired = repairJsonText(extracted);
+
+ const cuts: number[] = [repaired.length];
+ let inStr = false;
+ let esc = false;
+ for (let i = 0; i < repaired.length; i++) {
+  const ch = repaired[i];
+  if (inStr) {
+   if (esc) esc = false;
+   else if (ch === '\\') esc = true;
+   else if (ch === '"') inStr = false;
+   continue;
+  }
+  if (ch === '"') inStr = true;
+  else if (ch === '}' || ch === ']') cuts.push(i + 1);
+  else if (ch === ',') cuts.push(i);
+ }
+ cuts.sort((a, b) => b - a);
+
+ for (const cut of cuts.slice(0, 18)) {
+  let s = repaired.slice(0, cut);
+  let strOpen = false;
+  let e = false;
+  const stack: string[] = [];
+  for (let i = 0; i < s.length; i++) {
+   const ch = s[i];
+   if (strOpen) {
+    if (e) e = false;
+    else if (ch === '\\') e = true;
+    else if (ch === '"') strOpen = false;
+    continue;
+   }
+   if (ch === '"') strOpen = true;
+   else if (ch === '{') stack.push('}');
+   else if (ch === '[') stack.push(']');
+   else if (ch === '}' || ch === ']') stack.pop();
+  }
+  if (strOpen) s = (e ? s.slice(0, -1) : s) + '"';
+  s = s.replace(/[,:\s]+$/, '');
+  const candidate = (s + stack.reverse().join('')).replace(/,\s*([}\]])/g, '$1');
+  try {
+   return JSON.parse(candidate);
+  } catch {
+   // Try an earlier clean cut point
+  }
+ }
+ return null;
+}
+
 function safeParseJson(text: string): unknown {
  try {
   return JSON.parse(text);
@@ -256,7 +420,7 @@ function safeParseJson(text: string): unknown {
   try {
    return JSON.parse(repairJsonText(text));
   } catch {
-   return null;
+   return salvageTruncatedJson(text);
   }
  }
 }
@@ -271,7 +435,6 @@ function canonicalizeSiteHref(href: string, validLinks: Map<string, string>): Jd
  if (validLinks.has(clean)) {
   return { label: validLinks.get(clean)!, href: clean };
  }
- // Strip &card=... if agent included card anchor
  const noCard = clean.replace(/&card=\d+$/, '');
  if (validLinks.has(noCard)) {
   return { label: validLinks.get(noCard)!, href: noCard };
@@ -284,7 +447,6 @@ function enrichStepLinks(stepTitle: string, goals: string[], existing: JdSiteLin
  const out = [...existing];
  const query = `${stepTitle} ${goals.join(' ')}`.slice(0, 180);
 
- // If system design / architecture / high concurrency keywords appear, offer Architect Review
  if (out.length < 3 && /(架构|系统设计|高并发|秒杀|分布式|容灾|限流|熔断|模拟面试|压测)/.test(query)) {
   const archHref = '/interview/architect';
   if (!seen.has(archHref)) {
@@ -308,6 +470,89 @@ function enrichStepLinks(stepTitle: string, goals: string[], existing: JdSiteLin
  }
 
  return out.slice(0, 3);
+}
+
+function parseStudyQuiz(raw: unknown, stepIdx: number, qIdx: number): AiQuiz | null {
+ if (!raw || typeof raw !== 'object') return null;
+ const o = raw as Record<string, unknown>;
+ const q = str(o.q, 2000);
+ if (!q) return null;
+ const id = `jdq-${stepIdx + 1}-${qIdx + 1}`;
+ const code = str(o.code, 4000) || undefined;
+ const explain = str(o.explain, 2000) || '见参考答案与得分要点。';
+ const rawType = str(o.type, 16).toLowerCase();
+
+ if (rawType === 'multi') {
+  const options = Array.isArray(o.options)
+   ? o.options.slice(0, 6).map(x => str(x, 400)).filter(Boolean)
+   : [];
+  if (options.length < 2) return null;
+  const answers = Array.isArray(o.answers)
+   ? [...new Set(o.answers.map(Number).filter(n => Number.isInteger(n) && n >= 0 && n < options.length))].sort((a, b) => a - b)
+   : [];
+  if (!answers.length) return null;
+  const why = Array.isArray(o.why) && o.why.length === options.length
+   ? o.why.map(x => str(x, 300))
+   : undefined;
+  return { id, type: 'multi', q, ...(code ? { code } : {}), options, answers, ...(why ? { why } : {}), explain };
+ }
+
+ if (rawType === 'fill') {
+  const accepted = Array.isArray(o.accepted)
+   ? o.accepted.slice(0, 8).map(x => str(x, 120)).filter(Boolean)
+   : typeof o.accepted === 'string' && o.accepted.trim()
+     ? [o.accepted.trim().slice(0, 120)]
+     : [];
+  if (!accepted.length) return null;
+  return { id, type: 'fill', q, ...(code ? { code } : {}), accepted, explain };
+ }
+
+ if (rawType === 'short' || rawType === 'code') {
+  const reference = str(o.reference, 8000);
+  if (!reference) return null;
+  const rawPts = Array.isArray(o.points)
+   ? o.points.slice(0, 6).map(x => str(x, 300)).filter(Boolean)
+   : [];
+  const points = rawPts.length ? rawPts : ['核心原理或关键实现正确', '边界条件与工程细节清晰'];
+  return { id, type: rawType, q, ...(code ? { code } : {}), reference, points, explain };
+ }
+
+ const options = Array.isArray(o.options)
+  ? o.options.slice(0, 6).map(x => str(x, 400)).filter(Boolean)
+  : [];
+ if (options.length < 2) return null;
+ const ans = Number(o.answer);
+ const answer = Number.isInteger(ans) && ans >= 0 && ans < options.length ? ans : 0;
+ const why = Array.isArray(o.why) && o.why.length === options.length
+  ? o.why.map(x => str(x, 300))
+  : undefined;
+ return { id, type: 'single', q, ...(code ? { code } : {}), options, answer, ...(why ? { why } : {}), explain };
+}
+
+function parseQuestionsArray(rawQuestions: unknown): JdQuestionItem[] {
+ if (!Array.isArray(rawQuestions)) return [];
+ return rawQuestions
+  .slice(0, 20)
+  .map((q): JdQuestionItem | null => {
+   if (!q || typeof q !== 'object') return null;
+   const o = q as Record<string, unknown>;
+   const title = str(o.title, MY_LIMITS.title);
+   const answer = str(o.answer, Math.min(12_000, MY_LIMITS.answer));
+   if (!title || !answer) return null;
+   const section = str(o.section, MY_LIMITS.section) || 'JD专题';
+   const diffRaw = str(o.difficulty, 10);
+   const difficulty: '基础' | '进阶' | '高阶' =
+    diffRaw === '基础' || diffRaw === '高阶' ? diffRaw : '进阶';
+   const whyAsked = str(o.whyAsked, 140);
+   const followups = Array.isArray(o.followups)
+    ? o.followups
+       .slice(0, 4)
+       .map(f => str(f, 160))
+       .filter(Boolean)
+    : [];
+   return { title, section, difficulty, whyAsked, answer, followups };
+  })
+  .filter((x): x is JdQuestionItem => x !== null);
 }
 
 export function parseAndEnrichJdReport(rawText: string): JdResearchReport | null {
@@ -382,35 +627,18 @@ export function parseAndEnrichJdReport(rawText: string): JdResearchReport | null
        }
       }
       const siteLinks = enrichStepLinks(title, goals, rawLinks, validLinks);
-      return { phase, title, goals, siteLinks };
+      const quizzes: AiQuiz[] = Array.isArray(o.quizzes)
+       ? o.quizzes
+          .slice(0, 8)
+          .map((qz, qi) => parseStudyQuiz(qz, idx, qi))
+          .filter((x): x is AiQuiz => x !== null)
+       : [];
+      return { phase, title, goals, siteLinks, ...(quizzes.length ? { quizzes } : {}) };
      })
      .filter((x): x is JdRoadmapStep => x !== null)
   : [];
 
- const questions: JdQuestionItem[] = Array.isArray(obj.questions)
-  ? obj.questions
-     .slice(0, 20)
-     .map((q): JdQuestionItem | null => {
-      if (!q || typeof q !== 'object') return null;
-      const o = q as Record<string, unknown>;
-      const title = str(o.title, MY_LIMITS.title);
-      const answer = str(o.answer, Math.min(12_000, MY_LIMITS.answer));
-      if (!title || !answer) return null;
-      const section = str(o.section, MY_LIMITS.section) || 'JD专题';
-      const diffRaw = str(o.difficulty, 10);
-      const difficulty: '基础' | '进阶' | '高阶' =
-       diffRaw === '基础' || diffRaw === '高阶' ? diffRaw : '进阶';
-      const whyAsked = str(o.whyAsked, 140);
-      const followups = Array.isArray(o.followups)
-       ? o.followups
-          .slice(0, 4)
-          .map(f => str(f, 160))
-          .filter(Boolean)
-       : [];
-      return { title, section, difficulty, whyAsked, answer, followups };
-     })
-     .filter((x): x is JdQuestionItem => x !== null)
-  : [];
+ const questions = parseQuestionsArray(obj.questions);
 
  if (!dimensions.length && !roadmap.length && !questions.length) return null;
 
@@ -425,5 +653,125 @@ export function parseAndEnrichJdReport(rawText: string): JdResearchReport | null
   traps,
   roadmap,
   questions,
+ };
+}
+
+// Merges Stage 1 (Profile + Roadmap) and Stage 2 (Study Quizzes + Interview Questions) outputs,
+// with truncation salvaging so any completed quizzes or interview questions are preserved.
+export function mergeStage1AndStage2Report(stage1: JdResearchReport, stage2RawText: string): JdResearchReport {
+ const jsonText = extractJsonText(stage2RawText);
+ const parsed = jsonText ? safeParseJson(jsonText) : null;
+ if (!parsed || typeof parsed !== 'object') return stage1;
+ const obj = parsed as Record<string, unknown>;
+
+ const quizzesByPhase = new Map<number, AiQuiz[]>();
+ if (Array.isArray(obj.studyQuizzes)) {
+  obj.studyQuizzes.forEach((group, fallbackIdx) => {
+   if (!group || typeof group !== 'object') return;
+   const go = group as Record<string, unknown>;
+   const rawIdx = Number(go.phaseIndex);
+   const pIdx = Number.isInteger(rawIdx) && rawIdx >= 0 && rawIdx < stage1.roadmap.length ? rawIdx : fallbackIdx;
+   if (pIdx < 0 || pIdx >= stage1.roadmap.length) return;
+   const rawList = Array.isArray(go.quizzes) ? go.quizzes : [];
+   const quizzes = rawList
+    .slice(0, 8)
+    .map((qz, qi) => parseStudyQuiz(qz, pIdx, qi))
+    .filter((x): x is AiQuiz => x !== null);
+   if (quizzes.length) quizzesByPhase.set(pIdx, quizzes);
+  });
+ } else if (Array.isArray(obj.roadmap)) {
+  obj.roadmap.forEach((step, pIdx) => {
+   if (!step || typeof step !== 'object' || pIdx >= stage1.roadmap.length) return;
+   const so = step as Record<string, unknown>;
+   const rawList = Array.isArray(so.quizzes) ? so.quizzes : [];
+   const quizzes = rawList
+    .slice(0, 8)
+    .map((qz, qi) => parseStudyQuiz(qz, pIdx, qi))
+    .filter((x): x is AiQuiz => x !== null);
+   if (quizzes.length) quizzesByPhase.set(pIdx, quizzes);
+  });
+ }
+
+ const mergedRoadmap: JdRoadmapStep[] = stage1.roadmap.map((step, idx) => {
+  const qz = quizzesByPhase.get(idx) ?? step.quizzes;
+  return qz && qz.length ? { ...step, quizzes: qz } : step;
+ });
+
+ const questions = parseQuestionsArray(obj.questions);
+ return {
+  ...stage1,
+  roadmap: mergedRoadmap,
+  questions: questions.length ? questions : stage1.questions,
+ };
+}
+
+function unescapePreview(s: string): string {
+ return s.replace(/\\"/g, '"').replace(/\\n/g, ' ').replace(/\\\\/g, '\\').trim();
+}
+
+// Inspects live text during Stage 1 or Stage 2 polling and produces a 4-stage visual progress snapshot:
+//   profile (考点画像) -> roadmap (复习路径) -> quizzes (学习题) -> questions (面试题)
+export function inspectJdStreamProgress(
+ stage: 1 | 2,
+ buf: string,
+ partialReport?: JdResearchReport | null,
+ stage1Cached?: boolean,
+): JdLiveProgress {
+ const pickField = (name: string) => {
+  const m = buf.match(new RegExp(`"${name}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`));
+  return m?.[1] ? unescapePreview(m[1]) : '';
+ };
+
+ const roleTitle = partialReport?.roleTitle || pickField('roleTitle') || undefined;
+ const inferredLevel = partialReport?.inferredLevel || pickField('inferredLevel') || undefined;
+ const prepDays = partialReport?.prepDays || pickField('prepDays') || undefined;
+ const companyStyle = partialReport?.companyStyle || pickField('companyStyle') || undefined;
+
+ const dimCount = partialReport?.dimensions?.length
+  ? partialReport.dimensions.length
+  : (buf.match(/"priority"\s*:/g) || []).length;
+
+ const stageCount = partialReport?.roadmap?.length
+  ? partialReport.roadmap.length
+  : (buf.match(/"phase"\s*:/g) || []).length;
+
+ const qIdx = buf.indexOf('"questions"');
+ const quizSearchSlice = qIdx >= 0 ? buf.slice(0, qIdx) : buf;
+ const streamedQuizzes = (quizSearchSlice.match(/"type"\s*:\s*"(?:single|multi|fill|short|code)"/g) || []).length;
+ const prevQuizzes = (partialReport?.roadmap ?? []).reduce((n, s) => n + (s.quizzes?.length ?? 0), 0);
+ const quizCount = Math.max(prevQuizzes, streamedQuizzes);
+
+ const qTitles: string[] = [];
+ if (qIdx >= 0) {
+  const qPart = buf.slice(qIdx);
+  const re = /"title"\s*:\s*"((?:\\.|[^"\\])*)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(qPart)) !== null) {
+   const t = unescapePreview(m[1]);
+   if (t) qTitles.push(t);
+  }
+ }
+ const questionCount = Math.max(partialReport?.questions?.length ?? 0, qTitles.length);
+
+ let activeKey: JdStageKey = 'profile';
+ if (stage === 1) {
+  activeKey = buf.includes('"roadmap"') || stageCount > 0 ? 'roadmap' : 'profile';
+ } else {
+  activeKey = qIdx >= 0 || questionCount > 0 ? 'questions' : 'quizzes';
+ }
+
+ return {
+  stage,
+  activeKey,
+  roleTitle,
+  inferredLevel,
+  prepDays,
+  companyStyle,
+  dimCount,
+  stageCount,
+  quizCount,
+  questionCount,
+  qTitles,
+  stage1Cached,
  };
 }

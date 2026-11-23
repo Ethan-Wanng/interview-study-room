@@ -1,14 +1,16 @@
 'use client';
 import '../ai/ai.css';
-import {useState,useSyncExternalStore} from 'react';
+import {useEffect,useState,useSyncExternalStore} from 'react';
+import {useRouter} from 'next/navigation';
 import {ArrowRight,Plus} from 'lucide-react';
 import {Progress} from '@/components/ui/progress';
 import {useI18n} from '../components/i18n';
 import SiteHeader from '../components/site-header';
 import SpaceTabs from '../components/space-tabs';
 import {learnSpaces,learnSubjects} from './subjects';
+import {subscribeJdTaskDone} from '@/lib/jd-bg-tasks';
 
-export type JdTopicSummary={id:string;title:string;subtitle:string;total:number};
+export type JdTopicSummary={id:string;title:string;subtitle:string;total:number;running?:boolean};
 
 const subscribe=(notify:()=>void)=>{window.addEventListener('storage',notify);return()=>window.removeEventListener('storage',notify)};
 const EXAM_ID=/-(?:train|stage|final|exam)(?:-\d+|\d+)?$/i;
@@ -26,6 +28,8 @@ const readJdPassed=(username:string):string[]=>{
 // 「学习」首页：按分类横向展开（技术 / 语言 / 项目 / 专题），点击分类卡片在下方展开对应学科或 JD 专题。
 export default function LearnClient({username,jdTopics=[]}:{username:string;jdTopics?:JdTopicSummary[]}){
  const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
+ const router=useRouter();
+ useEffect(()=>subscribeJdTaskDone(()=>{router.refresh()}),[router]);
  const progress=useSyncExternalStore(
   subscribe,
   ()=>[...learnSubjects.map(s=>passedCount(s.storageKey+(username||'guest'),s.levels)),readJdPassed(username).join('|')].join(','),
@@ -37,9 +41,11 @@ export default function LearnClient({username,jdTopics=[]}:{username:string;jdTo
  const [activeSpace,setActiveSpace]=useState<string|null>(null);
 
  const jdCounts=jdTopics.map(t=>{
+  if(t.running||!t.total)return 0;
+  const prefix=`${t.id}:`;
   let done=0;
-  for(let i=0;i<t.total;i++)if(jdPassedSet.has(`${t.id}:${i}`))done++;
-  return done;
+  for(const k of jdPassedSet)if(k.startsWith(prefix))done++;
+  return Math.min(t.total,done);
  });
  const jdDoneSum=jdCounts.reduce((a,b)=>a+b,0);
  const jdTotalSum=jdTopics.reduce((a,b)=>a+b.total,0);
@@ -96,14 +102,14 @@ export default function LearnClient({username,jdTopics=[]}:{username:string;jdTo
     {current&&current.id==='special'&&<div className="learn-subjects">
      {jdTopics.map((t,idx)=>{
       const done=jdCounts[idx]??0;
-      return <a key={t.id} href={`/learn/jd-special?id=${encodeURIComponent(t.id)}`} className="ai-card learn-subject">
+      return <a key={t.id} href={t.running?`/interview/jd-research?id=${encodeURIComponent(t.id)}`:`/learn/jd-special?id=${encodeURIComponent(t.id)}`} className="ai-card learn-subject">
        <div className="learn-subject-head">
         <span className="learn-icon">🧭</span>
         <strong>{t.title}</strong>
        </div>
        {t.subtitle&&<span className="muted">{t.subtitle}</span>}
-       <Progress value={t.total?done/t.total*100:0}/>
-       <span className="learn-foot"><span>{L(`已掌握 ${done}/${t.total} 题`,`${done}/${t.total}`)}</span><b><span>{done?L('继续学习','Continue'):L('开始学习','Start')}</span><ArrowRight size={15}/></b></span>
+       {!t.running&&<Progress value={t.total?done/t.total*100:0}/>}
+       <span className="learn-foot"><span>{t.running?L('后台生成中…','Generating…'):L(`已掌握 ${done}/${t.total} 题`,`${done}/${t.total}`)}</span><b><span>{t.running?L('查看进度','Progress'):done?L('继续学习','Continue'):L('开始学习','Start')}</span><ArrowRight size={15}/></b></span>
       </a>;
      })}
      <a href="/interview/jd-research?new=1" className="ai-card learn-subject" style={{borderStyle:'dashed'}}>

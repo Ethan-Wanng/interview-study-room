@@ -50,7 +50,7 @@ export async function writePromptCache(
  const now = Date.now();
  const expiresAt = now + ttlMs;
  const json = JSON.stringify(payload);
- if (json.length > 180_000) return;
+ if (json.length > 350_000) return;
  try {
   const db = studyDb();
   await db
@@ -84,7 +84,7 @@ export async function resolveGeminiContextCache(
  postCache: (body: string) => Promise<Response>,
 ): Promise<string | null> {
  if (sys.length < 4500) return null;
- if (!/^gemini-2\.5-/i.test(model)) return null;
+ if (!/^gemini-(?:3\.[68]|4)-/i.test(model)) return null;
  const key = 'gctx:' + (await sha256Hex([model, sys]));
  const hit = await readPromptCache<{ name: string }>(key);
  if (hit) return hit.payload.name || null;

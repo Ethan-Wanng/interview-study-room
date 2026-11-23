@@ -178,14 +178,12 @@ func CheckGeminiSupport(ctx context.Context, rt http.RoundTripper, apiKey string
 		return false, fmt.Sprintf("unexpected status %d", resp.StatusCode)
 	}
 
-	// Probe generateContent on stable gemini-2.5-flash first (fast ~500ms and strictly enforces regional geo-blocking),
-	// falling back to 3.8 Flash / 4 Hydrogen only on 503 high demand.
+	// Probe generateContent on gemini-3.6-flash first, falling back to 3.8 Flash / 4 Hydrogen only on 503 high demand.
 	payloads := [][]byte{
-		[]byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"generationConfig":{"maxOutputTokens":1,"thinkingConfig":{"thinkingBudget":0}}}`),
 		[]byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"generationConfig":{"maxOutputTokens":1}}`),
 	}
 	hc.Timeout = 8 * time.Second
-	for _, model := range []string{"gemini-2.5-flash", "gemini-3.8-flash", "gemini-4-hydrogen"} {
+	for _, model := range []string{"gemini-3.6-flash", "gemini-3.8-flash", "gemini-4-hydrogen"} {
 		for _, payload := range payloads {
 			req, err := http.NewRequestWithContext(
 				ctx,

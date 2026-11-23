@@ -154,10 +154,31 @@ export default function JourneyClient({username,subject,interviews}:{username:st
  // 从「训练」页带 ?exam=ID 进来时，直接打开对应的训练或考试。
  useEffect(()=>{const id=new URLSearchParams(window.location.search).get('exam');if(!id||!subject.exams.some(e=>e.id===id))return;const t=setTimeout(()=>setViewState({kind:'exam',id}));return()=>clearTimeout(t)},[subject]);
  // 从「面试」题目上的“对应关卡”链接（?level=ID）进来时，直接打开这一关的学习卡片（只看卡片，不受解锁限制）。
- // 带 &card=N（从 1 开始）时直接翻到第 N 张卡片；?quiz=题目ID 直接打开这道题的单题练习（全局搜索和 AI 老师给的链接都是这两种）。
- useEffect(()=>{const p=new URLSearchParams(window.location.search),id=p.get('level'),li=id?subject.levels.findIndex(l=>l.id===id):-1,card=Number(p.get('card'))||0,quiz=p.get('quiz');
+ // 带 &card=N（从 1 开始）时直接翻到第 N 张卡片；带 ?resume=SLOT（从笔记/操场返回）时恢复完整练习进度；
+ // ?quiz=题目ID 若有包含该题的当前练习进度优先恢复完整进度，否则打开单题练习。
+ useEffect(()=>{const p=new URLSearchParams(window.location.search),id=p.get('level'),li=id?subject.levels.findIndex(l=>l.id===id):-1,card=Number(p.get('card'))||0,quiz=p.get('quiz'),resume=p.get('resume'),viewParam=p.get('view');
+  if(viewParam==='recite'){const t=setTimeout(()=>setView({kind:'recite'}));return()=>clearTimeout(t)}
+  if(resume){
+   const found=parseQuizMap(readRawQuizStore(quizKey))[resume];
+   if(found){
+    const targetIdx=quiz?found.items.findIndex(x=>x.id===quiz):-1;
+    const restored=targetIdx>=0?{...found,index:targetIdx}:found;
+    const t=setTimeout(()=>resumeQuiz(restored));
+    return()=>clearTimeout(t);
+   }
+  }
   if(li>=0){const t=setTimeout(()=>setView({kind:'learn',level:li,card:card>0?card-1:undefined}));return()=>clearTimeout(t)}
-  const hit=quiz?byId.get(quiz):undefined;if(hit){const t=setTimeout(()=>startList('random',[hit]));return()=>clearTimeout(t)}},[subject]); // eslint-disable-line react-hooks/exhaustive-deps
+  if(quiz){
+   const sessions=Object.values(parseQuizMap(readRawQuizStore(quizKey))).sort((a,b)=>b.updatedAt-a.updatedAt);
+   const matched=sessions.find(s=>s.items[s.index]?.id===quiz)||sessions.find(s=>s.items.length>1&&s.items.some(x=>x.id===quiz));
+   if(matched){
+    const targetIdx=matched.items.findIndex(x=>x.id===quiz);
+    const restored=targetIdx>=0?{...matched,index:targetIdx}:matched;
+    const t=setTimeout(()=>resumeQuiz(restored));
+    return()=>clearTimeout(t);
+   }
+   const hit=byId.get(quiz);if(hit){const t=setTimeout(()=>startList('random',[hit]));return()=>clearTimeout(t)}
+  }},[subject]); // eslint-disable-line react-hooks/exhaustive-deps
  function answer(r:Result){if(view.kind!=='quiz'||view.results[view.index])return;const it=view.items[view.index];delete draftsRef.current[it.id];clearTimeout(draftTimerRef.current);const results=[...view.results];results[view.index]=r;const nextView:QuizView={...view,results,drafts:{...draftsRef.current}};replaceView(nextView);persistQuiz(nextView,draftsRef.current)}
  function stepQuiz(v:QuizView,nextIndex:number){clearTimeout(draftTimerRef.current);const nextView:QuizView={...v,index:nextIndex,drafts:{...draftsRef.current}};replaceView(nextView);persistQuiz(nextView,draftsRef.current)}
  function updateDraft(v:QuizView,id:string,val:string){
@@ -186,7 +207,7 @@ export default function JourneyClient({username,subject,interviews}:{username:st
  const levelIndex=(id:string)=>levels.findIndex(l=>l.id===id);
  const card=(a:typeof animations[number])=><button key={a.id} className="an-card" onClick={()=>setView({kind:'video',id:a.id})}><span className="an-icon">{a.icon}</span><strong>{a.title}</strong><em>{L(`第 ${levelIndex(a.level)+1} 关 · ${levels[levelIndex(a.level)].title} · ${a.scenes.length} 个分镜`,`Level ${levelIndex(a.level)+1} · ${a.scenes.length} scenes`)}</em></button>;
  if(view.kind==='mistakes'){body=<>{back}<MistakeBookView items={mistakes.map(mId=>byId.get(mId)!)} sourceName={sourceName} onPractice={list=>startList('mistakes',list)} onRemove={mId=>persist({...saved,mistakes:saved.mistakes.filter(x=>x!==mId)})} onClearAll={()=>{if(confirm(L('确定清空错题本中的全部题目吗？','Clear all questions from the mistake book?')))persist({...saved,mistakes:[]})}} onBack={()=>setView({kind:'map'})}/></>}
- else if(view.kind==='recite'){body=<>{back}<ReciteView items={reciteItems} storageKey={key+':recite'} sourceName={sourceName} onOpenSource={e=>openSource(e,{kind:'recite'})}/></>}
+ else if(view.kind==='recite'){body=<>{back}<ReciteView items={reciteItems} storageKey={key+':recite'} sourceName={sourceName} backHref={`/learn/${subject.id}?view=recite`} onOpenSource={e=>openSource(e,{kind:'recite'})}/></>}
  else if(view.kind==='videos'){body=<>{back}<div className="ai-title"><span className="eyebrow">ANIMATION CLASS</span><h1>{L('动画课堂','Animation class')}</h1></div>
   <h2 className="an-group">{L('入门动画','Basics')}</h2><div className="an-list">{animations.filter(a=>a.kind==='basic').map(card)}</div>
   <h2 className="an-group">{L('难点动画','Hard concepts')}</h2><div className="an-list">{animations.filter(a=>a.kind==='advanced').map(card)}</div></>}
@@ -217,9 +238,12 @@ export default function JourneyClient({username,subject,interviews}:{username:st
  else if(view.kind==='paper'){const e=examById(view.id)!;
   body=<>{back}<PaperExam examId={e.id} title={e.title} passRate={e.passRate} storageKey={key+':'} pool={paperPool(e)} onScored={score=>{const ratio=score/PAPER_TOTAL,next:Saved={...saved,best:{...saved.best,[e.id]:Math.max(saved.best[e.id]??0,ratio)},passed:ratio<e.passRate?saved.passed:saved.best[e.id]===undefined&&ratio>=CARRY_RATE?passExam(saved.passed,e):[...new Set([...saved.passed,e.id])]};persist(next)}}/></>}
  else if(view.kind==='quiz'){const it=view.items[view.index],done=view.results[view.index]!==null,last=view.index===view.items.length-1;
+  const slot=quizSlotOf(view);
+  const quizNoteBack=`/learn/${subject.id}?resume=${encodeURIComponent(slot)}&quiz=${encodeURIComponent(it.id)}${fromPractice?'&from=practice':''}`;
+  const saveBeforeLeave=()=>{clearTimeout(draftTimerRef.current);persistQuiz(view,draftsRef.current,true)};
   const quizBack=view.mode==='mistakes'?<button className="ai-back" onClick={()=>{clearTimeout(draftTimerRef.current);persistQuiz(view,draftsRef.current);setView({kind:'mistakes'})}}><ArrowLeft size={16}/>{L("返回错题本","Back to mistake book")}</button>:back;
   body=<>{quizBack}<div className="ai-quiz-head"><span className="eyebrow">{view.mode==='exam'?(examById(view.exam)?.title??''):view.mode==='level'?L(`第 ${view.level!+1} 关 · 答题`,`Level ${view.level!+1} · Quiz`):view.mode==='random'?L("随机练习","Random practice"):L("错题本","Mistake book")}</span><div className="ai-quiz-head-right"><button type="button" className={'ai-quiz-save'+(justSaved?' saved':'')} onClick={()=>saveQuizNow(view)}>{justSaved?<><Check size={14}/>{L('已保存','Saved')}</>:<><Save size={14}/>{L('保存记录','Save')}</>}</button><span>{view.index+1} / {view.items.length}</span></div></div><Progress value={(view.index+(done?1:0))/view.items.length*100}/>
-  <QuestionCard key={it.id+'@'+view.index} item={it} label={view.mode!=='level'&&view.mode!=='exam'?(levels.find(l=>l.id===it.level)?.title??examById(it.level)?.title):undefined} result={view.results[view.index]} draft={draftsRef.current[it.id]??view.drafts?.[it.id]} onDraftChange={val=>updateDraft(view,it.id,val)} last={last} onAnswer={answer} onPrev={view.index>0?()=>stepQuiz(view,view.index-1):undefined} onNext={()=>last?finish(view):stepQuiz(view,view.index+1)} playground={defaultPlayLang?{subjectId:subject.id,subjectName:L(...subject.name),levelTitle:levels.find(l=>l.id===it.level)?.title??examById(it.level)?.title,hintLang:defaultPlayLang}:undefined}/></>}
+  <QuestionCard key={it.id+'@'+view.index} item={it} label={view.mode!=='level'&&view.mode!=='exam'?(levels.find(l=>l.id===it.level)?.title??examById(it.level)?.title):undefined} result={view.results[view.index]} draft={draftsRef.current[it.id]??view.drafts?.[it.id]} onDraftChange={val=>updateDraft(view,it.id,val)} last={last} onAnswer={answer} onPrev={view.index>0?()=>stepQuiz(view,view.index-1):undefined} onNext={()=>last?finish(view):stepQuiz(view,view.index+1)} noteBackHref={quizNoteBack} onBeforeNoteLeave={saveBeforeLeave} playground={defaultPlayLang?{subjectId:subject.id,subjectName:L(...subject.name),levelTitle:levels.find(l=>l.id===it.level)?.title??examById(it.level)?.title,hintLang:defaultPlayLang,backHref:quizNoteBack}:undefined}/></>}
  else if(view.kind==='result'){const right=view.results.filter(r=>r.correct).length,score=right/view.items.length,ex=view.mode==='exam'?examById(view.exam):undefined,ok=score>=(ex?.passRate??passRate),lv=view.level;
   body=<>{back}<section className="ai-card ai-result"><Trophy size={40}/><h1>{ex?(ok?L(`${ex.title} 通过！`,'Passed!'):L("还差一点，复习后再挑战","Almost — review and try again")):view.mode==='level'?(ok?L("通关成功！","Level passed!"):L("差一点，再来一次","Almost — try again")):L("练习完成","Practice complete")}</h1><p className="ai-score">{right} / {view.items.length}<small>{Math.round(score*100)}%</small></p>
   {view.mode==='level'&&<p>{ok?(lv!==undefined&&lv<levels.length-1?L(`已解锁第 ${lv+2} 关「${levels[lv+1].title}」。`,`Level ${lv+2} is now unlocked.`):L(`全部 ${levels.length} 关已通关，你已经是大神了。`,`All ${levels.length} levels passed — you made it to the top.`)):L(`需要答对约 ${Math.round(passRate*100)}% 才能通关，可以先回顾学习内容。`,`You need about ${Math.round(passRate*100)}% to pass. Review the lesson first if needed.`)}</p>}

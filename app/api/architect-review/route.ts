@@ -61,6 +61,7 @@ export async function POST(req: Request) {
   assertSameOrigin(req);
   const user = await sessionUser(req.headers);
   if (!user) throw new AuthError('请先登录后再使用高阶架构评审。', 401);
+  if (user.is_guest) throw new AuthError('游客不支持调用 Gemini 模型，请登录后使用高阶架构评审。', 403);
   await rateLimit('architect:' + user.id, 30);
 
   const raw = await req.text();

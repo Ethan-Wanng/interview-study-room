@@ -58,7 +58,7 @@ function PaperExamInner({examId,title,passRate,storageKey,onScored,pool=NO_POOL}
  const paper=useMemo(()=>basePaper&&basePaper!=='error'?paperFor(basePaper,pool,record?.qids):basePaper,[basePaper,pool,record?.qids]);
  const layout=useMemo(()=>paper&&paper!=='error'?paperLayout(paper):[],[paper]);
  const [wrongOnly,setWrongOnly]=useState(false);
- const [gradeModel,setGradeModel]=useState(''),[liveThink,setLiveThink]=useState<GradeThinkState|null>(null);
+ const [gradeModel,setGradeModel]=useState(''),[gradeRemaining,setGradeRemaining]=useState<number|null>(null),[liveThink,setLiveThink]=useState<GradeThinkState|null>(null);
  // 重新打开时已经超过时限、却还没交卷的答卷（比如页面出错中断了）：不自动交卷，让人接着答完再手动交卷。
  const [resumedLate,setResumedLate]=useState<number|null>(null);
  const answering=!!record&&!record.submittedAt,overtime=!!record&&resumedLate===record.startedAt,deadline=record?record.startedAt+PAPER_MINUTES*60000+(record.pausedMs??0):0,paused=answering&&!!record?.pausedAt;
@@ -81,7 +81,7 @@ function PaperExamInner({examId,title,passRate,storageKey,onScored,pool=NO_POOL}
    setRecord({...done,written:nextWritten,gradeNote:hasPending?L('已停止 AI 评分，可切换模型或点击「重新请求 AI 评分」，也可以在下方逐题对照得分点自评。','AI grading stopped. Switch models, retry AI grading, or self-check below.'):done.gradeNote});
    return;
   }
-  if(res.ok&&res.model)setGradeModel(res.model);
+  if(res.ok){if(res.model)setGradeModel(res.model);setGradeRemaining(res.remaining)}
   const next:PaperRecord=res.ok?{...done,gradeNote:undefined,gradeThink:res.think,gradeThinkSecs:res.thinkSecs,written:{...done.written,...blank,...Object.fromEntries(res.results.map(g=>[g.id,{kind:'ai' as const,result:qMap[g.id]?fixFillGrade(qMap[g.id],done.answers[g.id],g):g}]))}}:{...done,written:{...done.written,...blank},gradeNote:res.message};
   setRecord(next);if(res.ok)scored.current(paperScore(paper,next).total)}
  // 已有交卷记录但还有未评分的题（例如此前提交的试卷未对填空题做 AI 评分），打开试卷时自动补评。
@@ -146,7 +146,7 @@ function PaperExamInner({examId,title,passRate,storageKey,onScored,pool=NO_POOL}
    <table><tbody>{score.sections.map(s=><tr key={s.type}><th>{L(s.title,s.titleEn)}</th><td>{s.got} / {s.max}</td></tr>)}</tbody></table>
    <p className="muted">{L(`交卷时间：${new Date(record.submittedAt!).toLocaleString('zh-CN')}，用时 ${clock(record.submittedAt!-record.startedAt)}`,`Submitted ${new Date(record.submittedAt!).toLocaleString()}`)}</p>
    {record.gradeNote&&<p className="ai-grade-error">{record.gradeNote}</p>}
-   {(grading?liveThink?.text:record.gradeThink)&&<ThinkBox text={(grading?liveThink?.text:record.gradeThink)??''} live={grading&&liveThink?.live} secs={grading?liveThink?.secs:record.gradeThinkSecs} L={L}/>}{grading?<div className="ai-result-actions"><GradeModelPicker disabled/><button type="button" className="button ai-grade-stop" onClick={stopGrading}><Square size={14} fill="currentColor"/>{L('停止评分','Stop grading')}</button></div>:<div className="ai-result-actions"><GradeModelPicker disabled={grading}/><button className="button secondary paper-regrade" onClick={()=>void grade(record,false)}><RotateCcw size={16}/>{pending>0?L('重新请求 AI 评分','Retry AI grading'):L('重新 AI 评分','Re-grade with AI')}</button></div>}{gradeModel&&<small className="ai-grade-model-tag">{gradeModelBadge(gradeModel,locale==='en'?'en':'zh')}</small>}</section>
+   {(grading?liveThink?.text:record.gradeThink)&&<ThinkBox text={(grading?liveThink?.text:record.gradeThink)??''} live={grading&&liveThink?.live} secs={grading?liveThink?.secs:record.gradeThinkSecs} L={L}/>}{grading?<div className="ai-result-actions"><GradeModelPicker disabled/><button type="button" className="button ai-grade-stop" onClick={stopGrading}><Square size={14} fill="currentColor"/>{L('停止评分','Stop grading')}</button></div>:<div className="ai-result-actions"><GradeModelPicker disabled={grading}/><button className="button secondary paper-regrade" onClick={()=>void grade(record,false)}><RotateCcw size={16}/>{pending>0?L('重新请求 AI 评分','Retry AI grading'):L('重新 AI 评分','Re-grade with AI')}</button></div>}{gradeModel&&<small className="ai-grade-model-tag">{gradeModelBadge(gradeModel,locale==='en'?'en':'zh')}</small>}{gradeRemaining!==null&&<small className="muted" style={{marginLeft:8}}>{L(`今日还剩 ${gradeRemaining} 次`,`${gradeRemaining} left today`)}</small>}</section>
   <div className="paper-filter" role="group" aria-label={L('显示哪些题','Which questions')}><button type="button" className={!wrongOnly?'on':''} onClick={()=>setWrongOnly(false)}>{L('全部题目','All')}</button><button type="button" className={wrongOnly?'on':''} onClick={()=>setWrongOnly(true)}>{L(`只看错题（${score.rows.filter(x=>x.got<x.max).length}）`,`Wrong only (${score.rows.filter(x=>x.got<x.max).length})`)}</button></div>
   {paperSections.map((s,si)=>{const all=score.rows.map((x,i)=>({...x,no:i+1})).filter(x=>x.section===si),rows=wrongOnly?all.filter(x=>x.got<x.max):all;
    if(!rows.length)return null; // 只看错题时，这个题型全对就不显示

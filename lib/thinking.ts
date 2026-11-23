@@ -67,17 +67,17 @@ export const THINKING_META:Record<ConcreteThinkingLevel,ThinkingMeta>={
 export type ModelThinkingSpec={
  levels:ConcreteThinkingLevel[];
  defaultLevel:ConcreteThinkingLevel;
+ locked?:boolean;
 };
 
 const SPEC_DS_OFF:ModelThinkingSpec={levels:['off','low','high','max'],defaultLevel:'off'};
 const SPEC_DS_FLASH_THINK:ModelThinkingSpec={levels:['off','low','high','max'],defaultLevel:'low'};
 const SPEC_DS_PRO:ModelThinkingSpec={levels:['off','low','high','max'],defaultLevel:'high'};
-const SPEC_GM_HYDROGEN:ModelThinkingSpec={levels:['low','medium','high','xhigh'],defaultLevel:'medium'};
+const SPEC_GM_HYDROGEN:ModelThinkingSpec={levels:['medium'],defaultLevel:'medium',locked:true};
 const SPEC_GM_38_FLASH:ModelThinkingSpec={levels:['low','medium','high'],defaultLevel:'medium'};
-const SPEC_GM_25_FLASH:ModelThinkingSpec={levels:['off','low','medium','high'],defaultLevel:'medium'};
 const SPEC_GM_25_PRO:ModelThinkingSpec={levels:['low','medium','high'],defaultLevel:'high'};
 const SPEC_OPENAI_REASONING:ModelThinkingSpec={levels:['low','medium','high'],defaultLevel:'medium'};
-const SPEC_OFF_ONLY:ModelThinkingSpec={levels:['off'],defaultLevel:'off'};
+const SPEC_OFF_ONLY:ModelThinkingSpec={levels:['off'],defaultLevel:'off',locked:true};
 const SPEC_CLAUDE:ModelThinkingSpec={levels:['off','low','medium','high'],defaultLevel:'off'};
 const SPEC_QWEN:ModelThinkingSpec={levels:['off','low','medium','high'],defaultLevel:'off'};
 
@@ -91,7 +91,6 @@ export function getCustomThinkingSpec(provider:string,model?:string):ModelThinki
  if(provider==='gemini'){
   if(!m||m.includes('hydrogen'))return SPEC_GM_HYDROGEN;
   if(m.includes('2.5-pro'))return SPEC_GM_25_PRO;
-  if(m.includes('2.5'))return SPEC_GM_25_FLASH;
   if(m.includes('3.8')||m.includes('3.6'))return SPEC_GM_38_FLASH;
   return SPEC_GM_HYDROGEN;
  }
@@ -117,12 +116,12 @@ export function getTutorThinkingSpec(siteModel:string,custom?:{provider:string;m
 }
 
 // AI 评分模型与自定义配置对应的思考规格与作用域键。
-export function getGradeThinkingSpec(gradeModel:string,custom?:{provider:string;model?:string}|null):{scopeKey:string;spec:ModelThinkingSpec}{
+export function getGradeThinkingSpec(gradeModel:string,custom?:{provider:string;model?:string}|null,isGuest=false):{scopeKey:string;spec:ModelThinkingSpec}{
  if((gradeModel==='auto'||gradeModel==='custom')&&custom){
   const m=custom.model?.trim()||custom.provider;
   return {scopeKey:`custom:${custom.provider}/${m}`,spec:getCustomThinkingSpec(custom.provider,custom.model)};
  }
- if(gradeModel==='deepseek')return {scopeKey:'grade:deepseek-flash',spec:SPEC_DS_FLASH_THINK};
+ if(gradeModel==='deepseek'||isGuest)return {scopeKey:'grade:deepseek-flash',spec:SPEC_DS_FLASH_THINK};
  return {scopeKey:'model:gemini-4-hydrogen',spec:SPEC_GM_HYDROGEN};
 }
 

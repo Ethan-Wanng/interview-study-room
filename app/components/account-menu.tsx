@@ -122,14 +122,16 @@ function GeminiProxyRow({L}:{L:(zh:string,en:string)=>string}){
   </div>
  );
 }
-function NoteModelRow({L}:{L:(zh:string,en:string)=>string}){
+function NoteModelRow({L,isGuest}:{L:(zh:string,en:string)=>string;isGuest:boolean}){
  const [noteModel,setNoteModel]=useStoredNoteModel();
  const {status}=useAiConfigStatus();
- const customOn=Boolean(!status?.isGuest&&status?.settings?.enabled&&status?.settings?.hasKey&&status?.settings?.allowTutor);
+ const guest=isGuest||Boolean(status?.isGuest);
+ const customOn=Boolean(!guest&&status?.settings?.enabled&&status?.settings?.hasKey&&status?.settings?.allowTutor);
  const customLabel=customOn&&status?.settings
   ?`${providerMeta(status.settings.provider).badge} · ${status.settings.model||providerMeta(status.settings.provider).defaultModel}`
   :'';
- const value=noteModel==='custom'&&!customOn?'auto':noteModel;
+ const visibleModels=guest?TUTOR_MODELS.filter(m=>m.provider!=='gemini'):TUTOR_MODELS;
+ const value=noteModel==='custom'&&!customOn?'auto':(guest&&TUTOR_MODELS.find(m=>m.id===noteModel)?.provider==='gemini'?'auto':noteModel);
  return (
   <div className="settings-row">
    <span className="settings-label">{L('笔记 AI 模型','Note AI model')}</span>
@@ -141,7 +143,7 @@ function NoteModelRow({L}:{L:(zh:string,en:string)=>string}){
    >
     <option value="auto">{L('默认（自动）','Default (Auto)')}</option>
     {customOn&&<option value="custom">{L(`专属 API（${customLabel}）`,`Custom (${customLabel})`)}</option>}
-    {TUTOR_MODELS.map(m=>(
+    {visibleModels.map(m=>(
      <option key={m.id} value={m.id}>{L(m.label[0],m.label[1])}</option>
     ))}
    </select>
@@ -167,25 +169,30 @@ function ModelThinkingSeg({title,scopeKey,spec,L}:{title:string;scopeKey:string;
   </div>
  );
 }
-function ThinkingLevelRow({L}:{L:(zh:string,en:string)=>string}){
+function ThinkingLevelRow({L,isGuest}:{L:(zh:string,en:string)=>string;isGuest:boolean}){
  const tutorModel=useStoredTutorModel();
  const [gradeModel]=useGradeModel();
  const [noteModel]=useStoredNoteModel();
- const tutor=getTutorThinkingSpec(tutorModel,null);
- const grade=getGradeThinkingSpec(gradeModel,null);
- const note=getTutorThinkingSpec(noteModel,null);
- const tutorName=TUTOR_MODELS.find(m=>m.id===tutorModel)?.label[0]??'DeepSeek V4.1 Flash';
- const gradeName=GRADE_MODELS.find(m=>m.id===gradeModel)?.name??'Gemini 4 Hydrogen';
- const noteName=TUTOR_MODELS.find(m=>m.id===noteModel)?.label[0]??'DeepSeek V4.1 Flash';
- const showNoteSeg=noteModel!=='auto'&&noteModel!=='custom'&&note.scopeKey!==tutor.scopeKey&&note.scopeKey!==grade.scopeKey;
+ const effTutor=isGuest&&TUTOR_MODELS.find(m=>m.id===tutorModel)?.provider==='gemini'?'auto':tutorModel;
+ const effNote=isGuest&&TUTOR_MODELS.find(m=>m.id===noteModel)?.provider==='gemini'?'auto':noteModel;
+ const tutor=getTutorThinkingSpec(effTutor,null);
+ const grade=getGradeThinkingSpec(gradeModel,null,isGuest);
+ const note=getTutorThinkingSpec(effNote,null);
+ const tutorName=TUTOR_MODELS.find(m=>m.id===effTutor)?.label[0]??'DeepSeek V4.1 Flash';
+ const gradeName=isGuest?'DeepSeek V4.1 Flash（思考）':(GRADE_MODELS.find(m=>m.id===gradeModel)?.name??'Gemini 4 Hydrogen');
+ const noteName=TUTOR_MODELS.find(m=>m.id===effNote)?.label[0]??'DeepSeek V4.1 Flash';
+ const showTutor=!tutor.spec.locked;
+ const showGrade=!grade.spec.locked;
+ const showNoteSeg=!note.spec.locked&&effNote!=='auto'&&effNote!=='custom'&&note.scopeKey!==tutor.scopeKey&&note.scopeKey!==grade.scopeKey;
+ if(!showTutor&&!showGrade&&!showNoteSeg)return null;
  return (
   <div className="settings-row settings-row-col">
    <span className="settings-stack">
     <span className="settings-label">{L('AI 思考强度','AI thinking strength')}</span>
     
    </span>
-   <ModelThinkingSeg title={L(`问答：${tutorName}`,`Chat: ${tutorName}`)} scopeKey={tutor.scopeKey} spec={tutor.spec} L={L}/>
-   <ModelThinkingSeg title={L(`评分：${gradeName}`,`Grade: ${gradeName}`)} scopeKey={grade.scopeKey} spec={grade.spec} L={L}/>
+   {showTutor&&<ModelThinkingSeg title={L(`问答：${tutorName}`,`Chat: ${tutorName}`)} scopeKey={tutor.scopeKey} spec={tutor.spec} L={L}/>}
+   {showGrade&&<ModelThinkingSeg title={L(`评分：${gradeName}`,`Grade: ${gradeName}`)} scopeKey={grade.scopeKey} spec={grade.spec} L={L}/>}
    {showNoteSeg&&<ModelThinkingSeg title={L(`笔记：${noteName}`,`Notes: ${noteName}`)} scopeKey={note.scopeKey} spec={note.spec} L={L}/>}
   </div>
  );
@@ -318,9 +325,9 @@ export default function AccountMenu({username}:{username:string}){
       <span className="settings-label">{L('背景配色','Background theme')}</span>
       <ThemeSelect className="theme-select settings-theme-select"/>
      </div>
-     <GeminiProxyRow L={L}/>
-     <NoteModelRow L={L}/>
-     <ThinkingLevelRow L={L}/>
+     {username&&<GeminiProxyRow L={L}/>}
+     <NoteModelRow L={L} isGuest={!username}/>
+     <ThinkingLevelRow L={L} isGuest={!username}/>
 
      <div className="settings-glass">
       <div className="settings-glass-head">

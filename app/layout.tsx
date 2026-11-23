@@ -9,6 +9,7 @@ import StaleReloadListener from './components/stale-reload-listener';
 import CloudSync from './components/cloud-sync';
 import {NoticeCenter} from './components/notices';
 import SiteTutor from './components/site-tutor';
+import JdBgWatcher from './components/jd-bg-watcher';
 import {AppearanceSync} from './components/appearance';
 
 export const metadata: Metadata = {
@@ -44,7 +45,7 @@ export default async function RootLayout({
   return (
     <html lang={locale==='en'?'en':'zh-CN'} data-theme={ssrTheme} data-lamp={ssrLamp} className={ssrLamp==='off'?'dark':undefined} style={{colorScheme:ssrLamp==='off'?'dark':'light',backgroundColor:ssrLamp==='off'?'#162032':undefined,'--glass-t':String(glassCookie)} as CSSProperties} suppressHydrationWarning>
       <head><style dangerouslySetInnerHTML={{__html:CRITICAL_THEME_CSS}}/><script dangerouslySetInnerHTML={{__html:THEME_INIT_SCRIPT}}/></head>
-      <body className="antialiased"><AppearanceSync/><StaleReloadListener/><CloudSync/><I18nProvider initialLocale={locale}><NoticeCenter/>{children}<SiteTutor/></I18nProvider></body>
+      <body className="antialiased"><AppearanceSync/><StaleReloadListener/><CloudSync/><I18nProvider initialLocale={locale}><NoticeCenter/>{children}<JdBgWatcher/><SiteTutor/></I18nProvider></body>
     </html>
   );
 }

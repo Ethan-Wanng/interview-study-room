@@ -16,26 +16,123 @@ import {
  Copy,
  Download,
  ExternalLink,
+ FileDown,
+ FileText,
  GraduationCap,
  History,
+ ImagePlus,
+ Link2,
  Loader2,
  Lock,
  MessageSquare,
+ Minimize2,
+ Pencil,
  Plus,
  RotateCcw,
+ Search,
  Square,
  Target,
  X,
+ Zap,
 } from 'lucide-react';
 import SiteHeader from '../../components/site-header';
 import AddToNoteButton from '../../components/add-to-note';
 import { useI18n } from '../../components/i18n';
 import { getGeminiAutoProxy } from '../../ai/gemini-proxy-pref';
+import { aiQuizTypes } from '@/content/journey';
+import type { AntigravityUsage } from '@/lib/antigravity-agent';
 import {
+ countJdStudyQuizzes,
  reportToMarkdown,
  type JdInputKind,
+ type JdLiveProgress,
  type JdResearchReport,
+ type JdStageKey,
 } from '@/lib/jd-research-types';
+import {
+ removeJdBgTask,
+ subscribeJdTaskDone,
+ upsertJdBgTask,
+} from '@/lib/jd-bg-tasks';
+
+const LETTERS = 'ABCDEFGH';
+const fmtTok = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}K` : String(n));
+
+async function compressJdImage(file: File): Promise<string | null> {
+ const url = URL.createObjectURL(file);
+ try {
+  const img = await new Promise<HTMLImageElement>((ok, bad) => {
+   const el = new Image();
+   el.onload = () => ok(el);
+   el.onerror = bad;
+   el.src = url;
+  });
+  for (const [side, q] of [
+   [1440, 0.86],
+   [1080, 0.78],
+   [800, 0.68],
+  ] as const) {
+   const s = Math.min(1, side / Math.max(img.naturalWidth, img.naturalHeight));
+   const c = document.createElement('canvas');
+   c.width = Math.max(1, Math.round(img.naturalWidth * s));
+   c.height = Math.max(1, Math.round(img.naturalHeight * s));
+   const g = c.getContext('2d');
+   if (!g) return null;
+   g.fillStyle = '#fff';
+   g.fillRect(0, 0, c.width, c.height);
+   g.drawImage(img, 0, 0, c.width, c.height);
+   const out = c.toDataURL('image/jpeg', q);
+   if (out.length <= 1_800_000) return out;
+  }
+  return null;
+ } catch {
+  return null;
+ } finally {
+  URL.revokeObjectURL(url);
+ }
+}
+
+async function exportElementToPdf(el: HTMLElement, filename: string): Promise<void> {
+ const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+  import('html2canvas-pro'),
+  import('jspdf'),
+ ]);
+ const top = el.getBoundingClientRect().top;
+ const breaks = [...el.querySelectorAll<HTMLElement>('.jdr-print-item, h2, h3')]
+  .map(n => n.getBoundingClientRect().top - top)
+  .filter(y => y > 0);
+ const scale = 1.6;
+ const canvas = await html2canvas(el, {
+  scale,
+  backgroundColor: '#ffffff',
+  useCORS: true,
+  windowWidth: el.scrollWidth,
+ });
+ const pdf = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
+ const pageW = pdf.internal.pageSize.getWidth();
+ const pageH = pdf.internal.pageSize.getHeight();
+ const margin = 28;
+ const px = (pageW - margin * 2) / canvas.width;
+ const pageCanvasH = Math.floor((pageH - margin * 2) / px);
+ for (let y = 0, first = true; y < canvas.height; first = false) {
+  let end = Math.min(canvas.height, y + pageCanvasH);
+  if (end < canvas.height) {
+   const cut = breaks
+    .map(b => Math.round(b * scale))
+    .filter(b => b > y + pageCanvasH * 0.3 && b <= end)
+    .pop();
+   if (cut) end = cut;
+  }
+  const slice = document.createElement('canvas');
+  slice.width = canvas.width;
+  slice.height = end - y;
+  slice.getContext('2d')!.drawImage(canvas, 0, y, canvas.width, end - y, 0, 0, canvas.width, end - y);
+  if (!first) pdf.addPage();
+  pdf.addImage(slice.toDataURL('image/jpeg', 0.84), 'JPEG', margin, margin, canvas.width * px, (end - y) * px);
+  y = end;
+ }
+ pdf.save(filename);
+}
 
 type SubjectOpt = { id: string; name: string; nameEn: string };
 type TabKey = 'profile' | 'roadmap' | 'questions';
@@ -45,9 +142,14 @@ type StoredPayload = {
  source?: string;
  model?: string;
  cacheKey?: string;
+ stage?: 1 | 2;
+ cached?: boolean;
+ stage1Cached?: boolean;
+ partialReport?: JdResearchReport | null;
  report?: JdResearchReport | null;
  rawText?: string;
  thoughts?: string;
+ usage?: AntigravityUsage;
  imported?: { count: number; subject: string } | null;
  error?: string;
 };
@@ -128,48 +230,10 @@ const PRESETS: { id: string; kind: JdInputKind; zh: string; en: string; sample: 
  },
 ];
 
+const STAGE_ORDER: JdStageKey[] = ['profile', 'roadmap', 'quizzes', 'questions'];
+
 function legacyLocalKey(username: string): string {
  return `isr_jd_research_v1:${username || 'guest'}`;
-}
-
-function unescapeJsonPreview(s: string): string {
- return s.replace(/\\"/g, '"').replace(/\\n/g, ' ').replace(/\\\\/g, '\\').trim();
-}
-
-// Extract readable live progress from partial streaming JSON so users see real sections instead of raw braces.
-function parseStreamPreview(buf: string) {
- const pickField = (name: string) => {
-  const m = buf.match(new RegExp(`"${name}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`));
-  return m?.[1] ? unescapeJsonPreview(m[1]) : '';
- };
- const roleTitle = pickField('roleTitle');
- const inferredLevel = pickField('inferredLevel');
- const prepDays = pickField('prepDays');
- const companyStyle = pickField('companyStyle');
-
- const qIdx = buf.indexOf('"questions"');
- const qTitles: string[] = [];
- if (qIdx >= 0) {
-  const qPart = buf.slice(qIdx);
-  const re = /"title"\s*:\s*"((?:\\.|[^"\\])*)"/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(qPart)) !== null) {
-   const t = unescapeJsonPreview(m[1]);
-   if (t) qTitles.push(t);
-  }
- }
- const rIdx = buf.indexOf('"roadmap"');
- const stageCount =
-  rIdx >= 0
-   ? (buf.slice(rIdx, qIdx >= 0 ? qIdx : undefined).match(/"phase"\s*:/g) || []).length
-   : 0;
- const dimIdx = buf.indexOf('"dimensions"');
- const dimCount =
-  dimIdx >= 0
-   ? (buf.slice(dimIdx, rIdx >= 0 ? rIdx : undefined).match(/"priority"\s*:/g) || []).length
-   : 0;
-
- return { roleTitle, inferredLevel, prepDays, companyStyle, dimCount, stageCount, qTitles };
 }
 
 function renderInline(line: string) {
@@ -230,22 +294,40 @@ export default function JdResearchClient({
 
  const [kind, setKind] = useState<JdInputKind>('jd');
  const [source, setSource] = useState('');
+ const [jdUrl, setJdUrl] = useState('');
+ const [images, setImages] = useState<string[]>([]);
+ const [extracting, setExtracting] = useState(false);
+ const [bgTip, setBgTip] = useState('');
 
  const [busy, setBusy] = useState(false);
  const [elapsed, setElapsed] = useState(0);
  const [error, setError] = useState('');
  const [streamModel, setStreamModel] = useState('');
  const [streamThoughts, setStreamThoughts] = useState('');
- const [streamText, setStreamText] = useState('');
+ const [liveProgress, setLiveProgress] = useState<JdLiveProgress | null>(null);
+ const [partialReport, setPartialReport] = useState<JdResearchReport | null>(null);
 
  const [records, setRecords] = useState<CloudRecord[]>([]);
+ const [histQuery, setHistQuery] = useState('');
  const [activeId, setActiveId] = useState<string>('');
+ const activeIdRef = useRef('');
+ useEffect(() => {
+  activeIdRef.current = activeId;
+ }, [activeId]);
+
  const [report, setReport] = useState<JdResearchReport | null>(null);
  const [rawText, setRawText] = useState('');
  const [thoughts, setThoughts] = useState('');
  const [reportModel, setReportModel] = useState('');
+ const [reportCached, setReportCached] = useState(false);
+ const [reportStage1Cached, setReportStage1Cached] = useState(false);
+ const [reportUsage, setReportUsage] = useState<AntigravityUsage | undefined>(undefined);
  const [thoughtsOpen, setThoughtsOpen] = useState(false);
  const [tab, setTab] = useState<TabKey>('profile');
+
+ const [renaming, setRenaming] = useState(false);
+ const [renameVal, setRenameVal] = useState('');
+ const [exportingPdf, setExportingPdf] = useState(false);
 
  const [selected, setSelected] = useState<Record<number, boolean>>({});
  const [expandedQ, setExpandedQ] = useState<Record<number, boolean>>({ 0: true });
@@ -258,6 +340,8 @@ export default function JdResearchClient({
  const abortRef = useRef<AbortController | null>(null);
  const timerRef = useRef<number | null>(null);
  const thinkBoxRef = useRef<HTMLPreElement | null>(null);
+ const fileInputRef = useRef<HTMLInputElement | null>(null);
+ const printRef = useRef<HTMLDivElement | null>(null);
 
  const stopActive = () => {
   abortRef.current?.abort();
@@ -285,14 +369,22 @@ export default function JdResearchClient({
   model?: string,
   imported?: { count: number; subject: string } | null,
   src?: string,
+  meta?: { cached?: boolean; stage1Cached?: boolean; usage?: AntigravityUsage; kind?: JdInputKind },
  ) => {
   setActiveId(recId);
   setReport(rep);
+  setPartialReport(null);
+  setLiveProgress(null);
   setRawText(raw);
   setThoughts(th);
   setReportModel(model || '');
+  setReportCached(Boolean(meta?.cached));
+  setReportStage1Cached(Boolean(meta?.stage1Cached));
+  setReportUsage(meta?.usage);
+  if (meta?.kind) setKind(meta.kind);
   if (typeof src === 'string' && src) setSource(src);
   setThoughtsOpen(false);
+  setRenaming(false);
   setTab('profile');
   setImportResult(imported ?? null);
   setImportErr('');
@@ -320,15 +412,49 @@ export default function JdResearchClient({
   }
  };
 
- const pollLegacyTask = async (rec: CloudRecord) => {
+ const pollLegacyTask = async (
+  rec: CloudRecord,
+  initMeta?: { stage1Cached?: boolean; partialReport?: JdResearchReport | null; progress?: JdLiveProgress },
+ ) => {
   if (!rec.interactionId || !rec.sig) return;
+  let curInteractionId = rec.interactionId;
+  let curSig = rec.sig;
+  let curStageKey: JdStageKey = initMeta?.progress?.activeKey || (rec.payload?.stage === 2 ? 'quizzes' : 'profile');
+  let curTitle = rec.title || L('岗位专题', 'JD Topic');
+
+  upsertJdBgTask({
+   recordId: rec.id,
+   interactionId: curInteractionId,
+   sig: curSig,
+   cacheKey: rec.payload?.cacheKey,
+   ckSig: rec.ckSig,
+   title: curTitle,
+   createdAt: rec.createdAt || Date.now(),
+   stageKey: curStageKey,
+   stage1Cached: initMeta?.stage1Cached ?? rec.payload?.stage1Cached,
+  });
+
   stopActive();
   setError('');
+  setBgTip('');
   setBusy(true);
   setActiveId(rec.id);
   setStreamModel('');
-  setStreamThoughts('');
-  setStreamText('');
+  setStreamThoughts(rec.payload?.thoughts || '');
+  setPartialReport(initMeta?.partialReport ?? rec.payload?.partialReport ?? null);
+  setLiveProgress(
+   initMeta?.progress ?? {
+    stage: rec.payload?.stage === 2 ? 2 : 1,
+    activeKey: curStageKey,
+    dimCount: initMeta?.partialReport?.dimensions?.length ?? 0,
+    stageCount: initMeta?.partialReport?.roadmap?.length ?? 0,
+    quizCount: 0,
+    questionCount: 0,
+    qTitles: [],
+    stage1Cached: initMeta?.stage1Cached ?? rec.payload?.stage1Cached,
+   },
+  );
+
   const t0 = rec.createdAt || Date.now();
   setElapsed(Math.max(0, Math.floor((Date.now() - t0) / 1000)));
   const ctl = new AbortController();
@@ -337,45 +463,149 @@ export default function JdResearchClient({
    setElapsed(Math.max(0, Math.floor((Date.now() - t0) / 1000)));
   }, 1000);
 
-  const qs = new URLSearchParams({
-   id: rec.interactionId,
-   sig: rec.sig,
-   rid: rec.id,
-   geminiProxy: getGeminiAutoProxy() ? '1' : '0',
-  });
-  if (rec.payload?.cacheKey && rec.ckSig) {
-   qs.set('ck', rec.payload.cacheKey);
-   qs.set('ckSig', rec.ckSig);
-  }
   try {
-   for (let i = 0; i < 60; i++) {
+   // Poll up to 120 ticks * 3s = 6 minutes across both Stage 1 & Stage 2
+   for (let i = 0; i < 120; i++) {
     if (ctl.signal.aborted) return;
     if (i > 0) {
      await new Promise<void>((res, rej) => {
       const tid = window.setTimeout(res, 3000);
-      ctl.signal.addEventListener('abort', () => { window.clearTimeout(tid); rej(new Error('aborted')); }, { once: true });
+      ctl.signal.addEventListener(
+       'abort',
+       () => {
+        window.clearTimeout(tid);
+        rej(new Error('aborted'));
+       },
+       { once: true },
+      );
      });
     }
+    const qs = new URLSearchParams({
+     id: curInteractionId,
+     sig: curSig,
+     rid: rec.id,
+     geminiProxy: getGeminiAutoProxy() ? '1' : '0',
+    });
+    if (rec.payload?.cacheKey && rec.ckSig) {
+     qs.set('ck', rec.payload.cacheKey);
+     qs.set('ckSig', rec.ckSig);
+    }
     const pr = await fetch('/api/jd-research?' + qs.toString(), { cache: 'no-store', signal: ctl.signal });
-    const pd = (await pr.json()) as { status?: string; report?: JdResearchReport | null; rawText?: string; thoughts?: string; error?: string };
+    const pd = (await pr.json()) as {
+     id?: string;
+     sig?: string;
+     status?: string;
+     stage?: 1 | 2;
+     cached?: boolean;
+     stage1Cached?: boolean;
+     partialReport?: JdResearchReport | null;
+     progress?: JdLiveProgress;
+     report?: JdResearchReport | null;
+     rawText?: string;
+     text?: string;
+     thoughts?: string;
+     usage?: AntigravityUsage;
+     error?: string;
+    };
     if (!pr.ok) throw new Error(pd.error ?? L('查询失败', 'Failed'));
+
+    if (pd.id && pd.id !== curInteractionId) curInteractionId = pd.id;
+    if (pd.sig && pd.sig !== curSig) curSig = pd.sig;
+    if (pd.thoughts) setStreamThoughts(pd.thoughts);
+    if (pd.partialReport) setPartialReport(pd.partialReport);
+    if (pd.progress) {
+     setLiveProgress(pd.progress);
+     curStageKey = pd.progress.activeKey;
+     if (pd.progress.roleTitle) curTitle = pd.progress.roleTitle;
+    }
+
+    if (pd.status === 'in_progress') {
+     upsertJdBgTask({
+      recordId: rec.id,
+      interactionId: curInteractionId,
+      sig: curSig,
+      cacheKey: rec.payload?.cacheKey,
+      ckSig: rec.ckSig,
+      title: curTitle,
+      createdAt: t0,
+      stageKey: curStageKey,
+      stage1Cached: pd.stage1Cached,
+     });
+     continue;
+    }
+
     if (pd.status === 'completed') {
-     applyReportView(rec.id, pd.report ?? null, pd.rawText || '', pd.thoughts || '', '', null);
+     removeJdBgTask(rec.id);
+     applyReportView(rec.id, pd.report ?? null, pd.rawText || '', pd.thoughts || '', '', null, rec.payload?.source, {
+      cached: pd.cached,
+      stage1Cached: pd.stage1Cached,
+      usage: pd.usage,
+      kind: rec.payload?.kind,
+     });
      void refreshRecords();
      stopActive();
      return;
     }
-    if (pd.status === 'failed' || pd.status === 'cancelled') throw new Error(pd.error || L('任务中断', 'Interrupted'));
+    if (pd.status === 'failed' || pd.status === 'cancelled') {
+     removeJdBgTask(rec.id);
+     throw new Error(pd.error || L('任务中断，请点击一键重试', 'Interrupted'));
+    }
    }
+   removeJdBgTask(rec.id);
+   throw new Error(L('生成耗时超过上限，请点击一键重试（阶段 1 已缓存，重试将直接从第 2 步继续）', 'Timed out — click Retry to resume from Stage 2'));
   } catch (e) {
-   if (!ctl.signal.aborted) setError((e as Error).message || L('查询失败', 'Failed'));
+   if (!ctl.signal.aborted) {
+    setError((e as Error).message || L('查询失败', 'Failed'));
+   }
    stopActive();
   }
  };
 
+ const moveToBackground = () => {
+  stopActive();
+  setActiveId('');
+  setReport(null);
+  setPartialReport(null);
+  setLiveProgress(null);
+  setRawText('');
+  setThoughts('');
+  setBgTip(L('已转入后台生成', 'Running in background'));
+ };
+
+ useEffect(() => {
+  return subscribeJdTaskDone(ev => {
+   void refreshRecords().then(items => {
+    if (ev.status === 'completed' && activeIdRef.current === ev.recordId) {
+     const hit = items.find(x => x.id === ev.recordId);
+     if (hit?.payload) {
+      applyReportView(
+       hit.id,
+       hit.payload.report ?? null,
+       hit.payload.rawText || '',
+       hit.payload.thoughts || '',
+       hit.payload.model,
+       hit.payload.imported ?? null,
+       hit.payload.source,
+       {
+        cached: hit.payload.cached,
+        stage1Cached: hit.payload.stage1Cached,
+        usage: hit.payload.usage,
+        kind: hit.payload.kind,
+       },
+      );
+      stopActive();
+     }
+    }
+   });
+  });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, []);
+
  useEffect(() => {
   let alive = true;
-  const wantNew = new URLSearchParams(window.location.search).get('new') === '1';
+  const sp = new URLSearchParams(window.location.search);
+  const wantNew = sp.get('new') === '1';
+  const wantId = sp.get('id') || '';
   (async () => {
    let items = await refreshRecords();
    if (!alive) return;
@@ -412,19 +642,46 @@ export default function JdResearchClient({
     if (migrated && alive) items = await refreshRecords();
    } catch {}
 
+   for (const rec of items) {
+    if (rec.status === 'running' && rec.interactionId && rec.sig) {
+     upsertJdBgTask({
+      recordId: rec.id,
+      interactionId: rec.interactionId,
+      sig: rec.sig,
+      cacheKey: rec.payload?.cacheKey,
+      ckSig: rec.ckSig,
+      title: rec.title || L('岗位专题', 'JD Topic'),
+      createdAt: rec.createdAt || Date.now(),
+      stageKey: rec.payload?.stage === 2 ? 'quizzes' : 'profile',
+      stage1Cached: rec.payload?.stage1Cached,
+     });
+    }
+   }
+
    if (!alive || wantNew || !items.length) return;
-   const latest = items[0];
-   if (latest.status === 'running' && latest.interactionId && latest.sig) {
-    void pollLegacyTask(latest);
-   } else if (latest.status === 'completed' && (latest.payload?.report || latest.payload?.rawText)) {
+   const target = (wantId ? items.find(x => x.id === wantId) : null) || items[0];
+   if (target.status === 'running' && target.interactionId && target.sig) {
+    void pollLegacyTask(target);
+   } else if (target.status === 'error') {
+    setActiveId(target.id);
+    if (target.payload?.kind) setKind(target.payload.kind);
+    if (target.payload?.source) setSource(target.payload.source);
+    setError(target.payload?.error || L('该次调研未完成，可点击一键重试', 'Previous run failed'));
+   } else if (target.status === 'completed' && (target.payload?.report || target.payload?.rawText)) {
     applyReportView(
-     latest.id,
-     latest.payload.report ?? null,
-     latest.payload.rawText || '',
-     latest.payload.thoughts || '',
-     latest.payload.model,
-     latest.payload.imported ?? null,
-     latest.payload.source,
+     target.id,
+     target.payload.report ?? null,
+     target.payload.rawText || '',
+     target.payload.thoughts || '',
+     target.payload.model,
+     target.payload.imported ?? null,
+     target.payload.source,
+     {
+      cached: target.payload.cached,
+      stage1Cached: target.payload.stage1Cached,
+      usage: target.payload.usage,
+      kind: target.payload.kind,
+     },
     );
    }
   })();
@@ -437,6 +694,7 @@ export default function JdResearchClient({
  const openRecord = (rec: CloudRecord) => {
   stopActive();
   setError('');
+  setRenaming(false);
   if (rec.status === 'running' && rec.interactionId && rec.sig) {
    setReport(null);
    setRawText('');
@@ -446,9 +704,10 @@ export default function JdResearchClient({
   if (rec.status === 'error') {
    setActiveId(rec.id);
    setReport(null);
-   setRawText('');
+   setRawText(rec.payload?.rawText || '');
+   if (rec.payload?.kind) setKind(rec.payload.kind);
    if (rec.payload?.source) setSource(rec.payload.source);
-   setError(rec.payload?.error || L('该次调研未完成，可重新发起', 'Previous run failed'));
+   setError(rec.payload?.error || L('该次调研未完成，可点击一键重试', 'Previous run failed'));
    return;
   }
   applyReportView(
@@ -459,10 +718,17 @@ export default function JdResearchClient({
    rec.payload?.model,
    rec.payload?.imported ?? null,
    rec.payload?.source,
+   {
+    cached: rec.payload?.cached,
+    stage1Cached: rec.payload?.stage1Cached,
+    usage: rec.payload?.usage,
+    kind: rec.payload?.kind,
+   },
   );
  };
 
  const deleteRecord = async (recId: string) => {
+  removeJdBgTask(recId);
   try {
    await fetch('/api/ai-interview-records?id=' + encodeURIComponent(recId), {
     method: 'DELETE',
@@ -474,41 +740,131 @@ export default function JdResearchClient({
    stopActive();
    setActiveId('');
    setReport(null);
+   setPartialReport(null);
+   setLiveProgress(null);
    setRawText('');
    setThoughts('');
    setImportResult(null);
   }
  };
 
+ const saveRename = async () => {
+  const clean = renameVal.trim().slice(0, 60);
+  if (!clean || !activeId) {
+   setRenaming(false);
+   return;
+  }
+  setRenaming(false);
+  setRecords(prev => prev.map(r => (r.id === activeId ? { ...r, title: clean } : r)));
+  if (report) {
+   setReport({ ...report, roleTitle: clean });
+  }
+  try {
+   await fetch('/api/ai-interview-records', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+     id: activeId,
+     kind: 'jd-research',
+     title: clean,
+     patch: true,
+     payload: report ? { report: { ...report, roleTitle: clean } } : {},
+    }),
+   });
+  } catch {}
+ };
+
  const startNewComposer = () => {
   stopActive();
   setActiveId('');
   setReport(null);
+  setPartialReport(null);
+  setLiveProgress(null);
   setRawText('');
   setThoughts('');
   setStreamThoughts('');
-  setStreamText('');
   setError('');
+  setBgTip('');
+  setRenaming(false);
   setImportResult(null);
  };
 
- const runResearch = async () => {
-  const clean = source.trim();
-  if (clean.length < 20) {
-   setError(L('请粘贴至少 20 字的岗位 JD 或面经内容', 'Paste at least 20 characters'));
+ const addJdImages = async (files: FileList | File[]) => {
+  const list = [...files].filter(f => f.type.startsWith('image/'));
+  if (!list.length) return;
+  const room = 4 - images.length;
+  if (room <= 0) {
+   setError(L('最多上传 4 张图片', 'Up to 4 images'));
+   return;
+  }
+  const out = (await Promise.all(list.slice(0, room).map(compressJdImage))).filter((x): x is string => Boolean(x));
+  if (out.length < list.slice(0, room).length) {
+   setError(L('部分图片过大或格式不支持', 'Some images were skipped'));
+  } else {
+   setError('');
+  }
+  setImages(prev => [...prev, ...out].slice(0, 4));
+ };
+
+ const extractInputs = async (opts: { useUrl?: boolean; useImages?: boolean }) => {
+  if (extracting || busy) return;
+  const urlVal = opts.useUrl ? jdUrl.trim() : '';
+  const imgsVal = opts.useImages ? images : [];
+  if (!urlVal && !imgsVal.length) return;
+  setExtracting(true);
+  setError('');
+  try {
+   const r = await fetch('/api/jd-research/extract', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+     ...(urlVal ? { url: urlVal } : {}),
+     ...(imgsVal.length ? { images: imgsVal } : {}),
+     geminiProxy: getGeminiAutoProxy(),
+    }),
+   });
+   const d = (await r.json()) as { text?: string; error?: string };
+   if (!r.ok || !d.text) throw new Error(d.error || L('提取失败', 'Extraction failed'));
+   setSource(prev => (prev.trim() ? `${prev.trim()}\n\n${d.text}` : d.text!).slice(0, 14_000));
+   if (opts.useUrl) setJdUrl('');
+   if (opts.useImages) setImages([]);
+  } catch (e) {
+   setError((e as Error).message || L('提取失败', 'Extraction failed'));
+  } finally {
+   setExtracting(false);
+  }
+ };
+
+ const canSubmitResearch = source.trim().length >= 20 || /^https?:\/\//i.test(jdUrl.trim()) || images.length > 0;
+
+ const runResearch = async (opts?: { bypassCache?: boolean; reuseRecordId?: string; overrideSource?: string }) => {
+  const clean = (opts?.overrideSource ?? source).trim();
+  const cleanUrl = jdUrl.trim();
+  if (clean.length < 20 && !/^https?:\/\//i.test(cleanUrl) && images.length === 0) {
+   setError(L('请粘贴至少 20 字内容，或填入岗位链接 / 上传图片', 'Paste text, enter a URL, or upload images'));
    return;
   }
 
   stopActive();
   setError('');
+  setBgTip('');
   setBusy(true);
   setElapsed(0);
   setReport(null);
+  setPartialReport(null);
+  setLiveProgress({
+   stage: 1,
+   activeKey: 'profile',
+   dimCount: 0,
+   stageCount: 0,
+   quizCount: 0,
+   questionCount: 0,
+   qTitles: [],
+  });
   setRawText('');
   setThoughts('');
   setStreamModel('');
   setStreamThoughts('');
-  setStreamText('');
   setImportResult(null);
 
   const ctl = new AbortController();
@@ -523,10 +879,17 @@ export default function JdResearchClient({
    const r = await fetch('/api/jd-research', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ kind, source: clean, geminiProxy }),
+    body: JSON.stringify({
+     kind,
+     source: clean,
+     ...(cleanUrl ? { url: cleanUrl } : {}),
+     ...(images.length ? { images } : {}),
+     ...(opts?.bypassCache ? { bypassCache: true } : {}),
+     ...(opts?.reuseRecordId ? { recordId: opts.reuseRecordId } : {}),
+     geminiProxy,
+    }),
     signal: ctl.signal,
    });
-   const ct = r.headers.get('content-type') || '';
 
    if (!r.ok) {
     let msg = L('发起调研失败', 'Request failed');
@@ -537,106 +900,80 @@ export default function JdResearchClient({
     throw new Error(msg);
    }
 
-   // Primary mode (JSON): instant cache hit OR background task polling
-   if (!ct.includes('ndjson')) {
-    const d = (await r.json()) as {
-     recordId?: string;
-     id?: string;
-     sig?: string;
-     status?: string;
-     report?: JdResearchReport | null;
-     rawText?: string;
-     thoughts?: string;
-     model?: string;
-     cacheKey?: string;
-     ckSig?: string;
-     error?: string;
-    };
-    if (d.status === 'completed') {
-     applyReportView(d.recordId || '', d.report ?? null, d.rawText || '', d.thoughts || '', d.model || '', null, clean);
-     void refreshRecords();
-     stopActive();
-     return;
-    }
-    if (!d.id || !d.sig) throw new Error(d.error || L('未返回任务 ID', 'Missing task ID'));
+   const d = (await r.json()) as {
+    recordId?: string;
+    id?: string;
+    sig?: string;
+    status?: string;
+    stage?: 1 | 2;
+    cached?: boolean;
+    stage1Cached?: boolean;
+    partialReport?: JdResearchReport | null;
+    progress?: JdLiveProgress;
+    title?: string;
+    report?: JdResearchReport | null;
+    rawText?: string;
+    thoughts?: string;
+    usage?: AntigravityUsage;
+    model?: string;
+    cacheKey?: string;
+    ckSig?: string;
+    extractedSource?: string;
+    error?: string;
+   };
+   const resolvedSrc = d.extractedSource || clean;
+   if (d.extractedSource && !clean) setSource(d.extractedSource);
+   setJdUrl('');
+   setImages([]);
+
+   if (d.status === 'completed') {
+    applyReportView(
+     d.recordId || '',
+     d.report ?? null,
+     d.rawText || '',
+     d.thoughts || '',
+     d.model || '',
+     null,
+     resolvedSrc,
+     {
+      cached: d.cached,
+      stage1Cached: d.stage1Cached,
+      usage: d.usage,
+      kind,
+     },
+    );
     void refreshRecords();
-    await pollLegacyTask({
+    stopActive();
+    return;
+   }
+   if (!d.id || !d.sig) throw new Error(d.error || L('未返回任务 ID', 'Missing task ID'));
+   void refreshRecords();
+   await pollLegacyTask(
+    {
      id: d.recordId || '',
-     title: '',
+     title: d.title || L('岗位专题', 'JD Topic'),
      subtitle: '',
      status: 'running',
      interactionId: d.id,
      sig: d.sig,
      ckSig: d.ckSig,
-     payload: { cacheKey: d.cacheKey, source: clean },
+     payload: {
+      kind,
+      cacheKey: d.cacheKey,
+      source: resolvedSrc,
+      stage: d.stage || 1,
+      stage1Cached: d.stage1Cached,
+      partialReport: d.partialReport,
+     },
      createdAt: t0,
      updatedAt: t0,
-    });
-    return;
-   }
-
-   // Streaming fallback (NDJSON)
-   if (!r.body) throw new Error(L('未收到流式响应', 'Empty stream'));
-   const reader = r.body.getReader();
-   const dec = new TextDecoder();
-   let buf = '';
-   let gotDone = false;
-
-   for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    let nl: number;
-    while ((nl = buf.indexOf('\n')) >= 0) {
-     const line = buf.slice(0, nl).trim();
-     buf = buf.slice(nl + 1);
-     if (!line) continue;
-     let ev: {
-      type?: string;
-      recordId?: string;
-      model?: string;
-      text?: string;
-      report?: JdResearchReport | null;
-      rawText?: string;
-      thoughts?: string;
-      error?: string;
-     };
-     try {
-      ev = JSON.parse(line);
-     } catch {
-      continue;
-     }
-     if (ev.type === 'model' && ev.model) {
-      setStreamModel(ev.model);
-     } else if (ev.type === 'reset') {
-      setStreamThoughts('');
-      setStreamText('');
-     } else if (ev.type === 'thought' && ev.text) {
-      setStreamThoughts(prev => prev + ev.text);
-     } else if (ev.type === 'delta' && ev.text) {
-      setStreamText(prev => prev + ev.text);
-     } else if (ev.type === 'done') {
-      gotDone = true;
-      applyReportView(
-       ev.recordId || '',
-       ev.report ?? null,
-       ev.rawText || '',
-       ev.thoughts || '',
-       ev.model || streamModel,
-       null,
-       clean,
-      );
-      void refreshRecords();
-      stopActive();
-      return;
-     } else if (ev.type === 'error') {
-      throw new Error(ev.error || L('深度调研失败', 'Research failed'));
-     }
-    }
-   }
-   if (!gotDone && !ctl.signal.aborted) {
-    throw new Error(L('连接中断，请重试', 'Connection interrupted'));
-   }
+    },
+    {
+     stage1Cached: d.stage1Cached,
+     partialReport: d.partialReport,
+     progress: d.progress,
+    },
+   );
   } catch (e) {
    if (!ctl.signal.aborted) {
     setError((e as Error).message || L('调研失败', 'Research failed'));
@@ -717,9 +1054,75 @@ export default function JdResearchClient({
   } catch {}
  };
 
- const livePreview = useMemo(() => (busy && streamText ? parseStreamPreview(streamText) : null), [busy, streamText]);
+ const downloadMarkdownFile = () => {
+  if (!fullMarkdown) return;
+  const name = (report?.roleTitle || 'JD深度调研报告').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 50);
+  const blob = new Blob([fullMarkdown], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${name}.md`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+ };
+
+ const handleExportPdf = async () => {
+  if (!report || exportingPdf || !printRef.current) return;
+  setExportingPdf(true);
+  try {
+   const name = (report.roleTitle || 'JD深度调研报告').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 50);
+   await exportElementToPdf(printRef.current, `${name}.pdf`);
+  } catch {
+   setImportErr(L('PDF 导出失败，请重试', 'PDF export failed'));
+  } finally {
+   setExportingPdf(false);
+  }
+ };
+
+ const filteredRecords = useMemo(() => {
+  const q = histQuery.trim().toLowerCase();
+  if (!q) return records;
+  return records.filter(
+   r =>
+    r.id === activeId ||
+    r.title.toLowerCase().includes(q) ||
+    r.subtitle.toLowerCase().includes(q) ||
+    (r.payload?.report?.companyStyle || '').toLowerCase().includes(q),
+  );
+ }, [records, histQuery, activeId]);
+
  const fullMarkdown = useMemo(() => (report ? reportToMarkdown(report) : rawText), [report, rawText]);
  const hasOutput = Boolean(report || rawText);
+ const activeStageIdx = liveProgress ? STAGE_ORDER.indexOf(liveProgress.activeKey) : 0;
+
+ const stageMeta: { key: JdStageKey; zh: string; en: string; count?: string }[] = [
+  {
+   key: 'profile',
+   zh: '考点画像',
+   en: 'Profile',
+   count: liveProgress && liveProgress.dimCount > 0 ? `${liveProgress.dimCount}` : undefined,
+  },
+  {
+   key: 'roadmap',
+   zh: '复习路径',
+   en: 'Roadmap',
+   count: liveProgress && liveProgress.stageCount > 0 ? `${liveProgress.stageCount}` : undefined,
+  },
+  {
+   key: 'quizzes',
+   zh: '路径学习题',
+   en: 'Study Quizzes',
+   count: liveProgress && liveProgress.quizCount > 0 ? `${liveProgress.quizCount}` : undefined,
+  },
+  {
+   key: 'questions',
+   zh: '面试题库',
+   en: 'Interview Qs',
+   count: liveProgress && liveProgress.questionCount > 0 ? `${liveProgress.questionCount}` : undefined,
+  },
+ ];
 
  return (
   <div className="ai-shell iv-shell">
@@ -746,11 +1149,35 @@ export default function JdResearchClient({
        <Plus size={13} />
        <span>{L('新调研', 'New')}</span>
       </button>
-      {records.map(rec => (
+
+      {records.length > 1 && (
+       <div className="jdr-hist-search">
+        <Search size={12} />
+        <input
+         value={histQuery}
+         onChange={e => setHistQuery(e.target.value)}
+         placeholder={L('搜索历史…', 'Search…')}
+         aria-label={L('搜索历史', 'Search history')}
+        />
+        {histQuery && (
+         <button type="button" onClick={() => setHistQuery('')} aria-label={L('清除搜索', 'Clear')}>
+          <X size={11} />
+         </button>
+        )}
+       </div>
+      )}
+
+      {filteredRecords.map(rec => (
        <div
         key={rec.id}
         className={'jdr-hist-chip' + (activeId === rec.id ? ' on' : '')}
         onClick={() => openRecord(rec)}
+        onDoubleClick={() => {
+         if (activeId === rec.id) {
+          setRenameVal(report?.roleTitle || rec.title);
+          setRenaming(true);
+         }
+        }}
        >
         {rec.status === 'running' ? <i className="jdr-hist-dot" /> : <History size={12} />}
         <span>{rec.title}</span>
@@ -811,39 +1238,148 @@ export default function JdResearchClient({
         ))}
        </div>
 
+       {kind === 'jd' && (
+        <div className="arch-field">
+         <span>{L('岗位链接', 'Job URL')}</span>
+         <div className="jdr-url-row">
+          <input
+           type="url"
+           value={jdUrl}
+           onChange={e => setJdUrl(e.target.value)}
+           placeholder="https://..."
+           disabled={!member || busy || extracting}
+          />
+          {member && jdUrl.trim() && (
+           <button
+            type="button"
+            className="button secondary arch-new-btn"
+            disabled={extracting || busy}
+            onClick={() => void extractInputs({ useUrl: true })}
+           >
+            {extracting ? <Loader2 size={14} className="ai-spin" /> : <Link2 size={14} />}
+            <span>{L('提取', 'Fetch')}</span>
+           </button>
+          )}
+         </div>
+        </div>
+       )}
+
        <label className="arch-field">
         <span>{kind === 'jd' ? L('岗位 JD', 'Job Description') : L('面经内容', 'Interview Log')}</span>
         <textarea
-         rows={8}
+         rows={7}
          value={source}
          onChange={e => setSource(e.target.value)}
+         onPaste={e => {
+          const files = [...e.clipboardData.files];
+          if (files.some(f => f.type.startsWith('image/'))) {
+           e.preventDefault();
+           void addJdImages(files);
+          }
+         }}
          maxLength={14000}
-         placeholder={L('粘贴岗位 JD 或面经内容…', 'Paste JD or interview experience…')}
+         placeholder={
+          kind === 'jd'
+           ? L('粘贴岗位 JD，或直接粘贴截图…', 'Paste JD text or screenshot…')
+           : L('粘贴面经内容，或直接粘贴截图…', 'Paste interview log or screenshot…')
+         }
         />
        </label>
 
+       <div className="jdr-img-row">
+        <input
+         ref={fileInputRef}
+         type="file"
+         accept="image/*"
+         multiple
+         hidden
+         onChange={e => {
+          if (e.target.files) void addJdImages(e.target.files);
+          e.target.value = '';
+         }}
+        />
+        <button
+         type="button"
+         className="button secondary arch-new-btn"
+         disabled={!member || busy || extracting || images.length >= 4}
+         onClick={() => fileInputRef.current?.click()}
+        >
+         <ImagePlus size={14} />
+         <span>{L(`上传图片 (${images.length}/4)`, `Images (${images.length}/4)`)}</span>
+        </button>
+        {member && images.length > 0 && (
+         <button
+          type="button"
+          className="button secondary arch-new-btn"
+          disabled={extracting || busy}
+          onClick={() => void extractInputs({ useImages: true })}
+         >
+          {extracting ? <Loader2 size={14} className="ai-spin" /> : <Check size={14} />}
+          <span>{L('识别文字', 'Extract Text')}</span>
+         </button>
+        )}
+        {images.map((u, idx) => (
+         <span key={idx} className="jdr-img-thumb">
+          <img src={u} alt="" />
+          <button
+           type="button"
+           aria-label={L('移除图片', 'Remove image')}
+           onClick={() => setImages(prev => prev.filter((_, j) => j !== idx))}
+          >
+           <X size={11} />
+          </button>
+         </span>
+        ))}
+       </div>
+
+       {bgTip && (
+        <div className="jdr-import-ok" style={{ width: 'fit-content' }}>
+         <Loader2 size={13} className="ai-spin" />
+         <span>{bgTip}</span>
+        </div>
+       )}
+
        {error && (
-        <p className="ai-grade-error" style={{ margin: 0 }}>
-         {error}
-        </p>
+        <div className="ai-grade-error ai-grade-retry" style={{ margin: 0 }}>
+         <span>{error}</span>
+         {member && canSubmitResearch && (
+          <button
+           type="button"
+           className="button secondary arch-new-btn"
+           onClick={() => void runResearch({ bypassCache: true, reuseRecordId: activeId || undefined })}
+          >
+           <RotateCcw size={14} />
+           <span>{L('一键重试', 'Retry')}</span>
+          </button>
+         )}
+        </div>
        )}
 
        <div className="arch-actions">
-        <button
-         type="button"
-         className="button primary"
-         disabled={busy || source.trim().length < 20}
-         onClick={() => void runResearch()}
-        >
-         <Compass size={15} />
-         <span>{L('开始深度调研', 'Start Research')}</span>
-        </button>
-        {source.trim() && (
+        {member ? (
+         <button
+          type="button"
+          className="button primary"
+          disabled={busy || extracting || !canSubmitResearch}
+          onClick={() => void runResearch()}
+         >
+          <Compass size={15} />
+          <span>{L('开始深度调研', 'Start Research')}</span>
+         </button>
+        ) : (
+         <a href="/login?return_to=%2Finterview%2Fjd-research" className="button primary">
+          <Lock size={15} />
+          <span>{L('登录后开始调研', 'Sign in to Research')}</span>
+         </a>
+        )}
+        {(source.trim() || jdUrl.trim() || images.length > 0) && (
          <button
           type="button"
           className="button secondary"
           onClick={() => {
            setSource('');
+           setJdUrl('');
+           setImages([]);
            setError('');
           }}
          >
@@ -857,58 +1393,132 @@ export default function JdResearchClient({
     )}
 
     {busy && (
-     <div className="ai-card arch-reply-card">
-      <div className="arch-running">
-       <div className="jdr-stream-meta">
-        <span className="arch-running-left">
-         <Loader2 size={16} className="ai-spin" />
-         <span>
-          {streamText
-           ? L(`生成中 · ${elapsed}s`, `Generating · ${elapsed}s`)
-           : streamThoughts
-             ? L(`深度思考中 · ${elapsed}s`, `Thinking · ${elapsed}s`)
-             : L(`深度调研中 · ${elapsed}s`, `Researching · ${elapsed}s`)}
+     <>
+      <div className="ai-card arch-reply-card">
+       <div className="arch-running">
+        <div className="jdr-stream-meta">
+         <span className="arch-running-left">
+          <Loader2 size={16} className="ai-spin" />
+          <span>
+           {L(
+            `第 ${liveProgress?.stage || 1}/2 步 · ${stageMeta[activeStageIdx]?.zh || '深度调研'} · ${elapsed}s`,
+            `Step ${liveProgress?.stage || 1}/2 · ${stageMeta[activeStageIdx]?.en || 'Researching'} · ${elapsed}s`,
+           )}
+          </span>
          </span>
-        </span>
-        {streamModel && <span className="jdr-model-pill">{streamModel}</span>}
+         {liveProgress?.stage1Cached && (
+          <span className="jdr-cache-tag">
+           <Zap size={12} />
+           {L('画像与路径已命中缓存', 'Stage 1 Cache Hit')}
+          </span>
+         )}
+         {streamModel && <span className="jdr-model-pill">{streamModel}</span>}
+        </div>
+        <div className="jdr-run-btns">
+         <button type="button" className="button secondary arch-stop-btn" onClick={moveToBackground}>
+          <Minimize2 size={13} />
+          <span>{L('后台生成', 'Run in Background')}</span>
+         </button>
+         <button type="button" className="button secondary arch-stop-btn" onClick={stopActive}>
+          <Square size={12} fill="currentColor" />
+          <span>{L('停止', 'Stop')}</span>
+         </button>
+        </div>
        </div>
-       <button type="button" className="button secondary arch-stop-btn" onClick={stopActive}>
-        <Square size={12} fill="currentColor" />
-        <span>{L('停止', 'Stop')}</span>
-       </button>
+
+       <div className="jdr-stepper" role="list" aria-label={L('生成阶段进度', 'Generation stages')}>
+        {stageMeta.map((st, idx) => {
+         const isDone = idx < activeStageIdx;
+         const isActive = idx === activeStageIdx;
+         return (
+          <div
+           key={st.key}
+           role="listitem"
+           className={'jdr-stage-item' + (isDone ? ' done' : isActive ? ' active' : '')}
+          >
+           <span className="jdr-stage-num">
+            {isDone ? <Check size={12} /> : isActive ? <Loader2 size={12} className="ai-spin" /> : idx + 1}
+           </span>
+           <span className="jdr-stage-label">{L(st.zh, st.en)}</span>
+           {st.count && <span className="jdr-stage-cnt">{st.count}</span>}
+          </div>
+         );
+        })}
+       </div>
+
+       {streamThoughts && (
+        <div className="arch-thoughts">
+         <div className="arch-thoughts-btn" style={{ cursor: 'default' }}>
+          <span>{L('思考过程', 'Reasoning')}</span>
+         </div>
+         <pre ref={thinkBoxRef} className="arch-thoughts-body">
+          {streamThoughts}
+         </pre>
+        </div>
+       )}
+
+       {liveProgress && (liveProgress.roleTitle || liveProgress.qTitles.length > 0) && (
+        <div className="jdr-stream-preview">
+         {liveProgress.roleTitle && <div className="jdr-stream-title">{liveProgress.roleTitle}</div>}
+         <div className="jdr-stream-stats">
+          {liveProgress.inferredLevel && <span className="jdr-style-tag">{liveProgress.inferredLevel}</span>}
+          {liveProgress.prepDays && <span className="jdr-style-tag">{liveProgress.prepDays}</span>}
+          {liveProgress.companyStyle && <span className="jdr-style-tag">{liveProgress.companyStyle}</span>}
+         </div>
+         {liveProgress.qTitles.length > 0 && (
+          <ol className="jdr-stream-qs">
+           {liveProgress.qTitles.map((t, i) => (
+            <li key={i}>{t}</li>
+           ))}
+          </ol>
+         )}
+        </div>
+       )}
       </div>
 
-      {streamThoughts && (
-       <div className="arch-thoughts">
-        <div className="arch-thoughts-btn" style={{ cursor: 'default' }}>
-         <span>{L('思考过程', 'Reasoning')}</span>
+      {/* Live Stage 1 Preview while Stage 2 generates quizzes and interview questions */}
+      {partialReport && (
+       <section className="jdr-panel">
+        <div className="jdr-dim-list">
+         {partialReport.dimensions.map((d, i) => (
+          <div key={i} className="ai-card jdr-dim-card">
+           <div className="jdr-dim-top">
+            <span className="jdr-dim-name">
+             <span className={'jdr-prio ' + d.priority}>{d.priority}</span>
+             <span>{d.name}</span>
+            </span>
+            <span className="jdr-dim-pct">{d.weight}%</span>
+           </div>
+           <div className="jdr-bar-track">
+            <div className="jdr-bar-fill" style={{ width: `${Math.min(100, d.weight)}%` }} />
+           </div>
+           {d.focus && <p className="jdr-dim-focus">{d.focus}</p>}
+          </div>
+         ))}
         </div>
-        <pre ref={thinkBoxRef} className="arch-thoughts-body">
-         {streamThoughts}
-        </pre>
-       </div>
-      )}
 
-      {livePreview && (livePreview.roleTitle || livePreview.qTitles.length > 0 || livePreview.dimCount > 0) && (
-       <div className="jdr-stream-preview">
-        {livePreview.roleTitle && <div className="jdr-stream-title">{livePreview.roleTitle}</div>}
-        <div className="jdr-stream-stats">
-         {livePreview.inferredLevel && <span className="jdr-style-tag">{livePreview.inferredLevel}</span>}
-         {livePreview.prepDays && <span className="jdr-style-tag">{livePreview.prepDays}</span>}
-         {livePreview.dimCount > 0 && <span>{L(`考点 ${livePreview.dimCount}`, `${livePreview.dimCount} dims`)}</span>}
-         {livePreview.stageCount > 0 && <span>{L(`路径 ${livePreview.stageCount} 阶段`, `${livePreview.stageCount} phases`)}</span>}
-         {livePreview.qTitles.length > 0 && <span>{L(`已生成 ${livePreview.qTitles.length} 题`, `${livePreview.qTitles.length} questions`)}</span>}
-        </div>
-        {livePreview.qTitles.length > 0 && (
-         <ol className="jdr-stream-qs">
-          {livePreview.qTitles.map((t, i) => (
-           <li key={i}>{t}</li>
+        {partialReport.roadmap.length > 0 && (
+         <div className="jdr-roadmap">
+          {partialReport.roadmap.map((s, i) => (
+           <div key={i} className="ai-card jdr-step-card">
+            <div className="jdr-step-head">
+             <span className="jdr-phase">{s.phase}</span>
+             <strong>{s.title}</strong>
+            </div>
+            {s.goals.length > 0 && (
+             <ul className="jdr-goals">
+              {s.goals.map((g, gi) => (
+               <li key={gi}>{g}</li>
+              ))}
+             </ul>
+            )}
+           </div>
           ))}
-         </ol>
+         </div>
         )}
-       </div>
+       </section>
       )}
-     </div>
+     </>
     )}
 
     {!busy && hasOutput && (
@@ -916,11 +1526,75 @@ export default function JdResearchClient({
       <section className="ai-card jdr-head-card">
        <div className="jdr-head-top">
         <div className="jdr-head-title">
-         <h2>{report ? report.roleTitle : L('调研报告', 'Research Report')}</h2>
+         <div className="jdr-title-row">
+          {renaming ? (
+           <form
+            className="jdr-rename-box"
+            onSubmit={e => {
+             e.preventDefault();
+             void saveRename();
+            }}
+           >
+            <input
+             value={renameVal}
+             onChange={e => setRenameVal(e.target.value)}
+             maxLength={60}
+             autoFocus
+             onKeyDown={e => {
+              if (e.key === 'Escape') setRenaming(false);
+             }}
+            />
+            <button type="submit" className="jdr-icon-btn primary" aria-label={L('保存名称', 'Save')}>
+             <Check size={14} />
+            </button>
+            <button
+             type="button"
+             className="jdr-icon-btn"
+             aria-label={L('取消', 'Cancel')}
+             onClick={() => setRenaming(false)}
+            >
+             <X size={14} />
+            </button>
+           </form>
+          ) : (
+           <>
+            <h2>{report ? report.roleTitle : L('调研报告', 'Research Report')}</h2>
+            {activeId && (
+             <button
+              type="button"
+              className="jdr-icon-btn"
+              title={L('重命名', 'Rename')}
+              aria-label={L('重命名', 'Rename')}
+              onClick={() => {
+               const cur =
+                report?.roleTitle || records.find(r => r.id === activeId)?.title || L('调研报告', 'Research Report');
+               setRenameVal(cur);
+               setRenaming(true);
+              }}
+             >
+              <Pencil size={13} />
+             </button>
+            )}
+           </>
+          )}
+         </div>
          <div className="jdr-head-tags">
           {report?.inferredLevel && <span className="jdr-style-tag">{report.inferredLevel}</span>}
           {report?.prepDays && <span className="jdr-style-tag">{report.prepDays}</span>}
           {report?.companyStyle && <span className="jdr-style-tag">{report.companyStyle}</span>}
+          {reportCached ? (
+           <span className="jdr-cache-tag">
+            <Zap size={12} />
+            {L('缓存命中 · 0 Token', 'Cache Hit · 0 Tokens')}
+           </span>
+          ) : (reportStage1Cached || (reportUsage?.cachedTokens ?? 0) > 0) ? (
+           <span className="jdr-cache-tag">
+            <Zap size={12} />
+            {(reportUsage?.cachedTokens ?? 0) > 0
+             ? L(`缓存命中 ${fmtTok(reportUsage!.cachedTokens)}`, `Cached ${fmtTok(reportUsage!.cachedTokens)}`)
+             : L('阶段缓存命中', 'Stage Cache Hit')}
+           </span>
+          ) : null}
           {reportModel && <span className="jdr-model-pill">{reportModel}</span>}
          </div>
         </div>
@@ -948,10 +1622,10 @@ export default function JdResearchClient({
            </a>
           )
          )}
-         {activeId && report && report.questions.length > 0 && (
+         {activeId && report && countJdStudyQuizzes(report) > 0 && (
           <a href={`/learn/jd-special?id=${encodeURIComponent(activeId)}`} className="button secondary arch-new-btn">
            <GraduationCap size={14} />
-           <span>{L('专题学习', 'Learn')}</span>
+           <span>{L(`专题学习 (${countJdStudyQuizzes(report)})`, `Learn (${countJdStudyQuizzes(report)})`)}</span>
           </a>
          )}
          <button
@@ -960,8 +1634,27 @@ export default function JdResearchClient({
           onClick={() => void copyText('all', fullMarkdown)}
          >
           {copiedKey === 'all' ? <Check size={13} /> : <Copy size={13} />}
-          <span>{copiedKey === 'all' ? L('已复制', 'Copied') : L('复制 Markdown', 'Copy MD')}</span>
+          <span>{copiedKey === 'all' ? L('已复制', 'Copied') : L('复制 MD', 'Copy MD')}</span>
          </button>
+         <button
+          type="button"
+          className="ai-note-pill"
+          onClick={downloadMarkdownFile}
+         >
+          <FileDown size={13} />
+          <span>{L('下载 MD', 'MD')}</span>
+         </button>
+         {report && (
+          <button
+           type="button"
+           className="ai-note-pill"
+           disabled={exportingPdf}
+           onClick={() => void handleExportPdf()}
+          >
+           {exportingPdf ? <Loader2 size={13} className="ai-spin" /> : <FileText size={13} />}
+           <span>{exportingPdf ? L('导出中…', 'Exporting…') : L('导出 PDF', 'PDF')}</span>
+          </button>
+         )}
          <AddToNoteButton
           compact
           title={(report?.roleTitle || L('JD 调研报告', 'JD Report')).slice(0, 64)}
@@ -974,9 +1667,19 @@ export default function JdResearchClient({
           source={{
            kind: 'interview',
            label: `${L('JD 调研', 'JD Research')} · ${(report?.roleTitle || '').slice(0, 24)}`,
-           href: '/interview/jd-research',
+           href: activeId ? `/interview/jd-research?id=${encodeURIComponent(activeId)}` : '/interview/jd-research',
           }}
          />
+         {member && source.trim().length >= 20 && (
+          <button
+           type="button"
+           className="button secondary arch-new-btn"
+           onClick={() => void runResearch({ bypassCache: true, reuseRecordId: activeId || undefined })}
+          >
+           <RotateCcw size={14} />
+           <span>{L('重新生成', 'Regenerate')}</span>
+          </button>
+         )}
          <button type="button" className="button secondary arch-new-btn" onClick={startNewComposer}>
           <Plus size={14} />
           <span>{L('新调研', 'New')}</span>
@@ -1041,7 +1744,7 @@ export default function JdResearchClient({
           onClick={() => setTab('questions')}
          >
           <BookOpen size={14} />
-          <span>{L(`专题题库 (${report.questions.length})`, `Questions (${report.questions.length})`)}</span>
+          <span>{L(`面试专题 (${report.questions.length})`, `Questions (${report.questions.length})`)}</span>
          </button>
         </div>
 
@@ -1085,9 +1788,21 @@ export default function JdResearchClient({
          <section className="jdr-roadmap">
           {report.roadmap.map((s, i) => (
            <div key={i} className="ai-card jdr-step-card">
-            <div className="jdr-step-head">
-             <span className="jdr-phase">{s.phase}</span>
-             <strong>{s.title}</strong>
+            <div className="jdr-step-top">
+             <div className="jdr-step-head">
+              <span className="jdr-phase">{s.phase}</span>
+              <strong>{s.title}</strong>
+             </div>
+             {activeId && s.quizzes && s.quizzes.length > 0 && (
+              <a
+               href={`/learn/jd-special?id=${encodeURIComponent(activeId)}&step=${i}`}
+               className="jdr-link-pill"
+              >
+               <GraduationCap size={13} />
+               <span>{L(`本阶段学习题 (${s.quizzes.length})`, `Practice (${s.quizzes.length})`)}</span>
+               <ArrowUpRight size={13} />
+              </a>
+             )}
             </div>
             {s.goals.length > 0 && (
              <ul className="jdr-goals">
@@ -1237,7 +1952,7 @@ export default function JdResearchClient({
                   source={{
                    kind: 'interview',
                    label: `${report.roleTitle.slice(0, 18)} · ${q.section}`,
-                   href: '/interview/jd-research',
+                   href: activeId ? `/interview/jd-research?id=${encodeURIComponent(activeId)}` : '/interview/jd-research',
                   }}
                  />
                 </div>
@@ -1249,9 +1964,154 @@ export default function JdResearchClient({
           </div>
          </section>
         )}
+
+        {/* Offscreen printable sheet for A4 PDF export (includes Profile, Roadmap, Study Quizzes, and Interview Questions) */}
+        <div ref={printRef} className="jdr-print-host" aria-hidden="true">
+         <h1>{report.roleTitle}</h1>
+         <p>
+          {[report.inferredLevel, report.prepDays, report.companyStyle].filter(Boolean).join(' · ')}
+         </p>
+         {report.summary && <p>{report.summary}</p>}
+
+         {report.dimensions.length > 0 && (
+          <>
+           <h2>一、核心考点权重</h2>
+           <ul>
+            {report.dimensions.map((d, i) => (
+             <li key={i}>
+              <strong>
+               [{d.priority} · {d.weight}%] {d.name}
+              </strong>
+              ：{d.focus}
+             </li>
+            ))}
+           </ul>
+          </>
+         )}
+
+         {report.traps.length > 0 && (
+          <>
+           <h2>二、高频扣分点</h2>
+           <ol>
+            {report.traps.map((t, i) => (
+             <li key={i}>{t}</li>
+            ))}
+           </ol>
+          </>
+         )}
+
+         {report.roadmap.length > 0 && (
+          <>
+           <h2>三、分阶段复习路径与配套学习题</h2>
+           {report.roadmap.map((s, si) => (
+            <div key={si} className="jdr-print-item">
+             <h3>
+              {s.phase} · {s.title}
+             </h3>
+             <ul>
+              {s.goals.map((g, gi) => (
+               <li key={gi}>{g}</li>
+              ))}
+             </ul>
+             {s.quizzes &&
+              s.quizzes.map((qz, qi) => (
+               <div key={qz.id} className="jdr-print-item">
+                <p>
+                 <strong>
+                  练习 {qi + 1}（{aiQuizTypes[qz.type ?? 'single']}）：{qz.q}
+                 </strong>
+                </p>
+                {qz.code && <pre>{qz.code}</pre>}
+                {'options' in qz && Array.isArray(qz.options) && (
+                 <ul>
+                  {qz.options.map((opt, oi) => (
+                   <li key={oi}>
+                    {LETTERS[oi] || oi + 1}. {opt}
+                   </li>
+                  ))}
+                 </ul>
+                )}
+                {qz.type === 'multi' ? (
+                 <p>
+                  <strong>正确答案：</strong>
+                  {qz.answers.map(a => LETTERS[a] || a + 1).join('、')}
+                 </p>
+                ) : qz.type === 'fill' ? (
+                 <p>
+                  <strong>参考答案：</strong>
+                  {qz.accepted.join(' / ')}
+                 </p>
+                ) : qz.type === 'short' || qz.type === 'code' || qz.type === 'design' ? (
+                 <>
+                  {qz.type === 'code' ? (
+                   <pre>{qz.reference}</pre>
+                  ) : (
+                   <p>
+                    <strong>参考答案：</strong>
+                    {qz.reference}
+                   </p>
+                  )}
+                  {qz.points?.length > 0 && (
+                   <p>
+                    <strong>得分要点：</strong>
+                    {qz.points.join('；')}
+                   </p>
+                  )}
+                 </>
+                ) : (
+                 'answer' in qz &&
+                 typeof qz.answer === 'number' && (
+                  <p>
+                   <strong>正确答案：</strong>
+                   {LETTERS[qz.answer] || qz.answer + 1}
+                  </p>
+                 )
+                )}
+                {qz.explain && (
+                 <p>
+                  <strong>解析：</strong>
+                  {qz.explain}
+                 </p>
+                )}
+               </div>
+              ))}
+            </div>
+           ))}
+          </>
+         )}
+
+         {report.questions.length > 0 && (
+          <>
+           <h2>四、专题高频面试题</h2>
+           {report.questions.map((q, qi) => (
+            <div key={qi} className="jdr-print-item">
+             <h3>
+              {qi + 1}. [{q.difficulty}] {q.title}
+             </h3>
+             {q.whyAsked && <p>考察点：{q.whyAsked}</p>}
+             <RichMarkdown text={q.answer} />
+             {q.followups.length > 0 && <p>常见追问：{q.followups.join('；')}</p>}
+            </div>
+           ))}
+          </>
+         )}
+        </div>
        </>
       ) : (
        <div className="ai-card arch-reply-card">
+        <div className="ai-grade-error ai-grade-retry" style={{ marginBottom: 10 }}>
+         <span>{L('结构化报告解析未完成，可一键重试生成完整报告', 'Report parsing incomplete — click Retry to regenerate')}</span>
+         {member && source.trim().length >= 20 && (
+          <button
+           type="button"
+           className="button primary arch-new-btn"
+           onClick={() => void runResearch({ bypassCache: true, reuseRecordId: activeId || undefined })}
+          >
+           <RotateCcw size={14} />
+           <span>{L('一键重试', 'Retry')}</span>
+          </button>
+         )}
+        </div>
         <RichMarkdown text={rawText} />
        </div>
       )}

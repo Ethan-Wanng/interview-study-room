@@ -61,7 +61,7 @@ export async function POST(req: Request) {
   if (!user) throw new AuthError('请先登录。', 401);
 
   const raw = await req.text();
-  if (raw.length > 200_000) throw new AuthError('数据过大。', 413);
+  if (raw.length > 360_000) throw new AuthError('数据过大。', 413);
   let body: Record<string, unknown>;
   try {
    body = JSON.parse(raw) as Record<string, unknown>;
@@ -79,9 +79,15 @@ export async function POST(req: Request) {
 
   if (!id || !payload) throw new AuthError('缺少记录内容。');
 
-  // If updating imported state on an existing record, merge cleanly
+  // If updating imported state or renaming on an existing record, merge cleanly
   const existing = await getAiInterviewRecord(user.id, id);
-  const mergedPayload = existing && body.patch ? { ...existing.payload, ...(payload as Record<string, unknown>) } : payload;
+  const mergedPayload: Record<string, unknown> =
+   existing && body.patch
+    ? { ...existing.payload, ...(payload as Record<string, unknown>) }
+    : (payload as Record<string, unknown>);
+  if (title && mergedPayload.report && typeof mergedPayload.report === 'object') {
+   mergedPayload.report = { ...(mergedPayload.report as Record<string, unknown>), roleTitle: title };
+  }
 
   const ok = await saveAiInterviewRecord({
    id,

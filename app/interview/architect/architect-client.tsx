@@ -3,7 +3,7 @@ import '../../ai/ai.css';
 import '../interview.css';
 import './architect.css';
 import {useEffect,useRef,useState} from 'react';
-import {ArrowLeft,Check,ChevronDown,ChevronUp,Copy,History,Loader2,Plus,RotateCcw,Send,Sparkles,Square,X} from 'lucide-react';
+import {ArrowLeft,Check,ChevronDown,ChevronUp,Copy,History,Loader2,Lock,Plus,RotateCcw,Send,Sparkles,Square,X} from 'lucide-react';
 import SiteHeader from '../../components/site-header';
 import AddToNoteButton from '../../components/add-to-note';
 import {useI18n} from '../../components/i18n';
@@ -456,10 +456,17 @@ export default function ArchitectClient({username}:{username:string}){
       {error&&<p className="ai-grade-error" style={{margin:0}}>{error}</p>}
 
       <div className="arch-actions">
-       <button type="button" className="button primary" disabled={busy||!answer.trim()||!topic.trim()} onClick={()=>void runTurn(answer)}>
-        <Sparkles size={15}/>
-        <span>{L('开始深度点评','Start Review')}</span>
-       </button>
+       {username?(
+        <button type="button" className="button primary" disabled={busy||!answer.trim()||!topic.trim()} onClick={()=>void runTurn(answer)}>
+         <Sparkles size={15}/>
+         <span>{L('开始深度点评','Start Review')}</span>
+        </button>
+       ):(
+        <a href="/login?return_to=%2Finterview%2Farchitect" className="button primary">
+         <Lock size={15}/>
+         <span>{L('登录后开始点评','Sign in to Review')}</span>
+        </a>
+       )}
        {answer.trim()&&(
         <button type="button" className="button secondary" disabled={busy} onClick={()=>{setAnswer('');setError('')}}>
          <RotateCcw size={15}/>

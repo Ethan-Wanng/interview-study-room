@@ -24,6 +24,7 @@ export type AddToNoteProps={
  defaultMode?:'question-only'|'question-and-answer';
  modeLabels?:[[string,string],[string,string]];
  source:NoteSource;
+ onBeforeNavigate?:()=>void;
  compact?:boolean;
  className?:string;
  hideTrigger?:boolean;
@@ -37,6 +38,7 @@ export default function AddToNoteButton({
  defaultMode='question-and-answer',
  modeLabels,
  source,
+ onBeforeNavigate,
  compact=true,
  className='',
  hideTrigger=false,
@@ -70,6 +72,7 @@ export default function AddToNoteButton({
  const [polishing,setPolishing]=useState(false);
  const [polishText,setPolishText]=useState<string|null>(null);
  const [polishRefine,setPolishRefine]=useState('');
+ const [polishRemaining,setPolishRemaining]=useState<number|null>(null);
  const [polishHistory,setPolishHistory]=useState<{role:'user'|'model';text:string}[]>([]);
  const polishAbortRef=useRef<AbortController|null>(null);
 
@@ -113,6 +116,7 @@ export default function AddToNoteButton({
   `/notes?book=${encodeURIComponent(m.bookId)}&page=${m.pageIndex+1}&back=${encodeURIComponent(returnHref())}&backLabel=${encodeURIComponent(source.label)}&backKind=${encodeURIComponent(source.kind)}`;
 
  const rememberReturn=(m:{bookId:string;pageId:string})=>{
+  onBeforeNavigate?.();
   saveNoteReturnContext({
    href:returnHref(),
    label:source.label,
@@ -128,6 +132,7 @@ export default function AddToNoteButton({
   setPolishing(false);
   setPolishText(null);
   setPolishRefine('');
+  setPolishRemaining(null);
   setPolishHistory([]);
  };
 
@@ -207,6 +212,7 @@ export default function AddToNoteButton({
   setPolishing(false);
   if(res.ok){
    setPolishText(res.text);
+   setPolishRemaining(typeof res.remaining==='number'?res.remaining:null);
    setPolishHistory([...nextMsgs,{role:'model',text:res.text}]);
    if(instruction)setPolishRefine('');
   }else if(!res.aborted){
@@ -380,7 +386,7 @@ export default function AddToNoteButton({
          <button type="button" className="button secondary" onClick={()=>setOpen(false)}>
           {returnBtnLabel()}
          </button>
-         <a className="button primary" href={noteHrefFor(savedInfo)}>
+         <a className="button primary" href={noteHrefFor(savedInfo)} onClick={()=>onBeforeNavigate?.()}>
           <Sparkles size={15}/>
           <span>{L('打开笔记本','Open Notebook')}</span>
           <ArrowRight size={15}/>
@@ -621,6 +627,7 @@ export default function AddToNoteButton({
                <X size={14}/>
                <span>{L('取消','Cancel')}</span>
               </button>
+              {polishRemaining!==null&&<small className="muted" style={{marginLeft:'auto'}}>{L(`今日还剩 ${polishRemaining} 次`,`${polishRemaining} left today`)}</small>}
              </div>
             </>
            )}

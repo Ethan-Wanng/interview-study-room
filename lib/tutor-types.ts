@@ -6,8 +6,8 @@ import {splitModelTag,thinkingLevelBadgeText,type ThinkingLevel} from './thinkin
 // 对话历史由页面保存，每次请求都带上完整历史（模型本身不记得上一次请求）。
 export type TutorRole='user'|'model';
 // images：学习者附带的图片（data:image/...;base64 URL，页面已压缩到长边 1280 像素以内）。只有学习者的消息能带图。
-// think：这条回复的思考过程（只在页面上显示，不会再发回接口）；secs：思考用了几秒；model：生成这条回复的模型标识。
-export type TutorMessage={role:TutorRole;text:string;images?:string[];think?:string;secs?:number;model?:string};
+// think：这条回复的思考过程（只在页面上显示，不会再发回接口）；secs：思考用了几秒；model：生成这条回复的模型标识；remaining：完成后今日剩余次数。
+export type TutorMessage={role:TutorRole;text:string;images?:string[];think?:string;secs?:number;model?:string;remaining?:number};
 // 图片限制：每条消息最多 3 张、一次请求最多 4 张（更早消息里的图片由页面换成“[图片]”文字），每张 data URL 不超过约 1.5MB。
 export const TUTOR_IMAGES={perMessage:3,perRequest:4,size:1_500_000} as const;
 export const IMAGE_URL=/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
@@ -31,7 +31,7 @@ export const TUTOR_MODELS:TutorModel[]=[
  {id:'deepseek-flash',model:'deepseek-flash',thinking:false,label:['DeepSeek V4.1 Flash','DeepSeek V4.1 Flash'],provider:'deepseek',vision:true,note:['快，日常答疑，能看图','Fast, everyday questions, understands images']},
  {id:'deepseek-flash-think',model:'deepseek-flash',thinking:true,label:['DeepSeek V4.1 Flash · 深度思考','DeepSeek V4.1 Flash · thinking'],provider:'deepseek',vision:true,note:['先想再答，会显示思考的关键步骤','Thinks first and shows its key steps']},
  {id:'deepseek-v4-pro',model:'deepseek-v4-pro',thinking:true,label:['DeepSeek V4 Pro · 深度思考','DeepSeek V4 Pro · thinking'],provider:'deepseek',vision:false,note:['最强，适合难题，慢一些，不能看图','Strongest; slower, for hard problems, no images']},
- {id:'gemini-4',model:'gemini-4-hydrogen',thinking:true,label:['Gemini 4 Hydrogen · 深度思考','Gemini 4 Hydrogen · thinking'],provider:'gemini',vision:true,note:['默认 Gemini 4 Hydrogen，不可用时自动降级 Gemini 3.8 Flash（支持识图与思考过程）','Default Gemini 4 Hydrogen (fallback 3.8 Flash), supports images & thinking']},
+ {id:'gemini-4',model:'gemini-4-hydrogen',thinking:true,label:['Gemini 4 Hydrogen','Gemini 4 Hydrogen'],provider:'gemini',vision:true,note:['默认思考强度，不可用时依次降级 Gemini 3.8 Flash / 3.6 Flash（支持识图）','Default thinking, falls back to 3.8 Flash / 3.6 Flash, supports images']},
 ];
 export const DEFAULT_TUTOR_MODEL=TUTOR_MODELS[0];
 export function tutorModelBadge(model:string|undefined,lang:'zh'|'en'='zh'):string{
@@ -40,7 +40,6 @@ export function tutorModelBadge(model:string|undefined,lang:'zh'|'en'='zh'):stri
  const lvTag=level?(lang==='en'?` (${thinkingLevelBadgeText(level,lang)})`:`（${thinkingLevelBadgeText(level,lang)}）`):'';
  if(m==='gemini-4-hydrogen')return `Gemini 4 Hydrogen${lvTag}`;
  if(m==='gemini-3.8-flash')return (lang==='en'?'Gemini 3.8 Flash (fallback)':'Gemini 3.8 Flash（降级）')+(level?` · ${thinkingLevelBadgeText(level,lang)}`:'');
- if(m==='gemini-2.5-flash')return (lang==='en'?'Gemini 2.5 Flash (fallback)':'Gemini 2.5 Flash（降级）')+(level?` · ${thinkingLevelBadgeText(level,lang)}`:'');
  if(m==='gemini-3.6-flash')return (lang==='en'?'Gemini 3.6 Flash (fallback)':'Gemini 3.6 Flash（降级）')+(level?` · ${thinkingLevelBadgeText(level,lang)}`:'');
  if(m==='deepseek-flash (thinking)'||m==='deepseek-flash-think')return (lang==='en'?'DeepSeek V4.1 Flash · thinking':'DeepSeek V4.1 Flash · 深度思考')+lvTag;
  if(m==='deepseek-flash')return `DeepSeek V4.1 Flash${lvTag}`;

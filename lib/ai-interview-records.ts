@@ -34,7 +34,7 @@ type DbRow = {
 };
 
 const MAX_RECORDS_PER_KIND = 30;
-const MAX_PAYLOAD_BYTES = 190_000;
+const MAX_PAYLOAD_BYTES = 350_000;
 
 function parseRow<T>(r: DbRow): AiInterviewRecordRow<T> | null {
  try {
