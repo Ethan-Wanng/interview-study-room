@@ -50,6 +50,7 @@ import {
  type JdStageKey,
 } from '@/lib/jd-research-types';
 import {
+ notifyJdTaskDone,
  removeJdBgTask,
  subscribeJdTaskDone,
  upsertJdBgTask,
@@ -302,6 +303,10 @@ export default function JdResearchClient({
  const [busy, setBusy] = useState(false);
  const [elapsed, setElapsed] = useState(0);
  const [error, setError] = useState('');
+ const [connState, setConnState] = useState<'connecting' | 'connected' | 'agent_ready' | 'thinking' | 'streaming'>('connecting');
+ const [streamChars, setStreamChars] = useState(0);
+ const [streamTail, setStreamTail] = useState('');
+ const [pingBeats, setPingBeats] = useState(0);
  const [streamModel, setStreamModel] = useState('');
  const [streamThoughts, setStreamThoughts] = useState('');
  const [liveProgress, setLiveProgress] = useState<JdLiveProgress | null>(null);
@@ -339,11 +344,18 @@ export default function JdResearchClient({
 
  const abortRef = useRef<AbortController | null>(null);
  const timerRef = useRef<number | null>(null);
+ const bgModeRef = useRef(false);
+ const streamingRecordIdRef = useRef('');
  const thinkBoxRef = useRef<HTMLPreElement | null>(null);
  const fileInputRef = useRef<HTMLInputElement | null>(null);
  const printRef = useRef<HTMLDivElement | null>(null);
 
  const stopActive = () => {
+  bgModeRef.current = false;
+  if (streamingRecordIdRef.current) {
+   removeJdBgTask(streamingRecordIdRef.current);
+   streamingRecordIdRef.current = '';
+  }
   abortRef.current?.abort();
   abortRef.current = null;
   if (timerRef.current !== null) {
@@ -353,13 +365,27 @@ export default function JdResearchClient({
   setBusy(false);
  };
 
- useEffect(() => () => stopActive(), []);
+ useEffect(
+  () => () => {
+   if (timerRef.current !== null) {
+    window.clearInterval(timerRef.current);
+    timerRef.current = null;
+   }
+   // If a stream is active when navigating away, let it continue in background instead of aborting
+   if (streamingRecordIdRef.current) {
+    bgModeRef.current = true;
+   } else {
+    abortRef.current?.abort();
+   }
+  },
+  [],
+ );
 
  useEffect(() => {
   if (busy && thinkBoxRef.current) {
    thinkBoxRef.current.scrollTop = thinkBoxRef.current.scrollHeight;
   }
- }, [busy, streamThoughts]);
+ }, [busy, streamThoughts, connState, pingBeats]);
 
  const applyReportView = (
   recId: string,
@@ -383,7 +409,7 @@ export default function JdResearchClient({
   setReportUsage(meta?.usage);
   if (meta?.kind) setKind(meta.kind);
   if (typeof src === 'string' && src) setSource(src);
-  setThoughtsOpen(false);
+  setThoughtsOpen(Boolean(th && th.trim()));
   setRenaming(false);
   setTab('profile');
   setImportResult(imported ?? null);
@@ -562,14 +588,16 @@ export default function JdResearchClient({
  };
 
  const moveToBackground = () => {
-  stopActive();
+  // Keep the active NDJSON stream running in the background while returning the composer to idle
+  bgModeRef.current = true;
+  setBusy(false);
   setActiveId('');
   setReport(null);
   setPartialReport(null);
   setLiveProgress(null);
   setRawText('');
   setThoughts('');
-  setBgTip(L('已转入后台生成', 'Running in background'));
+  setBgTip(L('已转入后台流式生成，可点击上方历史条目随时查看实时进度', 'Streaming in background'));
  };
 
  useEffect(() => {
@@ -692,6 +720,16 @@ export default function JdResearchClient({
  }, [username]);
 
  const openRecord = (rec: CloudRecord) => {
+  if (streamingRecordIdRef.current && rec.id === streamingRecordIdRef.current) {
+   bgModeRef.current = false;
+   setError('');
+   setBgTip('');
+   setRenaming(false);
+   setActiveId(rec.id);
+   setReport(null);
+   setBusy(true);
+   return;
+  }
   stopActive();
   setError('');
   setRenaming(false);
@@ -699,6 +737,15 @@ export default function JdResearchClient({
    setReport(null);
    setRawText('');
    void pollLegacyTask(rec);
+   return;
+  }
+  if (rec.status === 'running') {
+   setActiveId(rec.id);
+   setReport(null);
+   setPartialReport(rec.payload?.partialReport ?? null);
+   if (rec.payload?.kind) setKind(rec.payload.kind);
+   if (rec.payload?.source) setSource(rec.payload.source);
+   setError(L('上次流式连接已断开，点击「一键重试」将继续生成（已完成的阶段会自动命中缓存）', 'Stream disconnected — click Retry to resume'));
    return;
   }
   if (rec.status === 'error') {
@@ -846,10 +893,15 @@ export default function JdResearchClient({
   }
 
   stopActive();
+  bgModeRef.current = false;
   setError('');
   setBgTip('');
   setBusy(true);
   setElapsed(0);
+  setConnState('connecting');
+  setStreamChars(0);
+  setStreamTail('');
+  setPingBeats(0);
   setReport(null);
   setPartialReport(null);
   setLiveProgress({
@@ -863,7 +915,7 @@ export default function JdResearchClient({
   });
   setRawText('');
   setThoughts('');
-  setStreamModel('');
+  setStreamModel('Antigravity Agent');
   setStreamThoughts('');
   setImportResult(null);
 
@@ -873,6 +925,12 @@ export default function JdResearchClient({
   timerRef.current = window.setInterval(() => {
    setElapsed(Math.floor((Date.now() - t0) / 1000));
   }, 1000);
+
+  let curRecordId = opts?.reuseRecordId || '';
+  let curTitle = L('岗位专题', 'JD Topic');
+  let curStageKey: JdStageKey = 'profile';
+  let curStage1Cached = false;
+  let resolvedSrc = clean;
 
   try {
    const geminiProxy = getGeminiAutoProxy();
@@ -891,7 +949,7 @@ export default function JdResearchClient({
     signal: ctl.signal,
    });
 
-   if (!r.ok) {
+   if (!r.ok || !r.body) {
     let msg = L('发起调研失败', 'Request failed');
     try {
      const j = (await r.json()) as { error?: string };
@@ -900,83 +958,232 @@ export default function JdResearchClient({
     throw new Error(msg);
    }
 
-   const d = (await r.json()) as {
-    recordId?: string;
-    id?: string;
-    sig?: string;
-    status?: string;
-    stage?: 1 | 2;
-    cached?: boolean;
-    stage1Cached?: boolean;
-    partialReport?: JdResearchReport | null;
-    progress?: JdLiveProgress;
-    title?: string;
-    report?: JdResearchReport | null;
-    rawText?: string;
-    thoughts?: string;
-    usage?: AntigravityUsage;
-    model?: string;
-    cacheKey?: string;
-    ckSig?: string;
-    extractedSource?: string;
-    error?: string;
-   };
-   const resolvedSrc = d.extractedSource || clean;
-   if (d.extractedSource && !clean) setSource(d.extractedSource);
+   setConnState('connected');
    setJdUrl('');
    setImages([]);
 
-   if (d.status === 'completed') {
-    applyReportView(
-     d.recordId || '',
-     d.report ?? null,
-     d.rawText || '',
-     d.thoughts || '',
-     d.model || '',
-     null,
-     resolvedSrc,
-     {
-      cached: d.cached,
-      stage1Cached: d.stage1Cached,
-      usage: d.usage,
-      kind,
-     },
-    );
-    void refreshRecords();
-    stopActive();
-    return;
+   const reader = r.body.getReader();
+   const dec = new TextDecoder();
+   let buf = '';
+   let accThoughts = '';
+   let accTail = '';
+
+   for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+    let nl: number;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+     const line = buf.slice(0, nl).trim();
+     buf = buf.slice(nl + 1);
+     if (!line) continue;
+
+     let ev: {
+      type?: string;
+      recordId?: string;
+      title?: string;
+      extractedSource?: string;
+      stage?: 1 | 2;
+      stepType?: string;
+      step?: string;
+      interactionId?: string;
+      environmentId?: string;
+      text?: string;
+      chars?: number;
+      cached?: boolean;
+      stage1Cached?: boolean;
+      partialReport?: JdResearchReport | null;
+      progress?: JdLiveProgress;
+      report?: JdResearchReport | null;
+      rawText?: string;
+      thoughts?: string;
+      usage?: AntigravityUsage;
+      model?: string;
+      error?: string;
+     };
+     try {
+      ev = JSON.parse(line);
+     } catch {
+      continue;
+     }
+
+     if (ev.recordId && !curRecordId) {
+      curRecordId = ev.recordId;
+     }
+     if (curRecordId) {
+      streamingRecordIdRef.current = curRecordId;
+      if (!bgModeRef.current) setActiveId(curRecordId);
+     }
+     if (ev.extractedSource) {
+      resolvedSrc = ev.extractedSource;
+      if (!clean) setSource(ev.extractedSource);
+     }
+     if (ev.title) curTitle = ev.title;
+     if (ev.model) setStreamModel(ev.model);
+
+     if (ev.type === 'connected') {
+      setConnState('connected');
+      if (ev.progress) {
+       setLiveProgress(ev.progress);
+       curStageKey = ev.progress.activeKey;
+      }
+      if (curRecordId) {
+       upsertJdBgTask({
+        recordId: curRecordId,
+        interactionId: 'stream',
+        sig: 'stream',
+        title: curTitle,
+        createdAt: t0,
+        stageKey: curStageKey,
+        stage1Cached: curStage1Cached,
+       });
+       void refreshRecords();
+      }
+      continue;
+     }
+
+     if (ev.type === 'agent_ready') {
+      setConnState(prev => (prev === 'streaming' || prev === 'thinking' ? prev : 'agent_ready'));
+      setPingBeats(b => b + 1);
+      continue;
+     }
+
+     if (ev.type === 'step' || ev.type === 'ping') {
+      setPingBeats(b => b + 1);
+      if (ev.stepType === 'thought' || ev.stepType === 'thought_signature' || ev.step === 'thinking') {
+       setConnState(prev => (prev === 'streaming' ? prev : 'thinking'));
+      }
+      continue;
+     }
+
+     if (ev.type === 'thought' && typeof ev.text === 'string') {
+      accThoughts += ev.text;
+      setStreamThoughts(accThoughts);
+      setConnState(prev => (prev === 'streaming' ? prev : 'thinking'));
+      continue;
+     }
+
+     if (ev.type === 'delta') {
+      setConnState('streaming');
+      if (typeof ev.chars === 'number') setStreamChars(ev.chars);
+      if (typeof ev.text === 'string' && ev.text) {
+       accTail = (accTail + ev.text).replace(/\s+/g, ' ').slice(-180);
+       setStreamTail(accTail);
+      }
+      if (ev.progress) {
+       setLiveProgress(ev.progress);
+       curStageKey = ev.progress.activeKey;
+       if (ev.progress.roleTitle) curTitle = ev.progress.roleTitle;
+       if (curRecordId) {
+        upsertJdBgTask({
+         recordId: curRecordId,
+         interactionId: 'stream',
+         sig: 'stream',
+         title: curTitle,
+         createdAt: t0,
+         stageKey: curStageKey,
+         stage1Cached: curStage1Cached,
+        });
+       }
+      }
+      continue;
+     }
+
+     if (ev.type === 'stage1') {
+      if (typeof ev.stage1Cached === 'boolean') curStage1Cached = ev.stage1Cached;
+      if (ev.partialReport) {
+       setPartialReport(ev.partialReport);
+       if (ev.partialReport.roleTitle) curTitle = ev.partialReport.roleTitle;
+      }
+      if (ev.thoughts && !accThoughts) {
+       accThoughts = ev.thoughts;
+       setStreamThoughts(accThoughts);
+      }
+      if (ev.progress) {
+       setLiveProgress(ev.progress);
+       curStageKey = ev.progress.activeKey;
+      }
+      if (curRecordId) {
+       upsertJdBgTask({
+        recordId: curRecordId,
+        interactionId: 'stream',
+        sig: 'stream',
+        title: curTitle,
+        createdAt: t0,
+        stageKey: curStageKey,
+        stage1Cached: curStage1Cached,
+       });
+       void refreshRecords();
+      }
+      continue;
+     }
+
+     if (ev.type === 'stage2_start') {
+      accTail = '';
+      setStreamTail('');
+      setStreamChars(0);
+      setConnState('agent_ready');
+      if (ev.progress) {
+       setLiveProgress(ev.progress);
+       curStageKey = ev.progress.activeKey;
+      }
+      continue;
+     }
+
+     if (ev.type === 'done') {
+      const doneId = ev.recordId || curRecordId;
+      streamingRecordIdRef.current = '';
+      if (doneId) removeJdBgTask(doneId);
+      const finalThoughts = ev.thoughts || accThoughts;
+      if (!bgModeRef.current) {
+       applyReportView(
+        doneId,
+        ev.report ?? null,
+        ev.rawText || '',
+        finalThoughts,
+        ev.model || '',
+        null,
+        resolvedSrc,
+        {
+         cached: ev.cached,
+         stage1Cached: ev.stage1Cached ?? curStage1Cached,
+         usage: ev.usage,
+         kind,
+        },
+       );
+      } else if (doneId) {
+       notifyJdTaskDone({
+        recordId: doneId,
+        title: ev.report?.roleTitle || curTitle,
+        status: 'completed',
+       });
+      }
+      void refreshRecords();
+      stopActive();
+      return;
+     }
+
+     if (ev.type === 'error') {
+      const errId = ev.recordId || curRecordId;
+      streamingRecordIdRef.current = '';
+      if (errId) removeJdBgTask(errId);
+      throw new Error(ev.error || L('调研流式生成中断，请点击一键重试', 'Stream interrupted'));
+     }
+    }
    }
-   if (!d.id || !d.sig) throw new Error(d.error || L('未返回任务 ID', 'Missing task ID'));
-   void refreshRecords();
-   await pollLegacyTask(
-    {
-     id: d.recordId || '',
-     title: d.title || L('岗位专题', 'JD Topic'),
-     subtitle: '',
-     status: 'running',
-     interactionId: d.id,
-     sig: d.sig,
-     ckSig: d.ckSig,
-     payload: {
-      kind,
-      cacheKey: d.cacheKey,
-      source: resolvedSrc,
-      stage: d.stage || 1,
-      stage1Cached: d.stage1Cached,
-      partialReport: d.partialReport,
-     },
-     createdAt: t0,
-     updatedAt: t0,
-    },
-    {
-     stage1Cached: d.stage1Cached,
-     partialReport: d.partialReport,
-     progress: d.progress,
-    },
-   );
   } catch (e) {
+   streamingRecordIdRef.current = '';
+   if (curRecordId) removeJdBgTask(curRecordId);
    if (!ctl.signal.aborted) {
     setError((e as Error).message || L('调研失败', 'Research failed'));
+    if (bgModeRef.current && curRecordId) {
+     notifyJdTaskDone({
+      recordId: curRecordId,
+      title: curTitle,
+      status: 'error',
+      error: (e as Error).message || L('调研失败', 'Research failed'),
+     });
+    }
    }
    stopActive();
   }
@@ -1406,6 +1613,20 @@ export default function JdResearchClient({
            )}
           </span>
          </span>
+         <span className={'jdr-conn-pill ' + (connState === 'connecting' ? 'wait' : 'ok')}>
+          <i className="jdr-conn-dot" />
+          <span>
+           {connState === 'connecting'
+            ? L('连接中…', 'Connecting…')
+            : connState === 'connected'
+              ? L('已连接流式通道', 'Stream Connected')
+              : connState === 'agent_ready'
+                ? L('Agent 已连接 · 思考中', 'Agent Ready · Thinking')
+                : connState === 'thinking'
+                  ? L('实时思考中', 'Streaming Thoughts')
+                  : L(`流式输出 · ${streamChars} 字`, `Streaming · ${streamChars} chars`)}
+          </span>
+         </span>
          {liveProgress?.stage1Cached && (
           <span className="jdr-cache-tag">
            <Zap size={12} />
@@ -1446,14 +1667,28 @@ export default function JdResearchClient({
         })}
        </div>
 
-       {streamThoughts && (
-        <div className="arch-thoughts">
-         <div className="arch-thoughts-btn" style={{ cursor: 'default' }}>
-          <span>{L('思考过程', 'Reasoning')}</span>
-         </div>
-         <pre ref={thinkBoxRef} className="arch-thoughts-body">
-          {streamThoughts}
-         </pre>
+       <div className="arch-thoughts">
+        <div className="arch-thoughts-btn" style={{ cursor: 'default' }}>
+         <span>{L('思考过程', 'Reasoning')}</span>
+        </div>
+        <pre ref={thinkBoxRef} className="arch-thoughts-body">
+         {streamThoughts
+          ? `${streamThoughts}${connState === 'thinking' ? ' ▋' : ''}`
+          : connState === 'connecting'
+            ? L('正在建立流式连接…', 'Establishing stream connection…')
+            : connState === 'connected'
+              ? L('✓ 已连接流式通道，正在建立 Agent 远程推理会话…', '✓ Stream connected, initializing Agent session…')
+              : L(
+                 `✓ Agent 会话已连接，正在深度拆解岗位技术栈与考点权重…${pingBeats > 1 ? `（心跳 #${pingBeats}）` : ''} ▋`,
+                 `✓ Agent session active, analyzing JD…${pingBeats > 1 ? ` (beat #${pingBeats})` : ''} ▋`,
+                )}
+        </pre>
+       </div>
+
+       {streamTail && (
+        <div className="jdr-stream-tail" aria-live="off">
+         <span className="jdr-tail-tag">{L('实时输出流', 'Live Stream')}</span>
+         <code>{streamTail} ▋</code>
         </div>
        )}
 

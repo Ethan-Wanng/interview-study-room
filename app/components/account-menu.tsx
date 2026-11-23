@@ -8,7 +8,7 @@ import {getGradeThinkingSpec,getTutorThinkingSpec,THINKING_META,type ModelThinki
 import {TUTOR_MODELS} from '@/lib/tutor-types';
 import {GRADE_MODELS} from '@/lib/grade-types';
 type ProxyCheckItem={
- id:'primary'|'standby'|'direct'|'gemini4';
+ id:'primary'|'standby'|'direct'|'gemini4'|'agent';
  protocol:string;
  ok:boolean;
  state:'ok'|'busy'|'quota'|'blocked'|'error';
@@ -61,6 +61,7 @@ function GeminiProxyRow({L}:{L:(zh:string,en:string)=>string}){
   id==='primary'?L('当前节点','Primary')
   :id==='standby'?L('备用节点','Standby')
   :id==='direct'?L('直连','Direct')
+  :id==='agent'?L('Agent 引擎','Agent')
   :'Gemini 4';
  const stateLabel=(c:ProxyCheckItem)=>
   c.state==='ok'?L('正常','OK')
@@ -107,9 +108,9 @@ function GeminiProxyRow({L}:{L:(zh:string,en:string)=>string}){
        </span>
       </div>
      ))}
-     {res.quotas&&res.quotas.filter(q=>!q.model.startsWith('antigravity-')).length>0&&(
+     {res.quotas&&res.quotas.length>0&&(
       <div className="settings-net-quotas">
-       {res.quotas.filter(q=>!q.model.startsWith('antigravity-')).map(q=>(
+       {res.quotas.map(q=>(
         <div key={q.model} className="settings-net-qrow">
          <b>{q.label}</b>
          <span>RPM {q.rpm.used}/{q.rpm.limit} · TPM {fmtTok(q.tpm.used)}/{fmtTok(q.tpm.limit)} · RPD {q.rpd.used}/{q.rpd.limit}{q.coolingSec>0?` (${q.coolingSec}s)`:''}</span>

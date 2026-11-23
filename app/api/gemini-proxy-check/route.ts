@@ -12,7 +12,7 @@ export const dynamic = 'force-dynamic';
 const noCache = { 'Cache-Control': 'no-store' };
 
 export type ProxyCheckItem = {
- id: 'primary' | 'standby' | 'direct' | 'gemini4';
+ id: 'primary' | 'standby' | 'direct' | 'gemini4' | 'agent';
  host: string;
  protocol: string;
  ok: boolean;
@@ -54,6 +54,8 @@ const REGION_PROBE_BODY = JSON.stringify({
 
 // Use GET /v1beta/models/gemini-4-hydrogen so network checks consume 0 Gemini 4 RPD/RPM quota.
 const GEMINI4_PROBE_PATH = '/v1beta/models/gemini-4-hydrogen';
+// Lightweight GET probe on Interactions API (/v1beta/interactions) so checking Agent connectivity consumes 0 RPD quota.
+const AGENT_PROBE_PATH = '/v1beta/interactions/v1_ChdqRzBFYTZpOEtlN0cwLWtQeUp1RHNBdxIXakcwRWE2aThLZTdHMC1rUHlKdURzQXc';
 
 async function probeNode(
  id: 'primary' | 'standby',
@@ -247,6 +249,86 @@ async function probeGemini4(
  }
 }
 
+async function probeAgent(
+ gatewayBase: string | undefined,
+ envMap: Record<string, string | undefined>,
+ key: string,
+): Promise<ProxyCheckItem> {
+ const t0 = Date.now();
+ const ctl = new AbortController();
+ const timer = setTimeout(() => ctl.abort(), 10000);
+ try {
+  let res: Response;
+  let host = 'antigravity-preview-09-2026';
+  let proto = 'worker-tunnel';
+  if (gatewayBase) {
+   const base = gatewayBase.replace(/\/+$/, '');
+   res = await fetch(`${base}${AGENT_PROBE_PATH}`, {
+    method: 'GET',
+    headers: { 'x-goog-api-key': key },
+    signal: ctl.signal,
+   });
+   proto = res.headers.get('x-gemini-proxy-mode') || 'gateway';
+  } else {
+   const out = await fetchGeminiViaScheduledProxy(
+    AGENT_PROBE_PATH,
+    {
+     method: 'GET',
+     headers: { 'x-goog-api-key': key },
+     signal: ctl.signal,
+     connectTimeoutMs: 5500,
+    },
+    envMap,
+   );
+   res = out.res;
+   host = out.node.host;
+   proto = out.node.kind;
+  }
+  const body = (await res.text()).slice(0, 1024);
+  if (isLocationBlocked(body)) {
+   return {
+    id: 'agent',
+    host,
+    protocol: proto,
+    ok: false,
+    state: 'blocked',
+    status: res.status,
+    ms: Date.now() - t0,
+    detail: 'location_blocked',
+   };
+  }
+  // 200 (found) or 404/400 JSON from Interactions service proves /v1beta/interactions is reachable & unblocked
+  const isReachableNotFound =
+   (res.status === 404 || res.status === 400) &&
+   (body.includes('"error"') || body.includes('interaction'));
+  const effectiveStatus = isReachableNotFound ? 200 : res.status;
+  const c = classifyHttp(effectiveStatus, body);
+  return {
+   id: 'agent',
+   host,
+   protocol: proto,
+   ok: c.ok,
+   state: c.state,
+   status: effectiveStatus,
+   ms: Date.now() - t0,
+   detail: c.detail,
+  };
+ } catch (e) {
+  return {
+   id: 'agent',
+   host: 'antigravity-preview-09-2026',
+   protocol: gatewayBase ? 'gateway' : 'worker-tunnel',
+   ok: false,
+   state: 'error',
+   status: 0,
+   ms: Date.now() - t0,
+   detail: compactErr(e),
+  };
+ } finally {
+  clearTimeout(timer);
+ }
+}
+
 export async function POST(req: Request) {
  try {
   assertSameOrigin(req);
@@ -271,19 +353,31 @@ export async function POST(req: Request) {
 
   const [checks, allQuotas] = await Promise.all([
    gatewayBase
-    ? Promise.all([probeGateway(gatewayBase, gmKey), probeDirect(gmKey), probeGemini4(gatewayBase, e, gmKey)])
+    ? Promise.all([
+       probeGateway(gatewayBase, gmKey),
+       probeDirect(gmKey),
+       probeGemini4(gatewayBase, e, gmKey),
+       probeAgent(gatewayBase, e, gmKey),
+      ])
     : Promise.all([
        probeNode('primary', sched.primary, gmKey),
        probeNode('standby', sched.standby, gmKey),
        probeDirect(gmKey),
        probeGemini4(undefined, e, gmKey),
+       probeAgent(undefined, e, gmKey),
       ]),
    readSiteGeminiQuotas(),
   ]);
 
-  // Never expose raw proxy hostnames, Antigravity internal quota, or cache hit stats in the client response.
-  const sanitizedChecks = checks.map(({ host: _host, ...rest }) => rest);
-  const quotas = allQuotas.filter(q => !q.model.startsWith('antigravity-'));
+  const agentQuota = allQuotas.find(q => q.model === 'antigravity-preview-09-2026');
+  const sanitizedChecks = checks.map(({ host: _host, ...rest }) => {
+   if (rest.id === 'agent' && rest.state === 'ok' && agentQuota) {
+    if (agentQuota.coolingSec > 0 || agentQuota.rpd.used >= agentQuota.rpd.limit) {
+     return { ...rest, state: 'quota' as const, detail: '429' };
+    }
+   }
+   return rest;
+  });
 
   return Response.json(
    {
@@ -292,7 +386,7 @@ export async function POST(req: Request) {
     colo: cfColo,
     mode: gatewayBase ? 'gateway' : 'worker-tunnel',
     checks: sanitizedChecks,
-    quotas,
+    quotas: allQuotas,
    },
    { headers: noCache },
   );

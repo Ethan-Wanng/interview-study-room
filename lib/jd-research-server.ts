@@ -109,14 +109,22 @@ export function getJdResearchStage1SystemPrompt(): string {
 
 严格规则：
 1. 自主决策规模：依据 JD / 面经的技术广度与考察深度，自主判定 \`inferredLevel\`（如「校招 / 初级」「中高级」「资深 / 架构」）、\`prepDays\`（如「5 天」「7 天」「14 天」「21 天」）与 \`roadmap\` 阶段数（3–4 阶段），\`dimensions\` 权重之和尽量为 100。
-2. 必须且只能输出**一个合法 JSON 对象**（用 \`\`\`json 和 \`\`\` 包裹，不要在代码块外写任何解释文字），字段严格按下方顺序输出。
+2. **先输出思考过程再输出 JSON**：
+   - 必须在开头先用 \`<think>...\</think>\` 标签输出 4–6 行精炼的中文思考过程（依次拆解：① 岗位核心技术栈与业务场景定位；② 目标职级与建议备考周期的判断依据；③ 候选人最容易踩的 3 个高频扣分盲区；④ 分阶段复习路径与站内课程关卡的映射思路）。
+   - \`</think>\` 结束后，换行输出**一个合法 JSON 对象**（用 \`\`\`json 和 \`\`\` 包裹，不要在代码块外写其他解释文字），字段严格按下方顺序输出。
 3. 复习路径中的 \`siteLinks\` 只能从下方「站内真实课程目录」中选择准确存在的相对路径，严禁编造 URL。
 4. 所有输出使用简体中文。
 
 【站内真实课程目录】
 ${promptText}
 
-【必须严格遵守的 JSON 结构与字段顺序】
+【必须严格遵守的输出格式（先 <think> 思考过程，后 JSON）】
+<think>
+1. 岗位定位与技术栈拆解：...
+2. 职级难度与备考周期推导：...
+3. 核心考点权重与高频扣分盲区分析：...
+4. 分阶段复习路径与站内关卡匹配规划：...
+</think>
 \`\`\`json
 {
   "roleTitle": "岗位或面经主题名称（25字内）",
@@ -163,10 +171,16 @@ export function getJdResearchStage2SystemPrompt(): string {
    - \`studyQuizzes[i].quizzes\` 专用于「学习」模块的阶段巩固练习，必须一一对应第 1 步的每个复习路径阶段（\`phaseIndex\` 从 0 开始），紧扣该阶段目标，**每个阶段固定出 5 道不同题型的学习题：单选 (\`single\`)、多选 (\`multi\`)、填空 (\`fill\`)、简答 (\`short\`)、代码 (\`code\`) 各 1 题**（若阶段偏架构/运维，代码题可出核心数据结构、并发控制、SQL、配置脚本或关键伪代码实现）。
    - \`questions\` 专用于「面试」模块的高频开放式深度问答与追问演练（共 6–10 题），**必须与 \`studyQuizzes\` 中的所有学习题目角度不同、题干绝不重复**。
 2. 面试题 \`questions\` 的 \`answer\` 必须深入、结构化、按点清晰换行（可用 \`\`\` 代码块），包含关键原理、边界条件或生产排障思路（每题 180–450 字，精炼硬核，避免冗长废话以防截断）。
-3. 必须且只能输出**一个合法 JSON 对象**（用 \`\`\`json 和 \`\`\` 包裹，不要在代码块外写任何解释文字），字段严格按下方顺序输出。
+3. **先输出思考过程再输出 JSON**：
+   - 必须在开头先用 \`<think>...\</think>\` 标签输出 4–6 行精炼的中文出题思考过程（依次阐述：① 各复习阶段的五种题型（单选/多选/填空/简答/代码）考察切入点设计；② 面试专题题库如何避开常规死记硬背八股、紧扣该 JD 真实生产场景设计连环追问）。
+   - \`</think>\` 结束后，换行输出**一个合法 JSON 对象**（用 \`\`\`json 和 \`\`\` 包裹，不要在代码块外写其他解释文字），字段严格按下方顺序输出。
 4. 所有输出使用简体中文。
 
-【必须严格遵守的 JSON 结构与字段顺序】
+【必须严格遵守的输出格式（先 <think> 思考过程，后 JSON）】
+<think>
+1. 各阶段五题型学习题设计思路：...
+2. 场景化高频面试题与追问设计思路：...
+</think>
 \`\`\`json
 {
   "studyQuizzes": [
@@ -275,8 +289,124 @@ export function buildJdResearchInput(opts: {
  return buildJdStage1Input(opts);
 }
 
+export function extractThoughtsAndJson(raw: string): { thoughts: string; jsonRaw: string } {
+ let s = raw || '';
+ const thoughtsParts: string[] = [];
+ s = s.replace(/<think>([\s\S]*?)<\/think>/gi, (_m, inner: string) => {
+  if (inner && inner.trim()) thoughtsParts.push(inner.trim());
+  return '';
+ });
+ // Handle unclosed <think> before ```json or {"roleTitle" / {"studyQuizzes"
+ const openIdx = s.toLowerCase().indexOf('<think>');
+ if (openIdx >= 0) {
+  const afterOpen = s.slice(openIdx + 7);
+  const fenceIdx = afterOpen.search(/```json|```|\{\s*"(?:roleTitle|studyQuizzes|questions)"/);
+  if (fenceIdx >= 0) {
+   const tPart = afterOpen.slice(0, fenceIdx).trim();
+   if (tPart) thoughtsParts.push(tPart);
+   s = s.slice(0, openIdx) + afterOpen.slice(fenceIdx);
+  }
+ }
+ return {
+  thoughts: thoughtsParts.join('\n\n').trim(),
+  jsonRaw: s.trim(),
+ };
+}
+
+export function createThinkJsonStreamSplitter(callbacks: {
+ onThoughtDelta: (delta: string) => void;
+ onJsonDelta: (delta: string, fullJsonBuf: string) => void;
+}) {
+ let mode: 'init' | 'think' | 'json' = 'init';
+ let pending = '';
+ let jsonBuf = '';
+
+ const emitJson = (chunk: string) => {
+  if (!chunk) return;
+  jsonBuf += chunk;
+  callbacks.onJsonDelta(chunk, jsonBuf);
+ };
+
+ return {
+  push(delta: string) {
+   if (!delta) return;
+   if (mode === 'json') {
+    emitJson(delta);
+    return;
+   }
+   pending += delta;
+
+   if (mode === 'init') {
+    const trimmed = pending.trimStart();
+    if (!trimmed) return;
+    if (trimmed.toLowerCase().startsWith('<think>')) {
+     const idx = pending.toLowerCase().indexOf('<think>');
+     pending = pending.slice(idx + 7);
+     mode = 'think';
+    } else if (trimmed.startsWith('```') || trimmed.startsWith('{')) {
+     mode = 'json';
+     const out = pending;
+     pending = '';
+     emitJson(out);
+     return;
+    } else if (trimmed.length >= 8 && !'<think>'.startsWith(trimmed.toLowerCase())) {
+     // Started directly with plain text thoughts before ```json or {
+     mode = 'think';
+    } else {
+     return;
+    }
+   }
+
+   if (mode === 'think') {
+    const closeIdx = pending.toLowerCase().indexOf('</think>');
+    if (closeIdx >= 0) {
+     const thoughtChunk = pending.slice(0, closeIdx);
+     if (thoughtChunk) callbacks.onThoughtDelta(thoughtChunk);
+     const rest = pending.slice(closeIdx + 8).replace(/^\s+/, '');
+     pending = '';
+     mode = 'json';
+     if (rest) emitJson(rest);
+     return;
+    }
+    // Also detect if model forgot </think> and directly started ```json or {"roleTitle"
+    const jsonStartMatch = pending.match(/```json|\{\s*"(?:roleTitle|studyQuizzes|questions)"/);
+    if (jsonStartMatch && jsonStartMatch.index !== undefined) {
+     const thoughtChunk = pending.slice(0, jsonStartMatch.index);
+     if (thoughtChunk) callbacks.onThoughtDelta(thoughtChunk);
+     const rest = pending.slice(jsonStartMatch.index);
+     pending = '';
+     mode = 'json';
+     emitJson(rest);
+     return;
+    }
+    // Keep last 9 chars in buffer in case '</think>' is split across two chunks
+    if (pending.length > 9) {
+     const flushLen = pending.length - 9;
+     const thoughtChunk = pending.slice(0, flushLen);
+     pending = pending.slice(flushLen);
+     callbacks.onThoughtDelta(thoughtChunk);
+    }
+   }
+  },
+  flush() {
+   if (mode === 'think' && pending) {
+    const clean = pending.replace(/<\/?think>/gi, '');
+    if (clean) callbacks.onThoughtDelta(clean);
+    pending = '';
+   } else if (mode === 'init' && pending) {
+    emitJson(pending);
+    pending = '';
+   }
+  },
+  getJsonBuf() {
+   return jsonBuf;
+  },
+ };
+}
+
 function extractJsonText(raw: string): string | null {
- const trimmed = raw
+ const { jsonRaw } = extractThoughtsAndJson(raw);
+ const trimmed = jsonRaw
   .trim()
   .replace(/^```(?:json)?\s*\r?\n?/i, '')
   .replace(/\r?\n?```\s*$/, '')

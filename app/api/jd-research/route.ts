@@ -5,6 +5,7 @@ import {
  AntigravityError,
  pollAntigravityInteraction,
  startAntigravityInteraction,
+ streamAntigravityInteraction,
  type AntigravityUsage,
 } from '@/lib/antigravity-agent';
 import { readPromptCache, sha256Hex, writePromptCache } from '@/lib/prompt-cache';
@@ -12,6 +13,8 @@ import { getAiInterviewRecord, saveAiInterviewRecord } from '@/lib/ai-interview-
 import {
  buildJdStage1Input,
  buildJdStage2Input,
+ createThinkJsonStreamSplitter,
+ extractThoughtsAndJson,
  getJdResearchStage1SystemPrompt,
  getJdResearchStage2SystemPrompt,
  inspectJdStreamProgress,
@@ -151,153 +154,468 @@ export async function POST(req: Request) {
   const hashHex = await sha256Hex([kind, normSource]);
   const cacheKey = 'jd-auto-v2:' + hashHex;
   const stage1CacheKey = 'jd-s1-v2:' + hashHex;
+  const initialTitle = draftTitle(source, kind);
 
-  // 1. Check Full-Report D1 deterministic cache first (0 token cost, instant response)
-  if (!bypassCache) {
-   const hit = await readPromptCache<CachedJdPayload>(cacheKey);
-   if (
-    hit?.payload?.report &&
-    hit.payload.report.roadmap.length > 0 &&
-    (hit.payload.report.questions.length > 0 || hasStructuredStudyQuizzes(hit.payload.report))
-   ) {
-    const rep = hit.payload.report;
-    const stored: StoredJdRecordPayload = {
-     kind,
-     source,
-     cacheKey,
-     stage1CacheKey,
-     cached: true,
-     report: rep,
-     rawText: hit.payload.rawText || '',
-     thoughts: hit.payload.thoughts || '',
-     usage: hit.payload.usage,
+  const enc = new TextEncoder();
+  let closed = false;
+  const stream = new ReadableStream<Uint8Array>({
+   async start(controller) {
+    let lastSendAt = Date.now();
+    const send = (ev: Record<string, unknown>) => {
+     if (closed) return;
+     lastSendAt = Date.now();
+     try {
+      controller.enqueue(enc.encode(JSON.stringify(ev) + '\n'));
+     } catch {
+      closed = true;
+     }
     };
-    await saveAiInterviewRecord({
-     id: recordId,
-     userId: user.id,
-     kind: 'jd-research',
-     title: rep.roleTitle || draftTitle(source, kind),
-     subtitle: makeSubtitle(rep),
-     status: 'completed',
-     payload: stored,
-    });
-    return Response.json(
-     {
+
+    let activeStage: 1 | 2 = 1;
+    let activeStep = 'connecting';
+    const pingTimer = setInterval(() => {
+     if (closed) return;
+     if (Date.now() - lastSendAt >= 2400) {
+      send({ type: 'ping', stage: activeStage, step: activeStep });
+     }
+    }, 2500);
+
+    try {
+     // Immediately confirm stream connection so client UI transitions out of waiting state in <100ms
+     send({
+      type: 'connected',
       recordId,
-      status: 'completed',
-      cached: true,
-      report: rep,
-      rawText: hit.payload.rawText || '',
-      thoughts: hit.payload.thoughts || '',
-      usage: hit.payload.usage,
+      title: initialTitle,
       extractedSource: source,
-     },
-     { headers: noCache },
-    );
-   }
+      stage: 1,
+      progress: inspectJdStreamProgress(1, '', null, false),
+     });
 
-   // 2. Check Stage 1 (Profile + Roadmap) D1 cache: if hit, jump directly to Stage 2!
-   const s1Hit = await readPromptCache<CachedStage1Payload>(stage1CacheKey);
-   if (s1Hit?.payload?.report && s1Hit.payload.report.roadmap.length > 0) {
-    const s1Rep = s1Hit.payload.report;
-    const started2 = await startAntigravityInteraction({
-     systemInstruction: getJdResearchStage2SystemPrompt(),
-     input: buildJdStage2Input({ kind, source, stage1: s1Rep }),
-     geminiProxy,
-    });
-    const sig = await signToken(user.id, started2.id);
-    const ckSig = await signToken(user.id, cacheKey);
-    const pendingPayload: StoredJdRecordPayload = {
-     kind,
-     source,
-     cacheKey,
-     stage1CacheKey,
-     stage: 2,
-     stage1Cached: true,
-     partialReport: s1Rep,
-     stage1RawText: s1Hit.payload.rawText || '',
-     stage1Thoughts: s1Hit.payload.thoughts || '',
-     stage1Usage: s1Hit.payload.usage,
-     report: null,
-     rawText: '',
-     thoughts: s1Hit.payload.thoughts || '',
-    };
-    await saveAiInterviewRecord({
-     id: recordId,
-     userId: user.id,
-     kind: 'jd-research',
-     title: s1Rep.roleTitle || draftTitle(source, kind),
-     subtitle: makeSubtitle(s1Rep),
-     status: 'running',
-     interactionId: started2.id,
-     payload: pendingPayload,
-    });
-    return Response.json(
-     {
-      recordId,
-      id: started2.id,
-      sig,
-      status: started2.status,
+     // 1. Check Full-Report D1 deterministic cache first (0 token cost, instant response)
+     if (!bypassCache) {
+      const hit = await readPromptCache<CachedJdPayload>(cacheKey);
+      if (
+       hit?.payload?.report &&
+       hit.payload.report.roadmap.length > 0 &&
+       (hit.payload.report.questions.length > 0 || hasStructuredStudyQuizzes(hit.payload.report))
+      ) {
+       const rep = hit.payload.report;
+       const stored: StoredJdRecordPayload = {
+        kind,
+        source,
+        cacheKey,
+        stage1CacheKey,
+        cached: true,
+        report: rep,
+        rawText: hit.payload.rawText || '',
+        thoughts: hit.payload.thoughts || '',
+        usage: hit.payload.usage,
+       };
+       await saveAiInterviewRecord({
+        id: recordId,
+        userId: user.id,
+        kind: 'jd-research',
+        title: rep.roleTitle || initialTitle,
+        subtitle: makeSubtitle(rep),
+        status: 'completed',
+        payload: stored,
+       });
+       if (hit.payload.thoughts) {
+        send({ type: 'thought', stage: 1, text: hit.payload.thoughts });
+       }
+       send({
+        type: 'done',
+        recordId,
+        cached: true,
+        stage1Cached: true,
+        report: rep,
+        rawText: hit.payload.rawText || '',
+        thoughts: hit.payload.thoughts || '',
+        usage: hit.payload.usage,
+        extractedSource: source,
+       });
+       return;
+      }
+     }
+
+     let s1Rep: JdResearchReport | null = null;
+     let s1RawText = '';
+     let s1Thoughts = '';
+     let s1Usage: AntigravityUsage | undefined;
+     let stage1Cached = false;
+     let lastInteractionId = '';
+
+     // 2. Check Stage 1 (Profile + Roadmap) D1 cache: if hit, push Stage 1 preview immediately & jump to Stage 2
+     if (!bypassCache) {
+      const s1Hit = await readPromptCache<CachedStage1Payload>(stage1CacheKey);
+      if (s1Hit?.payload?.report && s1Hit.payload.report.roadmap.length > 0) {
+       s1Rep = s1Hit.payload.report;
+       s1RawText = s1Hit.payload.rawText || '';
+       s1Thoughts = s1Hit.payload.thoughts || '';
+       s1Usage = s1Hit.payload.usage;
+       stage1Cached = true;
+       if (s1Thoughts) {
+        send({ type: 'thought', stage: 1, text: s1Thoughts });
+       }
+       send({
+        type: 'stage1',
+        recordId,
+        stage1Cached: true,
+        partialReport: s1Rep,
+        thoughts: s1Thoughts,
+        usage: s1Usage,
+        progress: inspectJdStreamProgress(2, '', s1Rep, true),
+       });
+      }
+     }
+
+     // Save initial running record in D1
+     await saveAiInterviewRecord({
+      id: recordId,
+      userId: user.id,
+      kind: 'jd-research',
+      title: s1Rep?.roleTitle || initialTitle,
+      subtitle: makeSubtitle(s1Rep),
+      status: 'running',
+      payload: {
+       kind,
+       source,
+       cacheKey,
+       stage1CacheKey,
+       stage: s1Rep ? 2 : 1,
+       stage1Cached,
+       partialReport: s1Rep,
+       stage1RawText: s1RawText,
+       stage1Thoughts: s1Thoughts,
+       stage1Usage: s1Usage,
+       report: null,
+       rawText: '',
+       thoughts: s1Thoughts,
+      },
+     });
+
+     // 3. Stream Stage 1 (Profile + Roadmap) if not cached
+     if (!s1Rep) {
+      activeStage = 1;
+      activeStep = 'agent_init';
+      let s1ThoughtBuf = '';
+      const splitter1 = createThinkJsonStreamSplitter({
+       onThoughtDelta: td => {
+        activeStep = 'thinking';
+        s1ThoughtBuf += td;
+        send({ type: 'thought', stage: 1, text: td });
+       },
+       onJsonDelta: (jd, fullJsonBuf) => {
+        activeStep = 'output';
+        send({
+         type: 'delta',
+         stage: 1,
+         text: jd,
+         chars: fullJsonBuf.length,
+         progress: inspectJdStreamProgress(1, fullJsonBuf, null, false),
+        });
+       },
+      });
+
+      const s1Res = await streamAntigravityInteraction({
+       systemInstruction: getJdResearchStage1SystemPrompt(),
+       input: buildJdStage1Input({ kind, source }),
+       geminiProxy,
+       signal: req.signal,
+       onCreated: ({ id, environmentId }) => {
+        lastInteractionId = id;
+        activeStep = 'thinking';
+        send({ type: 'agent_ready', stage: 1, interactionId: id, environmentId });
+       },
+       onStep: st => {
+        activeStep = st;
+        send({ type: 'step', stage: 1, stepType: st });
+       },
+       onKeepAlive: () => {
+        send({ type: 'ping', stage: 1, step: activeStep });
+       },
+       onThoughtDelta: td => {
+        activeStep = 'thinking';
+        s1ThoughtBuf += td;
+        send({ type: 'thought', stage: 1, text: td });
+       },
+       onTextDelta: td => {
+        splitter1.push(td);
+       },
+      });
+
+      splitter1.flush();
+      const extracted1 = extractThoughtsAndJson(s1Res.text);
+      s1RawText = extracted1.jsonRaw || s1Res.text;
+      s1Thoughts = [s1Res.thoughts, s1ThoughtBuf.trim() || extracted1.thoughts].filter(Boolean).join('\n\n').trim();
+      s1Usage = s1Res.usage;
+      s1Rep = parseAndEnrichJdReport(s1Res.text);
+
+      if (!s1Rep || (!s1Rep.roadmap.length && !s1Rep.dimensions.length)) {
+       throw new AntigravityError('考点画像与复习路径解析失败，请点击「一键重试」重新生成。', 502, 'parse_error');
+      }
+
+      await writePromptCache(
+       stage1CacheKey,
+       'jd-stage1',
+       ANTIGRAVITY_AGENT_ID,
+       { report: s1Rep, rawText: s1RawText, thoughts: s1Thoughts, usage: s1Usage } satisfies CachedStage1Payload,
+       7 * 24 * 3600_000,
+      );
+
+      await saveAiInterviewRecord({
+       id: recordId,
+       userId: user.id,
+       kind: 'jd-research',
+       title: s1Rep.roleTitle || initialTitle,
+       subtitle: makeSubtitle(s1Rep),
+       status: 'running',
+       interactionId: lastInteractionId || undefined,
+       payload: {
+        kind,
+        source,
+        cacheKey,
+        stage1CacheKey,
+        stage: 2,
+        stage1Cached: false,
+        partialReport: s1Rep,
+        stage1RawText: s1RawText,
+        stage1Thoughts: s1Thoughts,
+        stage1Usage: s1Usage,
+        report: null,
+        rawText: '',
+        thoughts: s1Thoughts,
+       },
+      });
+
+      send({
+       type: 'stage1',
+       recordId,
+       stage1Cached: false,
+       partialReport: s1Rep,
+       thoughts: s1Thoughts,
+       usage: s1Usage,
+       progress: inspectJdStreamProgress(2, '', s1Rep, false),
+      });
+     }
+
+     // If Stage 1 already contains both study quizzes and interview questions, finish directly
+     if (s1Rep.questions.length > 0 && hasStructuredStudyQuizzes(s1Rep)) {
+      await writePromptCache(
+       cacheKey,
+       'jd-research',
+       ANTIGRAVITY_AGENT_ID,
+       { report: s1Rep, rawText: s1RawText, thoughts: s1Thoughts, usage: s1Usage } satisfies CachedJdPayload,
+       7 * 24 * 3600_000,
+      );
+      await saveAiInterviewRecord({
+       id: recordId,
+       userId: user.id,
+       kind: 'jd-research',
+       title: s1Rep.roleTitle || initialTitle,
+       subtitle: makeSubtitle(s1Rep),
+       status: 'completed',
+       interactionId: lastInteractionId || undefined,
+       payload: {
+        kind,
+        source,
+        cacheKey,
+        stage1CacheKey,
+        stage: 2,
+        cached: false,
+        stage1Cached,
+        report: s1Rep,
+        rawText: s1RawText,
+        thoughts: s1Thoughts,
+        usage: s1Usage,
+       },
+      });
+      send({
+       type: 'done',
+       recordId,
+       cached: false,
+       stage1Cached,
+       report: s1Rep,
+       rawText: s1RawText,
+       thoughts: s1Thoughts,
+       usage: s1Usage,
+       extractedSource: source,
+      });
+      return;
+     }
+
+     // 4. Stream Stage 2 (5-Type Study Quizzes per Roadmap Stage + Interview Question Bank)
+     activeStage = 2;
+     activeStep = 'agent_init';
+     send({
+      type: 'stage2_start',
       stage: 2,
-      stage1Cached: true,
-      partialReport: s1Rep,
-      progress: inspectJdStreamProgress(2, '', s1Rep, true),
-      title: s1Rep.roleTitle || draftTitle(source, kind),
+      stage1Cached,
+      progress: inspectJdStreamProgress(2, '', s1Rep, stage1Cached),
+     });
+
+     const stage2Header = s1Thoughts ? '\n\n── 阶段二：按复习路径设计五题型学习题与面试题库 ──\n' : '';
+     if (stage2Header) {
+      send({ type: 'thought', stage: 2, text: stage2Header });
+     }
+
+     let s2ThoughtBuf = '';
+     const splitter2 = createThinkJsonStreamSplitter({
+      onThoughtDelta: td => {
+       activeStep = 'thinking';
+       s2ThoughtBuf += td;
+       send({ type: 'thought', stage: 2, text: td });
+      },
+      onJsonDelta: (jd, fullJsonBuf) => {
+       activeStep = 'output';
+       send({
+        type: 'delta',
+        stage: 2,
+        text: jd,
+        chars: fullJsonBuf.length,
+        progress: inspectJdStreamProgress(2, fullJsonBuf, s1Rep, stage1Cached),
+       });
+      },
+     });
+
+     const s2Res = await streamAntigravityInteraction({
+      systemInstruction: getJdResearchStage2SystemPrompt(),
+      input: buildJdStage2Input({ kind, source, stage1: s1Rep }),
+      geminiProxy,
+      signal: req.signal,
+      onCreated: ({ id, environmentId }) => {
+       lastInteractionId = id;
+       activeStep = 'thinking';
+       send({ type: 'agent_ready', stage: 2, interactionId: id, environmentId });
+      },
+      onStep: st => {
+       activeStep = st;
+       send({ type: 'step', stage: 2, stepType: st });
+      },
+      onKeepAlive: () => {
+       send({ type: 'ping', stage: 2, step: activeStep });
+      },
+      onThoughtDelta: td => {
+       activeStep = 'thinking';
+       s2ThoughtBuf += td;
+       send({ type: 'thought', stage: 2, text: td });
+      },
+      onTextDelta: td => {
+       splitter2.push(td);
+      },
+     });
+
+     splitter2.flush();
+     const extracted2 = extractThoughtsAndJson(s2Res.text);
+     const s2RawText = extracted2.jsonRaw || s2Res.text;
+     const s2Thoughts = [s2Res.thoughts, s2ThoughtBuf.trim() || extracted2.thoughts].filter(Boolean).join('\n\n').trim();
+
+     const finalReport = mergeStage1AndStage2Report(s1Rep, s2Res.text);
+     const combinedThoughts = [s1Thoughts, s2Thoughts ? (s1Thoughts ? `── 阶段二：按复习路径设计五题型学习题与面试题库 ──\n${s2Thoughts}` : s2Thoughts) : '']
+      .filter(Boolean)
+      .join('\n\n')
+      .trim();
+     const combinedRaw = [s1RawText, s2RawText].filter(Boolean).join('\n\n');
+     const combinedUsage = combineUsage(s1Usage, s2Res.usage);
+
+     if (finalReport && (finalReport.questions.length > 0 || hasStructuredStudyQuizzes(finalReport))) {
+      await writePromptCache(
+       cacheKey,
+       'jd-research',
+       ANTIGRAVITY_AGENT_ID,
+       {
+        report: finalReport,
+        rawText: combinedRaw,
+        thoughts: combinedThoughts,
+        usage: combinedUsage,
+       } satisfies CachedJdPayload,
+       7 * 24 * 3600_000,
+      );
+     }
+
+     const stored: StoredJdRecordPayload = {
+      kind,
+      source,
       cacheKey,
-      ckSig,
+      stage1CacheKey,
+      stage: 2,
+      cached: false,
+      stage1Cached,
+      partialReport: null,
+      report: finalReport,
+      rawText: combinedRaw,
+      thoughts: combinedThoughts,
+      usage: combinedUsage,
+     };
+     await saveAiInterviewRecord({
+      id: recordId,
+      userId: user.id,
+      kind: 'jd-research',
+      title: finalReport?.roleTitle || s1Rep.roleTitle || initialTitle,
+      subtitle: makeSubtitle(finalReport || s1Rep),
+      status: finalReport ? 'completed' : 'error',
+      interactionId: lastInteractionId || undefined,
+      payload: finalReport ? stored : { ...stored, error: '题库解析不完整，请点击「一键重试」继续生成。' },
+     });
+
+     send({
+      type: 'done',
+      recordId,
+      cached: false,
+      stage1Cached,
+      report: finalReport,
+      rawText: combinedRaw,
+      thoughts: combinedThoughts,
+      usage: combinedUsage,
       extractedSource: source,
-     },
-     { headers: noCache },
-    );
-   }
-  }
-
-  // 3. Start Stage 1 managed background interaction (Profile + Roadmap)
-  const started = await startAntigravityInteraction({
-   systemInstruction: getJdResearchStage1SystemPrompt(),
-   input: buildJdStage1Input({ kind, source }),
-   geminiProxy,
-  });
-
-  const sig = await signToken(user.id, started.id);
-  const ckSig = await signToken(user.id, cacheKey);
-
-  const pendingPayload: StoredJdRecordPayload = {
-   kind,
-   source,
-   cacheKey,
-   stage1CacheKey,
-   stage: 1,
-   report: null,
-   rawText: '',
-   thoughts: '',
-  };
-  await saveAiInterviewRecord({
-   id: recordId,
-   userId: user.id,
-   kind: 'jd-research',
-   title: draftTitle(source, kind),
-   subtitle: '',
-   status: 'running',
-   interactionId: started.id,
-   payload: pendingPayload,
-  });
-
-  return Response.json(
-   {
-    recordId,
-    id: started.id,
-    sig,
-    status: started.status,
-    stage: 1,
-    progress: inspectJdStreamProgress(1, '', null, false),
-    title: draftTitle(source, kind),
-    cacheKey,
-    ckSig,
-    extractedSource: source,
+     });
+    } catch (e) {
+     if (!req.signal?.aborted) {
+      const msg =
+       e instanceof AuthError || e instanceof AntigravityError
+        ? e.message
+        : '深度调研流式生成中断，请点击「一键重试」（若阶段一已完成将直接从阶段二继续）。';
+      try {
+       const prev = await getAiInterviewRecord<StoredJdRecordPayload>(user.id, recordId);
+       await saveAiInterviewRecord({
+        id: recordId,
+        userId: user.id,
+        kind: 'jd-research',
+        title: prev?.title || initialTitle,
+        subtitle: prev?.subtitle || '',
+        status: 'error',
+        payload: {
+         ...(prev?.payload || { kind, source, report: null, rawText: '', thoughts: '' }),
+         error: msg,
+        },
+        createdAt: prev?.createdAt,
+       });
+      } catch {}
+      send({ type: 'error', recordId, error: msg });
+     }
+    } finally {
+     clearInterval(pingTimer);
+     if (!closed) {
+      closed = true;
+      try {
+       controller.close();
+      } catch {}
+     }
+    }
    },
-   { headers: noCache },
-  );
+   cancel() {
+    closed = true;
+   },
+  });
+
+  return new Response(stream, {
+   headers: {
+    'Content-Type': 'application/x-ndjson; charset=utf-8',
+    'Cache-Control': 'no-store, no-transform',
+    'X-Accel-Buffering': 'no',
+    'X-Content-Type-Options': 'nosniff',
+   },
+  });
  } catch (e) {
   if (e instanceof AuthError) return Response.json({ error: e.message }, { status: e.status, headers: noCache });
   if (e instanceof AntigravityError) return Response.json({ error: e.message, code: e.code }, { status: e.status, headers: noCache });

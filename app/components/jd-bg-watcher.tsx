@@ -8,6 +8,7 @@ import {
  notifyJdTaskDone,
  removeJdBgTask,
  subscribeJdBgTasks,
+ subscribeJdTaskDone,
  upsertJdBgTask,
  type JdBgTask,
  type JdTaskDoneEvent,
@@ -44,9 +45,11 @@ export default function JdBgWatcher() {
   };
   sync();
   const unsub = subscribeJdBgTasks(sync);
+  const unsubDone = subscribeJdTaskDone(ev => setDoneBanner(ev));
   window.addEventListener('popstate', sync);
   return () => {
    unsub();
+   unsubDone();
    window.removeEventListener('popstate', sync);
   };
  }, []);
@@ -57,6 +60,7 @@ export default function JdBgWatcher() {
   const clock = window.setInterval(() => setNow(Date.now()), 1000);
 
   const pollOne = async (task: JdBgTask) => {
+   if (task.interactionId === 'stream' || !task.sig) return;
    if (pollingRef.current.has(task.recordId)) return;
    pollingRef.current.add(task.recordId);
    try {
