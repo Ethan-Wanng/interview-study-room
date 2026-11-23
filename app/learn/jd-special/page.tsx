@@ -29,7 +29,7 @@ export default async function JdSpecialPage(){
    </div>
   );
  }
- const rows=await listAiInterviewRecords<{kind?:JdInputKind;source?:string;cached?:boolean;stage1Cached?:boolean;usage?:AntigravityUsage;report?:JdResearchReport|null}>(user.id,'jd-research');
+ const rows=await listAiInterviewRecords<{kind?:JdInputKind;source?:string;cached?:boolean;stage1Cached?:boolean;durationMs?:number;usage?:AntigravityUsage;report?:JdResearchReport|null}>(user.id,'jd-research');
  const topics:JdSpecialTopic[]=rows
   .filter(r=>r.status==='completed'&&r.payload?.report&&countJdStudyQuizzes(r.payload.report)>0)
   .map(r=>({
@@ -39,6 +39,7 @@ export default async function JdSpecialPage(){
    source:r.payload.source||'',
    cached:Boolean(r.payload.cached),
    stage1Cached:Boolean(r.payload.stage1Cached),
+   durationMs:r.payload.durationMs,
    usage:r.payload.usage,
    updatedAt:r.updatedAt,
    report:r.payload.report!,

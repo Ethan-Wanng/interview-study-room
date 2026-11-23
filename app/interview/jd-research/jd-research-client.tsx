@@ -12,6 +12,7 @@ import {
  Check,
  ChevronDown,
  ChevronUp,
+ Clock,
  Compass,
  Copy,
  Download,
@@ -58,6 +59,15 @@ import {
 
 const LETTERS = 'ABCDEFGH';
 const fmtTok = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}K` : String(n));
+const fmtDuration = (ms: number, en: boolean) => {
+ const sec = Math.max(0, Math.round(ms / 1000));
+ if (sec < 1) return en ? '<1s' : '<1秒';
+ if (sec < 60) return en ? `${sec}s` : `${sec}秒`;
+ const min = Math.floor(sec / 60);
+ const rem = sec % 60;
+ if (en) return rem > 0 ? `${min}m ${rem}s` : `${min}m`;
+ return rem > 0 ? `${min}分${rem}秒` : `${min}分`;
+};
 
 async function compressJdImage(file: File): Promise<string | null> {
  const url = URL.createObjectURL(file);
@@ -141,6 +151,10 @@ type TabKey = 'profile' | 'roadmap' | 'questions';
 type StoredPayload = {
  kind?: JdInputKind;
  source?: string;
+ hashHex?: string;
+ pipeline?: string;
+ startedAt?: number;
+ durationMs?: number;
  model?: string;
  cacheKey?: string;
  stage?: 1 | 2;
@@ -327,6 +341,9 @@ export default function JdResearchClient({
  const [reportCached, setReportCached] = useState(false);
  const [reportStage1Cached, setReportStage1Cached] = useState(false);
  const [reportUsage, setReportUsage] = useState<AntigravityUsage | undefined>(undefined);
+ const [reportDurationMs, setReportDurationMs] = useState<number | undefined>(undefined);
+ const [fillingStepIdx, setFillingStepIdx] = useState<number | null>(null);
+ const [fillStepErr, setFillStepErr] = useState('');
  const [thoughtsOpen, setThoughtsOpen] = useState(false);
  const [sourceOpen, setSourceOpen] = useState(false);
  const [tab, setTab] = useState<TabKey>('profile');
@@ -396,7 +413,13 @@ export default function JdResearchClient({
   model?: string,
   imported?: { count: number; subject: string } | null,
   src?: string,
-  meta?: { cached?: boolean; stage1Cached?: boolean; usage?: AntigravityUsage; kind?: JdInputKind },
+  meta?: {
+   cached?: boolean;
+   stage1Cached?: boolean;
+   usage?: AntigravityUsage;
+   durationMs?: number;
+   kind?: JdInputKind;
+  },
  ) => {
   setActiveId(recId);
   setReport(rep);
@@ -408,6 +431,8 @@ export default function JdResearchClient({
   setReportCached(Boolean(meta?.cached));
   setReportStage1Cached(Boolean(meta?.stage1Cached));
   setReportUsage(meta?.usage);
+  setReportDurationMs(meta?.durationMs);
+  setFillStepErr('');
   if (meta?.kind) setKind(meta.kind);
   if (typeof src === 'string' && src) setSource(src);
   setThoughtsOpen(Boolean(th && th.trim()));
@@ -423,6 +448,75 @@ export default function JdResearchClient({
    setSelected(sel);
    setExpandedQ({ 0: true });
    setTargetSubject('mine');
+  }
+ };
+
+ const fillRoadmapPhase = async (stepIdx: number) => {
+  if (!activeId || fillingStepIdx !== null) return;
+  setFillingStepIdx(stepIdx);
+  setFillStepErr('');
+  try {
+   const r = await fetch('/api/jd-research/fill-phase', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+     recordId: activeId,
+     stepIdx,
+     geminiProxy: getGeminiAutoProxy(),
+    }),
+   });
+   if (!r.ok || !r.body) {
+    let msg = L('补题失败，请重试', 'Generation failed');
+    try {
+     const j = (await r.json()) as { error?: string };
+     if (j.error) msg = j.error;
+    } catch {}
+    throw new Error(msg);
+   }
+   const reader = r.body.getReader();
+   const dec = new TextDecoder();
+   let buf = '';
+   let doneReport: JdResearchReport | undefined;
+   let doneUsage: AntigravityUsage | undefined;
+   for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+    let nl: number;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+     const line = buf.slice(0, nl).trim();
+     buf = buf.slice(nl + 1);
+     if (!line) continue;
+     let ev: {
+      type?: string;
+      report?: JdResearchReport;
+      usage?: AntigravityUsage;
+      error?: string;
+     };
+     try {
+      ev = JSON.parse(line) as typeof ev;
+     } catch {
+      continue;
+     }
+     if (ev.type === 'error') {
+      throw new Error(ev.error || L('补题失败，请重试', 'Generation failed'));
+     }
+     if (ev.type === 'done' && ev.report) {
+      doneReport = ev.report;
+      doneUsage = ev.usage;
+     }
+    }
+   }
+   if (!doneReport) {
+    throw new Error(L('补题未返回完整题库，请再试一次', 'Incomplete result — please try again'));
+   }
+   setReport(doneReport);
+   if (doneUsage) setReportUsage(doneUsage);
+   void refreshRecords();
+  } catch (e) {
+   setFillStepErr((e as Error).message || L('补题失败，请重试', 'Generation failed'));
+  } finally {
+   setFillingStepIdx(null);
   }
  };
 
@@ -619,6 +713,7 @@ export default function JdResearchClient({
         cached: hit.payload.cached,
         stage1Cached: hit.payload.stage1Cached,
         usage: hit.payload.usage,
+        durationMs: hit.payload.durationMs,
         kind: hit.payload.kind,
        },
       );
@@ -672,7 +767,7 @@ export default function JdResearchClient({
    } catch {}
 
    for (const rec of items) {
-    if (rec.status === 'running' && rec.interactionId && rec.sig) {
+    if (rec.status === 'running' && rec.interactionId && rec.sig && rec.payload?.pipeline !== 'v3-steps') {
      upsertJdBgTask({
       recordId: rec.id,
       interactionId: rec.interactionId,
@@ -689,8 +784,14 @@ export default function JdResearchClient({
 
    if (!alive || wantNew || !items.length) return;
    const target = (wantId ? items.find(x => x.id === wantId) : null) || items[0];
-   if (target.status === 'running' && target.interactionId && target.sig) {
+   if (target.status === 'running' && target.interactionId && target.sig && target.payload?.pipeline !== 'v3-steps') {
     void pollLegacyTask(target);
+   } else if (target.status === 'running') {
+    setActiveId(target.id);
+    setPartialReport(target.payload?.partialReport ?? null);
+    if (target.payload?.kind) setKind(target.payload.kind);
+    if (target.payload?.source) setSource(target.payload.source);
+    setError(L('上次调研未完成（已完成步骤已缓存），请点击「一键重试」继续', 'Previous run interrupted — click Retry to resume'));
    } else if (target.status === 'error') {
     setActiveId(target.id);
     if (target.payload?.kind) setKind(target.payload.kind);
@@ -709,6 +810,7 @@ export default function JdResearchClient({
       cached: target.payload.cached,
       stage1Cached: target.payload.stage1Cached,
       usage: target.payload.usage,
+      durationMs: target.payload.durationMs,
       kind: target.payload.kind,
      },
     );
@@ -734,7 +836,7 @@ export default function JdResearchClient({
   stopActive();
   setError('');
   setRenaming(false);
-  if (rec.status === 'running' && rec.interactionId && rec.sig) {
+  if (rec.status === 'running' && rec.interactionId && rec.sig && rec.payload?.pipeline !== 'v3-steps') {
    setReport(null);
    setRawText('');
    void pollLegacyTask(rec);
@@ -746,7 +848,7 @@ export default function JdResearchClient({
    setPartialReport(rec.payload?.partialReport ?? null);
    if (rec.payload?.kind) setKind(rec.payload.kind);
    if (rec.payload?.source) setSource(rec.payload.source);
-   setError(L('上次流式连接已断开，点击「一键重试」将继续生成（已完成的阶段会自动命中缓存）', 'Stream disconnected — click Retry to resume'));
+   setError(L('上次调研未完成（已完成步骤已缓存），请点击「一键重试」继续', 'Previous run interrupted — click Retry to resume'));
    return;
   }
   if (rec.status === 'error') {
@@ -770,6 +872,7 @@ export default function JdResearchClient({
     cached: rec.payload?.cached,
     stage1Cached: rec.payload?.stage1Cached,
     usage: rec.payload?.usage,
+    durationMs: rec.payload?.durationMs,
     kind: rec.payload?.kind,
    },
   );
@@ -788,6 +891,7 @@ export default function JdResearchClient({
    stopActive();
    setActiveId('');
    setReport(null);
+   setReportDurationMs(undefined);
    setPartialReport(null);
    setLiveProgress(null);
    setRawText('');
@@ -904,6 +1008,8 @@ export default function JdResearchClient({
   setStreamTail('');
   setPingBeats(0);
   setReport(null);
+  setReportDurationMs(undefined);
+  setFillStepErr('');
   setPartialReport(null);
   setLiveProgress({
    stage: 1,
@@ -1010,6 +1116,7 @@ export default function JdResearchClient({
    model?: string;
    reason?: string;
    rateLimited?: boolean;
+   hadProgress?: boolean;
    error?: string;
   };
 
@@ -1019,7 +1126,7 @@ export default function JdResearchClient({
    actionName: 'watch' | 'deepseek_step' = 'watch',
   ): Promise<{
    terminal?: WatchEv;
-   cont?: { interactionId: string; lastEventId: string };
+   cont?: { interactionId: string; lastEventId: string; hadProgress?: boolean };
    retryReason?: string;
    retryRateLimited?: boolean;
   }> => {
@@ -1045,7 +1152,7 @@ export default function JdResearchClient({
    const reader = r.body.getReader();
    const dec = new TextDecoder();
    let buf = '';
-   let cont: { interactionId: string; lastEventId: string } | undefined;
+   let cont: { interactionId: string; lastEventId: string; hadProgress?: boolean } | undefined;
    let terminal: WatchEv | undefined;
    let retryReason: string | undefined;
    let retryRateLimited = false;
@@ -1070,6 +1177,7 @@ export default function JdResearchClient({
       cont = {
        interactionId: ev.interactionId || String(payload.interactionId || ''),
        lastEventId: ev.lastEventId || '',
+       hadProgress: Boolean(ev.hadProgress),
       };
       continue;
      }
@@ -1098,7 +1206,7 @@ export default function JdResearchClient({
   };
 
   const makeWatchEventHandler =
-   (optsStep: AntigravityStepConfig, onChars: (n: number) => void) =>
+   (optsStep: AntigravityStepConfig, onChars: (n: number) => void, onProgress?: () => void) =>
    (ev: WatchEv) => {
     if (ev.type === 'connected' || ev.type === 'step' || ev.type === 'ping') {
      setPingBeats(b => b + 1);
@@ -1115,6 +1223,7 @@ export default function JdResearchClient({
      return;
     }
     if (ev.type === 'thought' && typeof ev.text === 'string') {
+     if (ev.text) onProgress?.();
      appendThought(ev.text);
      return;
     }
@@ -1129,6 +1238,9 @@ export default function JdResearchClient({
      if (typeof ev.text === 'string' && ev.text) {
       accTail = (accTail + ev.text).replace(/\s+/g, ' ').slice(-180);
       setStreamTail(accTail);
+     }
+     if ((typeof ev.text === 'string' && ev.text.length > 0) || latestChars > 0) {
+      onProgress?.();
      }
      optsStep.onDelta?.(ev, latestChars);
     }
@@ -1192,6 +1304,7 @@ export default function JdResearchClient({
    let attempt = 0;
    const maxAttempts = 8;
    let watchRateLimitHits = 0;
+   let silentStallCount = 0;
    let lastAttemptWasRateLimit = false;
    let rateBurst429 = 0;
 
@@ -1237,8 +1350,15 @@ export default function JdResearchClient({
     let sliceIdx = 0;
     let netErrors = 0;
     let lastFailureReason = '';
+    const interactionStartedAt = Date.now();
+    let gotAnyProgressInInteraction = false;
+    let lastProgressAt = Date.now();
+    const markProgress = () => {
+     gotAnyProgressInInteraction = true;
+     lastProgressAt = Date.now();
+    };
 
-    while (sliceIdx < 30 && !ctl.signal.aborted) {
+    while (sliceIdx < 18 && !ctl.signal.aborted) {
      sliceIdx++;
      try {
       setConnState(prev => (prev === 'streaming' || prev === 'thinking' ? prev : 'agent_ready'));
@@ -1250,9 +1370,13 @@ export default function JdResearchClient({
         lastEventId,
         model: typeof startRes.model === 'string' ? startRes.model : undefined,
        },
-       makeWatchEventHandler(optsStep, n => {
-        stepStartedSliceChars = n;
-       }),
+       makeWatchEventHandler(
+        optsStep,
+        n => {
+         stepStartedSliceChars = n;
+        },
+        markProgress,
+       ),
        'watch',
       );
 
@@ -1265,6 +1389,24 @@ export default function JdResearchClient({
       if (out.cont) {
        interactionId = out.cont.interactionId || interactionId;
        lastEventId = out.cont.lastEventId || lastEventId;
+       if (out.cont.hadProgress) markProgress();
+       if (!gotAnyProgressInInteraction && (sliceIdx >= 2 || Date.now() - interactionStartedAt >= 70_000)) {
+        silentStallCount++;
+        lastFailureReason = L('Agent 会话长时间无输出（疑似限流/拥堵）', 'Agent session silent stall');
+        lastAttemptWasRateLimit = true;
+        if (silentStallCount >= 2 || watchRateLimitHits + silentStallCount >= 2) {
+         return await runDeepSeekFallbackStep(optsStep, baseWatch, false);
+        }
+        break;
+       }
+       if (gotAnyProgressInInteraction && Date.now() - lastProgressAt >= 100_000) {
+        silentStallCount++;
+        lastFailureReason = L('Agent 输出停滞超 100 秒', 'Agent stream stalled');
+        if (silentStallCount >= 2 || watchRateLimitHits + silentStallCount >= 2) {
+         return await runDeepSeekFallbackStep(optsStep, baseWatch, false);
+        }
+        break;
+       }
        setPingBeats(b => b + 1);
        await sleep(600);
        continue;
@@ -1274,13 +1416,30 @@ export default function JdResearchClient({
        lastAttemptWasRateLimit = Boolean(out.retryRateLimited);
        if (out.retryRateLimited) {
         watchRateLimitHits++;
-        if (watchRateLimitHits >= 4) {
-         return await runDeepSeekFallbackStep(optsStep, baseWatch, true);
+        if (watchRateLimitHits >= 2 || watchRateLimitHits + silentStallCount >= 2) {
+         return await runDeepSeekFallbackStep(optsStep, baseWatch, watchRateLimitHits >= 2);
         }
        }
        break;
       }
-      // Stream EOF without terminal frame: resume the same interactionId + lastEventId
+      // Stream EOF without terminal frame: check for silent stall before resuming same interactionId
+      if (!gotAnyProgressInInteraction && (sliceIdx >= 2 || Date.now() - interactionStartedAt >= 70_000)) {
+       silentStallCount++;
+       lastFailureReason = L('Agent 会话长时间无输出（疑似限流/拥堵）', 'Agent session silent stall');
+       lastAttemptWasRateLimit = true;
+       if (silentStallCount >= 2 || watchRateLimitHits + silentStallCount >= 2) {
+        return await runDeepSeekFallbackStep(optsStep, baseWatch, false);
+       }
+       break;
+      }
+      if (gotAnyProgressInInteraction && Date.now() - lastProgressAt >= 100_000) {
+       silentStallCount++;
+       lastFailureReason = L('Agent 输出停滞超 100 秒', 'Agent stream stalled');
+       if (silentStallCount >= 2 || watchRateLimitHits + silentStallCount >= 2) {
+        return await runDeepSeekFallbackStep(optsStep, baseWatch, false);
+       }
+       break;
+      }
       setPingBeats(b => b + 1);
       await sleep(1000);
      } catch (e) {
@@ -1291,8 +1450,8 @@ export default function JdResearchClient({
       if (err.code === 'rate_limited') {
        watchRateLimitHits++;
        lastAttemptWasRateLimit = true;
-       if (watchRateLimitHits >= 4) {
-        return await runDeepSeekFallbackStep(optsStep, baseWatch, true);
+       if (watchRateLimitHits >= 2 || watchRateLimitHits + silentStallCount >= 2) {
+        return await runDeepSeekFallbackStep(optsStep, baseWatch, watchRateLimitHits >= 2);
        }
        lastFailureReason = err.message || 'Agent 限流';
        break;
@@ -1470,6 +1629,7 @@ export default function JdResearchClient({
      cached?: boolean;
      stage1Cached?: boolean;
      usage?: AntigravityUsage;
+     durationMs?: number;
     };
     const doneId = d.recordId || curRecordId;
     streamingRecordIdRef.current = '';
@@ -1479,6 +1639,7 @@ export default function JdResearchClient({
       cached: d.cached,
       stage1Cached: d.stage1Cached,
       usage: d.usage,
+      durationMs: d.durationMs ?? Math.max(100, Date.now() - t0),
       kind,
      });
     } else if (doneId) {
@@ -1537,6 +1698,9 @@ export default function JdResearchClient({
 
    const runStage2Phase = async (pi: number, isRetryPass: boolean): Promise<boolean> => {
     const step = s1Ready.roadmap[pi];
+    syncStage2Progress('quizzes');
+    accTail = '';
+    setStreamTail('');
     appendThought(
      isRetryPass
       ? `\n\n── 补救路径 ${pi + 1}/${totalPhases}：${step.phase} · ${step.title} ──\n`
@@ -1607,6 +1771,8 @@ export default function JdResearchClient({
 
    const runStage2Questions = async (isRetryPass: boolean): Promise<boolean> => {
     syncStage2Progress('questions');
+    accTail = '';
+    setStreamTail('');
     appendThought(isRetryPass ? `\n\n── 补救面试专题题库 ──\n` : `\n\n── 面试专题题库 ──\n`);
     try {
      return await runAntigravityStep({
@@ -1702,11 +1868,17 @@ export default function JdResearchClient({
     cached?: boolean;
     stage1Cached?: boolean;
     usage?: AntigravityUsage;
+    durationMs?: number;
    } | null = null;
    let finErr: unknown;
+   const clientElapsedMs = Math.max(1000, Date.now() - t0);
    for (let fa = 0; fa < 3 && !ctl.signal.aborted; fa++) {
     try {
-     finalRes = await postJsonStep({ action: 'finalize', recordId: curRecordId });
+     finalRes = await postJsonStep({
+      action: 'finalize',
+      recordId: curRecordId,
+      durationMs: clientElapsedMs,
+     });
      break;
     } catch (e) {
      finErr = e;
@@ -1734,6 +1906,7 @@ export default function JdResearchClient({
       cached: finalRes.cached,
       stage1Cached: finalRes.stage1Cached ?? curStage1Cached,
       usage: finalRes.usage,
+      durationMs: finalRes.durationMs ?? clientElapsedMs,
       kind,
      },
     );
@@ -2193,8 +2366,8 @@ export default function JdResearchClient({
           <Loader2 size={16} className="ai-spin" />
           <span>
            {L(
-            `第 ${liveProgress?.stage || 1}/2 步 · ${stageMeta[activeStageIdx]?.zh || '深度调研'} · ${elapsed}s`,
-            `Step ${liveProgress?.stage || 1}/2 · ${stageMeta[activeStageIdx]?.en || 'Researching'} · ${elapsed}s`,
+            `第 ${liveProgress?.stage || 1}/2 步 · ${stageMeta[activeStageIdx]?.zh || '深度调研'} · ${fmtDuration(elapsed * 1000, false)}`,
+            `Step ${liveProgress?.stage || 1}/2 · ${stageMeta[activeStageIdx]?.en || 'Researching'} · ${fmtDuration(elapsed * 1000, true)}`,
            )}
           </span>
          </span>
@@ -2449,6 +2622,12 @@ export default function JdResearchClient({
             {L(`总消耗 ${fmtTok(reportUsage.totalTokens)} Token`, `${fmtTok(reportUsage.totalTokens)} Tokens`)}
            </span>
           )}
+          {typeof reportDurationMs === 'number' && reportDurationMs > 0 && (
+           <span className="jdr-model-pill">
+            <Clock size={12} />
+            <span>{L(`总耗时 ${fmtDuration(reportDurationMs, false)}`, `Time ${fmtDuration(reportDurationMs, true)}`)}</span>
+           </span>
+          )}
          </div>
         </div>
 
@@ -2668,6 +2847,11 @@ export default function JdResearchClient({
 
         {tab === 'roadmap' && (
          <section className="jdr-roadmap">
+          {fillStepErr && (
+           <p className="ai-grade-error" style={{ margin: 0 }}>
+            {fillStepErr}
+           </p>
+          )}
           {report.roadmap.map((s, i) => (
            <div key={i} className="ai-card jdr-step-card">
             <div className="jdr-step-top">
@@ -2675,7 +2859,7 @@ export default function JdResearchClient({
               <span className="jdr-phase">{s.phase}</span>
               <strong>{s.title}</strong>
              </div>
-             {activeId && s.quizzes && s.quizzes.length > 0 && (
+             {activeId && s.quizzes && s.quizzes.length > 0 ? (
               <a
                href={`/learn/jd-special?id=${encodeURIComponent(activeId)}&step=${i}`}
                className="jdr-link-pill"
@@ -2684,6 +2868,27 @@ export default function JdResearchClient({
                <span>{L(`本阶段学习题 (${s.quizzes.length})`, `Practice (${s.quizzes.length})`)}</span>
                <ArrowUpRight size={13} />
               </a>
+             ) : (
+              activeId &&
+              member && (
+               <button
+                type="button"
+                className="jdr-link-pill"
+                disabled={fillingStepIdx !== null}
+                onClick={() => void fillRoadmapPhase(i)}
+               >
+                {fillingStepIdx === i ? (
+                 <Loader2 size={13} className="ai-spin" />
+                ) : (
+                 <RotateCcw size={13} />
+                )}
+                <span>
+                 {fillingStepIdx === i
+                  ? L('补题中…', 'Generating…')
+                  : L('AI 补题', 'Generate Quizzes')}
+                </span>
+               </button>
+              )
              )}
             </div>
             {s.goals.length > 0 && (

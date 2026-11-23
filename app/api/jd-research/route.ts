@@ -28,12 +28,12 @@ import {
  getJdResearchStage1SystemPrompt,
  getJdResearchStage2QuestionsSystemPrompt,
  getJdResearchStage2SystemPrompt,
+ getReusedQuizzesForPhase,
  inspectJdStreamProgress,
  mergeStage1AndStage2Report,
  normalizeJdSourceForCache,
  parseAndEnrichJdReport,
  parsePhaseQuizzes,
- pickInSiteQuizzesForStage,
 } from '@/lib/jd-research-server';
 import { extractJdFromImages, runDeepSeekJdFallbackStream } from '@/lib/gemini';
 import { fetchJdTextFromUrl } from '@/lib/jd-extract';
@@ -65,6 +65,7 @@ type CachedJdPayload = {
  thoughts: string;
  model?: string;
  usage?: AntigravityUsage;
+ durationMs?: number;
 };
 
 type CachedStage1Payload = {
@@ -95,6 +96,9 @@ type StoredJdRecordPayload = {
  kind: JdInputKind;
  source: string;
  hashHex?: string;
+ pipeline?: 'v3-steps';
+ startedAt?: number;
+ durationMs?: number;
  dailyDayKey?: string;
  dailyRefunded?: boolean;
  model?: string;
@@ -155,14 +159,6 @@ function phaseCacheKeyOf(hashHex: string, phaseIndex: number): string {
 
 function questionsCacheKeyOf(hashHex: string): string {
  return 'jd-q-v3:' + hashHex;
-}
-
-function getReusedQuizzesForPhase(stage1: JdResearchReport, phaseIndex: number): AiQuiz[] {
- const usedIds = new Set<string>();
- for (let i = 0; i < phaseIndex; i++) {
-  pickInSiteQuizzesForStage(stage1, i, usedIds);
- }
- return pickInSiteQuizzesForStage(stage1, phaseIndex, usedIds);
 }
 
 function extractStreamQuestionTitles(buf: string): string[] {
@@ -280,9 +276,11 @@ async function persistCompletedStage1(opts: {
   title: s1Rep.roleTitle || opts.freshRec.title,
   subtitle: makeSubtitle(s1Rep),
   status: 'running',
-  interactionId: opts.interactionId || opts.freshRec.interactionId || undefined,
+  interactionId: undefined,
   payload: {
    ...opts.freshRec.payload,
+   pipeline: 'v3-steps',
+   startedAt: opts.freshRec.payload?.startedAt || Date.now(),
    hashHex: opts.hashHex,
    model: opts.modelLabel,
    stage1CacheKey: s1CacheKey,
@@ -353,9 +351,11 @@ async function persistCompletedPhase(opts: {
   title: opts.freshRec.title,
   subtitle: opts.freshRec.subtitle,
   status: 'running',
-  interactionId: opts.interactionId || opts.freshRec.interactionId || undefined,
+  interactionId: undefined,
   payload: {
    ...opts.freshRec.payload,
+   pipeline: 'v3-steps',
+   startedAt: opts.freshRec.payload?.startedAt || Date.now(),
    hashHex: opts.hashHex,
    partialReport: updatedPartial,
   },
@@ -414,9 +414,11 @@ async function persistCompletedQuestions(opts: {
   title: opts.freshRec.title,
   subtitle: opts.freshRec.subtitle,
   status: 'running',
-  interactionId: opts.interactionId || opts.freshRec.interactionId || undefined,
+  interactionId: undefined,
   payload: {
    ...opts.freshRec.payload,
+   pipeline: 'v3-steps',
+   startedAt: opts.freshRec.payload?.startedAt || Date.now(),
    hashHex: opts.hashHex,
    partialReport: updatedPartial,
   },
@@ -598,13 +600,16 @@ export async function POST(req: Request) {
     reservedDailyDay = daily.dayKey;
    }
 
-   // 1a. Check full-report D1 cache (0 tokens, instant response)
+   const startTimestamp = existingRec?.payload?.startedAt || Date.now();
+
+   // 1a. Check full-report D1 cache (0 tokens, instant response) — require every roadmap phase >= 4 quizzes & questions > 0
    if (!bypassCache) {
     const hit = await readPromptCache<CachedJdPayload>(cacheKey);
     if (
      hit?.payload?.report &&
      hit.payload.report.roadmap.length > 0 &&
-     (hit.payload.report.questions.length > 0 || hasStructuredStudyQuizzes(hit.payload.report))
+     hit.payload.report.roadmap.every(s => (s.quizzes?.length ?? 0) >= 4) &&
+     hit.payload.report.questions.length > 0
     ) {
      const rep = hit.payload.report;
      const hitModel = hit.payload.model || hit.model || ANTIGRAVITY_AGENT_ID;
@@ -612,6 +617,9 @@ export async function POST(req: Request) {
       kind,
       source,
       hashHex,
+      pipeline: 'v3-steps',
+      startedAt: startTimestamp,
+      durationMs: hit.payload.durationMs,
       dailyDayKey: reservedDailyDay || undefined,
       model: hitModel,
       cacheKey,
@@ -647,6 +655,7 @@ export async function POST(req: Request) {
        rawText: hit.payload.rawText || '',
        thoughts: hit.payload.thoughts || '',
        usage: hit.payload.usage,
+       durationMs: hit.payload.durationMs,
        extractedSource: source,
       },
       { headers: noCache },
@@ -686,11 +695,13 @@ export async function POST(req: Request) {
      title: s1Rep.roleTitle || initialTitle,
      subtitle: makeSubtitle(s1Rep),
      status: 'running',
-     interactionId: existingRec?.interactionId || undefined,
+     interactionId: undefined,
      payload: {
       kind,
       source,
       hashHex,
+      pipeline: 'v3-steps',
+      startedAt: startTimestamp,
       dailyDayKey: reservedDailyDay || undefined,
       dailyRefunded: false,
       model: s1Model,
@@ -745,11 +756,13 @@ export async function POST(req: Request) {
      title: initialTitle,
      subtitle: '',
      status: 'running',
-     interactionId: started.id,
+     interactionId: undefined,
      payload: {
       kind,
       source,
       hashHex,
+      pipeline: 'v3-steps',
+      startedAt: startTimestamp,
       dailyDayKey: reservedDailyDay || undefined,
       dailyRefunded: false,
       model: modelLabel,
@@ -792,11 +805,13 @@ export async function POST(req: Request) {
       title: existingRec?.title || initialTitle,
       subtitle: existingRec?.subtitle || '',
       status: 'running',
-      interactionId: existingRec?.interactionId || undefined,
+      interactionId: undefined,
       payload: {
        kind,
        source,
        hashHex,
+       pipeline: 'v3-steps',
+       startedAt: startTimestamp,
        dailyDayKey: reservedDailyDay || undefined,
        dailyRefunded: false,
        model: DEEPSEEK_FALLBACK_LABEL,
@@ -1085,7 +1100,7 @@ export async function POST(req: Request) {
       const slice = await streamAntigravitySlice({
        interactionId,
        lastEventId: lastEventIdIn,
-       maxSliceMs: 40_000,
+       maxSliceMs: 35_000,
        geminiProxy,
        signal: req.signal,
        onStep: st => {
@@ -1115,6 +1130,7 @@ export async function POST(req: Request) {
         type: 'continue',
         interactionId,
         lastEventId: slice.lastEventId,
+        hadProgress: Boolean(slice.hadProgress),
        });
        return;
       }
@@ -1575,6 +1591,14 @@ export async function POST(req: Request) {
    ].filter(Boolean);
    const combinedRaw = rawParts.join('\n\n');
 
+   const rawDur = Number(body.durationMs);
+   const durationMs =
+    Number.isFinite(rawDur) && rawDur > 0
+     ? Math.min(3_600_000, Math.round(rawDur))
+     : rec.payload.startedAt
+       ? Math.max(1000, Math.min(3_600_000, Date.now() - rec.payload.startedAt))
+       : undefined;
+
    const allPhasesDone = mergedRoadmap.every(s => (s.quizzes?.length ?? 0) >= 4);
    if (allPhasesDone && finalQuestions.length > 0) {
     await writePromptCache(
@@ -1587,6 +1611,7 @@ export async function POST(req: Request) {
       thoughts: combinedThoughts,
       model: combinedModel,
       usage: totalUsage,
+      durationMs,
      } satisfies CachedJdPayload,
      7 * 24 * 3600_000,
     );
@@ -1596,6 +1621,9 @@ export async function POST(req: Request) {
     kind,
     source,
     hashHex,
+    pipeline: 'v3-steps',
+    startedAt: rec.payload.startedAt,
+    durationMs,
     dailyDayKey: rec.payload.dailyDayKey,
     dailyRefunded: false,
     model: combinedModel,
@@ -1619,7 +1647,7 @@ export async function POST(req: Request) {
     title: finalReport.roleTitle || rec.title,
     subtitle: makeSubtitle(finalReport) || rec.subtitle,
     status: 'completed',
-    interactionId: rec.interactionId || undefined,
+    interactionId: undefined,
     payload: stored,
     createdAt: rec.createdAt,
    });
@@ -1635,13 +1663,14 @@ export async function POST(req: Request) {
      rawText: combinedRaw,
      thoughts: combinedThoughts,
      usage: totalUsage,
+     durationMs,
      extractedSource: source,
     },
     { headers: noCache },
    );
   }
 
-  // ---- Action 5: fail (refunds daily quota on unrecoverable system error, preserves all saved checkpoints) ----
+  // ---- Action 6: fail (refunds daily quota on unrecoverable system error, preserves all saved checkpoints) ----
   const recordId = typeof body.recordId === 'string' ? body.recordId.trim().slice(0, 80) : '';
   const errMsg =
    typeof body.error === 'string' && body.error.trim()
@@ -1660,7 +1689,7 @@ export async function POST(req: Request) {
      title: prev.title,
      subtitle: prev.subtitle,
      status: 'error',
-     interactionId: prev.interactionId || undefined,
+     interactionId: undefined,
      payload: {
       ...prev.payload,
       dailyRefunded: true,
@@ -1715,6 +1744,24 @@ export async function GET(req: Request) {
      rawText: prev.payload.rawText || '',
      thoughts: prev.payload.thoughts || '',
      usage: prev.payload.usage,
+     durationMs: prev.payload.durationMs,
+    },
+    { headers: noCache },
+   );
+  }
+
+  // Stepwise v3 records are orchestrated strictly by sequential client steps; never let legacy GET pollers
+  // overwrite them with a partial/single-pass result.
+  if (prev?.payload?.pipeline === 'v3-steps') {
+   return Response.json(
+    {
+     id: prev.interactionId || id,
+     recordId: rid || undefined,
+     status: prev.status === 'error' ? 'failed' : 'in_progress',
+     stage: prev.payload.stage === 2 ? 2 : 1,
+     stage1Cached: Boolean(prev.payload.stage1Cached),
+     partialReport: prev.payload.partialReport ?? null,
+     error: prev.payload.error,
     },
     { headers: noCache },
    );

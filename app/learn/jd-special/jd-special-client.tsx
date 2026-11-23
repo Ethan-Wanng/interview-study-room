@@ -14,11 +14,13 @@ import {
  CheckCircle2,
  ChevronDown,
  ChevronUp,
+ Clock,
  Compass,
  ExternalLink,
  Eye,
  EyeOff,
  FileText,
+ Loader2,
  MessageSquare,
  Plus,
  RotateCcw,
@@ -52,6 +54,15 @@ import {
 } from '@/lib/jd-research-types';
 
 const fmtTok = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}K` : String(n));
+const fmtDuration = (ms: number, en: boolean) => {
+ const sec = Math.max(0, Math.round(ms / 1000));
+ if (sec < 1) return en ? '<1s' : '<1秒';
+ if (sec < 60) return en ? `${sec}s` : `${sec}秒`;
+ const min = Math.floor(sec / 60);
+ const rem = sec % 60;
+ if (en) return rem > 0 ? `${min}m ${rem}s` : `${min}m`;
+ return rem > 0 ? `${min}分${rem}秒` : `${min}分`;
+};
 
 export type JdSpecialTopic = {
  id: string;
@@ -60,6 +71,7 @@ export type JdSpecialTopic = {
  source?: string;
  cached?: boolean;
  stage1Cached?: boolean;
+ durationMs?: number;
  usage?: AntigravityUsage;
  updatedAt: number;
  report: JdResearchReport;
@@ -210,6 +222,8 @@ export default function JdSpecialClient({
  const [regenKey, setRegenKey] = useState('');
  const [regenErr, setRegenErr] = useState('');
  const [regenNonce, setRegenNonce] = useState<Record<string, number>>({});
+ const [fillingStepIdx, setFillingStepIdx] = useState<number | null>(null);
+ const [fillErr, setFillErr] = useState('');
  const [passed, setPassed] = useState<Set<string>>(() => new Set());
  const [session, setSession] = useState<StoredStepSession>({ results: {}, drafts: {}, orders: {} });
  const sessionRef = useRef<StoredStepSession>(session);
@@ -501,6 +515,80 @@ export default function JdSpecialClient({
   }
  };
 
+ const fillMissingPhase = async (targetStepIdx: number) => {
+  if (!topic || fillingStepIdx !== null) return;
+  setFillingStepIdx(targetStepIdx);
+  setFillErr('');
+  try {
+   const r = await fetch('/api/jd-research/fill-phase', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+     recordId: topic.id,
+     stepIdx: targetStepIdx,
+     geminiProxy: getGeminiAutoProxy(),
+    }),
+   });
+   if (!r.ok || !r.body) {
+    let msg = L('补题失败，请重试', 'Generation failed');
+    try {
+     const j = (await r.json()) as { error?: string };
+     if (j.error) msg = j.error;
+    } catch {}
+    throw new Error(msg);
+   }
+   const reader = r.body.getReader();
+   const dec = new TextDecoder();
+   let buf = '';
+   let doneReport: JdResearchReport | undefined;
+   let doneUsage: AntigravityUsage | undefined;
+   for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+    let nl: number;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+     const line = buf.slice(0, nl).trim();
+     buf = buf.slice(nl + 1);
+     if (!line) continue;
+     let ev: {
+      type?: string;
+      ok?: boolean;
+      report?: JdResearchReport;
+      usage?: AntigravityUsage;
+      error?: string;
+     };
+     try {
+      ev = JSON.parse(line) as typeof ev;
+     } catch {
+      continue;
+     }
+     if (ev.type === 'error') {
+      throw new Error(ev.error || L('补题失败，请重试', 'Generation failed'));
+     }
+     if (ev.type === 'done' && ev.report) {
+      doneReport = ev.report;
+      doneUsage = ev.usage;
+     }
+    }
+   }
+   if (!doneReport) {
+    throw new Error(L('补题未返回完整题库，请再试一次', 'Incomplete result — please try again'));
+   }
+   setTopicList(prev =>
+    prev.map(t =>
+     t.id === topic.id ? { ...t, report: doneReport!, usage: doneUsage ?? t.usage } : t,
+    ),
+   );
+   setQIndex(0);
+   syncUrl(topic.id, tab, safeStepIdx, safeDimIdx, 0);
+  } catch (e) {
+   setFillErr((e as Error).message || L('补题失败，请重试', 'Generation failed'));
+  } finally {
+   setFillingStepIdx(null);
+  }
+ };
+
  const toggleLegacyMastered = () => {
   if (!legacyKey) return;
   setPassed(prev => {
@@ -671,6 +759,12 @@ export default function JdSpecialClient({
             {L(`总消耗 ${fmtTok(topic.usage.totalTokens)} Token`, `${fmtTok(topic.usage.totalTokens)} Tokens`)}
            </span>
           )}
+          {typeof topic.durationMs === 'number' && topic.durationMs > 0 && (
+           <span className="jdr-model-pill">
+            <Clock size={12} />
+            <span>{L(`总耗时 ${fmtDuration(topic.durationMs, false)}`, `Time ${fmtDuration(topic.durationMs, true)}`)}</span>
+           </span>
+          )}
           {topic.cached ? (
            <span className="jdr-cache-tag">
             <Zap size={12} />
@@ -797,11 +891,7 @@ export default function JdSpecialClient({
              >
               <span>{s.phase}</span>
               <span>{s.title}</span>
-              {qs.length > 0 && (
-               <em>
-                {done}/{qs.length}
-               </em>
-              )}
+              <em>{qs.length > 0 ? `${done}/${qs.length}` : '0'}</em>
              </button>
             );
            })}
@@ -972,9 +1062,63 @@ export default function JdSpecialClient({
            }}
           />
          </>
+        ) : tab === 'practice' ? (
+         <div className="ai-card jds-empty">
+          <p>{L('本阶段暂无学习题', 'No quizzes for this phase')}</p>
+          <button
+           type="button"
+           className="button primary arch-new-btn"
+           disabled={fillingStepIdx !== null}
+           onClick={() => void fillMissingPhase(safeStepIdx)}
+          >
+           {fillingStepIdx === safeStepIdx ? (
+            <Loader2 size={14} className="ai-spin" />
+           ) : (
+            <RotateCcw size={14} />
+           )}
+           <span>
+            {fillingStepIdx === safeStepIdx
+             ? L('补题中…', 'Generating…')
+             : L('AI 补题', 'Generate Quizzes')}
+           </span>
+          </button>
+          {fillErr && (
+           <p className="ai-grade-error" style={{ margin: 0 }}>
+            {fillErr}
+           </p>
+          )}
+         </div>
         ) : (
          <div className="ai-card jds-empty">
           <p>{L('该维度暂无匹配题目', 'No quizzes in this dimension')}</p>
+          {(() => {
+           const missingIdx = roadmap.findIndex(s => (s.quizzes?.length ?? 0) === 0);
+           if (missingIdx < 0) return null;
+           return (
+            <button
+             type="button"
+             className="button primary arch-new-btn"
+             disabled={fillingStepIdx !== null}
+             onClick={() => void fillMissingPhase(missingIdx)}
+            >
+             {fillingStepIdx === missingIdx ? (
+              <Loader2 size={14} className="ai-spin" />
+             ) : (
+              <RotateCcw size={14} />
+             )}
+             <span>
+              {fillingStepIdx === missingIdx
+               ? L('补题中…', 'Generating…')
+               : L('AI 补题', 'Generate Quizzes')}
+             </span>
+            </button>
+           );
+          })()}
+          {fillErr && (
+           <p className="ai-grade-error" style={{ margin: 0 }}>
+            {fillErr}
+           </p>
+          )}
          </div>
         )}
        </>

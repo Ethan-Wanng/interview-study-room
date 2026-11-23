@@ -10,6 +10,12 @@ export function groupReleasesByDay(releases:Release[]):ReleaseDay[]{
 }
 
 export const RELEASES:Release[]=[
+ {version:'2026.11.24-11',date:'2026-11-24',title:'JD 调研防卡死超时兜底、后台轮询保护、总耗时展示及专题一键 AI 补题',changes:[
+  '新增 Antigravity Agent 长时间无输出静默卡死检测：当单个 Agent 会话持续 2 个切片无文本/思考产出或流中停滞超 100 秒时，立即自动切换底层模型或触发 DeepSeek 接力，彻底解决单步卡住数百秒的问题。',
+  '修复历史任务旧轮询接口误将进行中的分步调研记录提前覆盖为已完成的问题，并强化全量缓存完整性校验以自动跳过残缺缓存。',
+  'JD / 面经深度调研报告及「专题学习」页面头部新增「总耗时」展示，生成过程中的计时器升级为分秒格式。',
+  '「专题学习」页与调研「复习路径」页针对生成缺失的阶段新增一键「AI 补题」按钮，可直接补齐空缺阶段题库并自动同步云端记录。',
+ ]},
  {version:'2026.11.24-10',date:'2026-11-24',title:'JD / 面经深度调研与单题重出支持仅在 Agent 限流时自动切换 DeepSeek 接力并强化慢速耐错重试',changes:[
   '严格约束 DeepSeek 触发条件：JD / 面经深度调研全步骤及单题「AI 重出」平时始终优先使用 Antigravity Agent；仅当 Antigravity Agent 触发上游限流（429 / quota / resource_exhausted）且底层模型均受限时，才自动切换至 DeepSeek V4.1 Flash（思考模式）接力完成，绝不因普通超时或网络波动误切模型。',
   '强化 Antigravity Agent 非限流场景下的多轮耐心重试与切片续传容错（扩大单步 Token 上限并正确收敛 incomplete 状态、提升代理建连与轮询超时容忍度），兼顾「可以慢但尽量不报错」，确保断点缓存与步骤完整性。',

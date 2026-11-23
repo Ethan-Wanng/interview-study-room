@@ -431,6 +431,7 @@ export type AntigravitySliceResult = {
  usage?: AntigravityUsage;
  error?: string;
  rateLimited?: boolean;
+ hadProgress?: boolean;
 };
 
 // Watches a background Antigravity interaction (`background: true`) for up to `maxSliceMs`
@@ -449,7 +450,7 @@ export async function streamAntigravitySlice(opts: {
  onTextDelta?: (delta: string) => void;
  onTextReset?: () => void;
 }): Promise<AntigravitySliceResult> {
- const sliceMs = Math.max(8_000, Math.min(50_000, opts.maxSliceMs ?? 40_000));
+ const sliceMs = Math.max(8_000, Math.min(50_000, opts.maxSliceMs ?? 35_000));
  const deadlineAt = Date.now() + sliceMs;
  const geminiProxy = opts.geminiProxy !== false;
 
@@ -820,17 +821,25 @@ export async function streamAntigravitySlice(opts: {
   usage,
   error: finalError || undefined,
   rateLimited: rateLimited || isAntigravityRateLimitText(finalError),
+  hadProgress: Boolean(deltaText || deltaThoughts || fullText || fullThoughts),
  };
 }
 
+export function isAntigravityFallbackTriggerError(err: unknown): boolean {
+ if (isAntigravityRateLimitError(err)) return true;
+ return err instanceof AntigravityError && err.code === 'stalled';
+}
+
 // Runs a background Antigravity Agent interaction to completion within a single request
-// with patient multi-round retries on transient non-rate-limit errors, throwing a `429 / rate_limited`
-// `AntigravityError` immediately when all Antigravity underlying models hit rate limiting so callers
-// can safely fall back to DeepSeek.
+// with silent-stall protection and multi-round retries on transient non-rate-limit errors.
 export async function runAntigravityBackgroundToCompletion(opts: {
  systemInstruction: string;
  input: string;
  maxTotalTokens?: number;
+ rounds?: number;
+ maxModels?: number;
+ firstProgressTimeoutMs?: number;
+ deadlineMs?: number;
  geminiProxy?: boolean;
  signal?: AbortSignal;
  validate?: (text: string) => boolean;
@@ -841,19 +850,25 @@ export async function runAntigravityBackgroundToCompletion(opts: {
    opts.signal?.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true });
   });
 
+ const totalRounds = Math.max(1, opts.rounds ?? 2);
+ const modelsToTry = ANTIGRAVITY_MODEL_CHAIN.slice(0, Math.max(1, opts.maxModels ?? ANTIGRAVITY_MODEL_CHAIN.length));
+ const firstProgressMs = opts.firstProgressTimeoutMs ?? 45_000;
+ const pollBudgetMs = opts.deadlineMs ?? 110_000;
+
  let lastErr: unknown;
  let lastRateLimitErr: AntigravityError | undefined;
  let lastRoundRateLimits = 0;
  let lastRoundTried = 0;
 
- for (let round = 0; round < 2; round++) {
+ for (let round = 0; round < totalRounds; round++) {
   let roundRateLimits = 0;
   let roundTried = 0;
-  for (const agentModel of ANTIGRAVITY_MODEL_CHAIN) {
+  for (const agentModel of modelsToTry) {
    if (opts.signal?.aborted) throw new AntigravityError('已取消。', 499, 'aborted');
    roundTried++;
    const label = antigravityModelLabel(agentModel);
    try {
+    const startedAt = Date.now();
     const started = await startAntigravityInteraction({
      systemInstruction: opts.systemInstruction,
      input: opts.input,
@@ -863,13 +878,17 @@ export async function runAntigravityBackgroundToCompletion(opts: {
      geminiProxy: opts.geminiProxy,
      signal: opts.signal,
     });
-    const deadline = Date.now() + 110_000;
+    const deadline = Date.now() + pollBudgetMs;
     let polled = await pollAntigravityInteraction({
      interactionId: started.id,
      geminiProxy: opts.geminiProxy,
      signal: opts.signal,
     });
+    let gotProgress = Boolean(polled.text.trim() || polled.thoughts.trim());
     while (polled.status === 'in_progress' && Date.now() < deadline && !opts.signal?.aborted) {
+     if (!gotProgress && firstProgressMs > 0 && Date.now() - startedAt >= firstProgressMs) {
+      throw new AntigravityError(`${label} 会话无响应超时`, 504, 'stalled');
+     }
      await sleep(2500);
      if (opts.signal?.aborted) break;
      polled = await pollAntigravityInteraction({
@@ -877,6 +896,9 @@ export async function runAntigravityBackgroundToCompletion(opts: {
       geminiProxy: opts.geminiProxy,
       signal: opts.signal,
      });
+     if (polled.text.trim() || polled.thoughts.trim()) {
+      gotProgress = true;
+     }
     }
     if (polled.status === 'completed' && polled.text.trim()) {
      if (!opts.validate || opts.validate(polled.text)) {
@@ -886,6 +908,9 @@ export async function runAntigravityBackgroundToCompletion(opts: {
     }
     if (polled.rateLimited || isAntigravityRateLimitText(polled.error)) {
      throw new AntigravityError(polled.error || `${label} 触发限流`, 429, 'rate_limited', polled.error);
+    }
+    if (polled.status === 'in_progress' && !gotProgress) {
+     throw new AntigravityError(`${label} 长时间无输出，切换重试`, 504, 'stalled');
     }
     throw new AntigravityError(polled.error || `${label} ${polled.status}`, 502, 'agent_failed');
    } catch (e) {
@@ -902,13 +927,16 @@ export async function runAntigravityBackgroundToCompletion(opts: {
      }
      continue;
     }
+    if (e instanceof AntigravityError && e.code === 'stalled') {
+     continue;
+    }
     await sleep(round === 0 ? 1500 : 3500);
    }
   }
   lastRoundRateLimits = roundRateLimits;
   lastRoundTried = roundTried;
-  if (round === 0) {
-   if (roundTried > 0 && roundRateLimits === roundTried && lastRateLimitErr) {
+  if (round < totalRounds - 1) {
+   if (round === 0 && roundTried > 0 && roundRateLimits === roundTried && lastRateLimitErr) {
     await markAntigravityAgentRateLimited(lastRateLimitErr.rawDetail || lastRateLimitErr.message);
     throw lastRateLimitErr;
    }
@@ -920,7 +948,7 @@ export async function runAntigravityBackgroundToCompletion(opts: {
   await markAntigravityAgentRateLimited(lastRateLimitErr.rawDetail || lastRateLimitErr.message);
   throw lastRateLimitErr;
  }
- throw lastErr instanceof Error ? lastErr : new AntigravityError('Antigravity Agent 重出失败，请重试。', 502, 'agent_failed');
+ throw lastErr instanceof Error ? lastErr : new AntigravityError('Antigravity Agent 执行超时或失败，请重试。', 502, 'agent_failed');
 }
 
 export type AntigravityStreamResult = {

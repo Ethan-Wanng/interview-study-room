@@ -467,6 +467,14 @@ export function pickInSiteQuizzesForStage(
  return picked;
 }
 
+export function getReusedQuizzesForPhase(stage1: JdResearchReport, phaseIndex: number): AiQuiz[] {
+ const usedIds = new Set<string>();
+ for (let i = 0; i < phaseIndex; i++) {
+  pickInSiteQuizzesForStage(stage1, i, usedIds);
+ }
+ return pickInSiteQuizzesForStage(stage1, phaseIndex, usedIds);
+}
+
 export function combinePhaseQuizzes(reused: AiQuiz[], generated: AiQuiz[], phaseIndex: number): AiQuiz[] {
  const seenStems = new Set<string>();
  const all: AiQuiz[] = [];
