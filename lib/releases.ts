@@ -10,6 +10,10 @@ export function groupReleasesByDay(releases:Release[]):ReleaseDay[]{
 }
 
 export const RELEASES:Release[]=[
+ {version:'2026.11.24-3',date:'2026-11-24',title:'修复 JD / 面经深度调研卡在第一步问题，启用 DeepSeek + Gemini 分工协作与自动降级',changes:[
+  '修复 Antigravity Agent（Google Interactions API）协议兼容与流式解析问题：移除 CreateAgentInteraction 不支持的顶层 system_instruction（消除上游 deadline_exceeded 超时）、修正 thought_summary 的 delta.content.text 原生思考流提取、补全 event: error 错误识别与多段 model_output 重置保护，并同步修复系统设计评审接口。',
+  'JD / 面经深度调研升级为「分工协作 + 多引擎无缝自动降级」：第 1 步（考点画像与分阶段复习路径）由 DeepSeek V4.1 Flash（思考模式）优先流式生成（秒连、稳定输出中文思考过程与画像路径预览，失败自动降级 Gemini）；第 2 步（各阶段 5 题型学习题 + 面试专题题库）由 Antigravity Agent / Gemini 优先出题，若遇 Gemini 503 算力繁忙、429 限流、首步超时或循环思考则自动无缝切换至 DeepSeek V4.1 Flash（思考模式）完成出题，全程实时更新当前引擎标识。',
+ ]},
  {version:'2026.11.24-2',date:'2026-11-24',title:'JD / 面经深度调研实时流式输出与思考过程展示、两步生成、三层缓存及 Agent 网络检查',changes:[
   'JD / 面经深度调研全面升级为「NDJSON 实时流式输出」：发起即显示流式通道与 Agent 会话连接状态、心跳及实时输出字数，彻底告别盲等；全程实时流式展示「思考过程」（生成完成后默认展开）与实时输出流片段。',
   '升级为「两步分阶段流式生成」：第 1 步流式生成核心考点权重画像与分阶段复习路径，完成后立即在页面渲染预览卡片；第 2 步接力流式生成各阶段 5 种题型学习题与面试题库，内置截断 JSON 自动抢救与原地「一键重试 / 重新生成」。',

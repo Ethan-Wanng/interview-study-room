@@ -22,7 +22,7 @@ import {
  normalizeJdSourceForCache,
  parseAndEnrichJdReport,
 } from '@/lib/jd-research-server';
-import { extractJdFromImages } from '@/lib/gemini';
+import { extractJdFromImages, jdResearchModelStream } from '@/lib/gemini';
 import { fetchJdTextFromUrl } from '@/lib/jd-extract';
 import {
  hasStructuredStudyQuizzes,
@@ -48,6 +48,7 @@ type CachedJdPayload = {
  report: JdResearchReport;
  rawText: string;
  thoughts: string;
+ model?: string;
  usage?: AntigravityUsage;
 };
 
@@ -55,12 +56,14 @@ type CachedStage1Payload = {
  report: JdResearchReport;
  rawText: string;
  thoughts: string;
+ model?: string;
  usage?: AntigravityUsage;
 };
 
 type StoredJdRecordPayload = {
  kind: JdInputKind;
  source: string;
+ model?: string;
  cacheKey?: string;
  stage1CacheKey?: string;
  stage?: 1 | 2;
@@ -200,9 +203,11 @@ export async function POST(req: Request) {
        (hit.payload.report.questions.length > 0 || hasStructuredStudyQuizzes(hit.payload.report))
       ) {
        const rep = hit.payload.report;
+       const hitModel = hit.payload.model || hit.model || '';
        const stored: StoredJdRecordPayload = {
         kind,
         source,
+        model: hitModel || undefined,
         cacheKey,
         stage1CacheKey,
         cached: true,
@@ -228,6 +233,7 @@ export async function POST(req: Request) {
         recordId,
         cached: true,
         stage1Cached: true,
+        model: hitModel,
         report: rep,
         rawText: hit.payload.rawText || '',
         thoughts: hit.payload.thoughts || '',
@@ -241,6 +247,7 @@ export async function POST(req: Request) {
      let s1Rep: JdResearchReport | null = null;
      let s1RawText = '';
      let s1Thoughts = '';
+     let s1Model = '';
      let s1Usage: AntigravityUsage | undefined;
      let stage1Cached = false;
      let lastInteractionId = '';
@@ -252,6 +259,7 @@ export async function POST(req: Request) {
        s1Rep = s1Hit.payload.report;
        s1RawText = s1Hit.payload.rawText || '';
        s1Thoughts = s1Hit.payload.thoughts || '';
+       s1Model = s1Hit.payload.model || s1Hit.model || '';
        s1Usage = s1Hit.payload.usage;
        stage1Cached = true;
        if (s1Thoughts) {
@@ -261,6 +269,7 @@ export async function POST(req: Request) {
         type: 'stage1',
         recordId,
         stage1Cached: true,
+        model: s1Model,
         partialReport: s1Rep,
         thoughts: s1Thoughts,
         usage: s1Usage,
@@ -280,6 +289,7 @@ export async function POST(req: Request) {
       payload: {
        kind,
        source,
+       model: s1Model || undefined,
        cacheKey,
        stage1CacheKey,
        stage: s1Rep ? 2 : 1,
@@ -294,45 +304,46 @@ export async function POST(req: Request) {
       },
      });
 
-     // 3. Stream Stage 1 (Profile + Roadmap) if not cached
+     // 3. Stream Stage 1 (Profile + Roadmap):
+     // DeepSeek V4.1 Flash（思考）优先负责考点画像与复习路径（秒连、稳定、零 503），失败自动降级 Gemini 4 / 3.8 / 3.6
      if (!s1Rep) {
       activeStage = 1;
-      activeStep = 'agent_init';
+      activeStep = 'thinking';
       let s1ThoughtBuf = '';
-      const splitter1 = createThinkJsonStreamSplitter({
-       onThoughtDelta: td => {
-        activeStep = 'thinking';
-        s1ThoughtBuf += td;
-        send({ type: 'thought', stage: 1, text: td });
-       },
-       onJsonDelta: (jd, fullJsonBuf) => {
-        activeStep = 'output';
-        send({
-         type: 'delta',
-         stage: 1,
-         text: jd,
-         chars: fullJsonBuf.length,
-         progress: inspectJdStreamProgress(1, fullJsonBuf, null, false),
-        });
-       },
-      });
+      const makeSplitter1 = () =>
+       createThinkJsonStreamSplitter({
+        onThoughtDelta: td => {
+         activeStep = 'thinking';
+         s1ThoughtBuf += td;
+         send({ type: 'thought', stage: 1, text: td });
+        },
+        onJsonDelta: (jd, fullJsonBuf) => {
+         activeStep = 'output';
+         send({
+          type: 'delta',
+          stage: 1,
+          text: jd,
+          chars: fullJsonBuf.length,
+          progress: inspectJdStreamProgress(1, fullJsonBuf, null, false),
+         });
+        },
+       });
+      let splitter1 = makeSplitter1();
 
-      const s1Res = await streamAntigravityInteraction({
-       systemInstruction: getJdResearchStage1SystemPrompt(),
-       input: buildJdStage1Input({ kind, source }),
+      const s1Res = await jdResearchModelStream({
+       strategy: 'deepseek-first',
+       systemPrompt: getJdResearchStage1SystemPrompt(),
+       userInput: buildJdStage1Input({ kind, source }),
+       maxTokens: 8192,
        geminiProxy,
        signal: req.signal,
-       onCreated: ({ id, environmentId }) => {
-        lastInteractionId = id;
+       validate: txt => {
+        const rep = parseAndEnrichJdReport(txt);
+        return Boolean(rep && (rep.roadmap.length > 0 || rep.dimensions.length > 0));
+       },
+       onModel: m => {
         activeStep = 'thinking';
-        send({ type: 'agent_ready', stage: 1, interactionId: id, environmentId });
-       },
-       onStep: st => {
-        activeStep = st;
-        send({ type: 'step', stage: 1, stepType: st });
-       },
-       onKeepAlive: () => {
-        send({ type: 'ping', stage: 1, step: activeStep });
+        send({ type: 'model', stage: 1, model: m });
        },
        onThoughtDelta: td => {
         activeStep = 'thinking';
@@ -342,13 +353,18 @@ export async function POST(req: Request) {
        onTextDelta: td => {
         splitter1.push(td);
        },
+       onReset: () => {
+        s1ThoughtBuf = '';
+        splitter1 = makeSplitter1();
+        send({ type: 'reset', stage: 1 });
+       },
       });
 
       splitter1.flush();
       const extracted1 = extractThoughtsAndJson(s1Res.text);
       s1RawText = extracted1.jsonRaw || s1Res.text;
-      s1Thoughts = [s1Res.thoughts, s1ThoughtBuf.trim() || extracted1.thoughts].filter(Boolean).join('\n\n').trim();
-      s1Usage = s1Res.usage;
+      s1Thoughts = (s1ThoughtBuf.trim() || s1Res.thoughts || extracted1.thoughts || '').trim();
+      s1Model = s1Res.model;
       s1Rep = parseAndEnrichJdReport(s1Res.text);
 
       if (!s1Rep || (!s1Rep.roadmap.length && !s1Rep.dimensions.length)) {
@@ -358,8 +374,8 @@ export async function POST(req: Request) {
       await writePromptCache(
        stage1CacheKey,
        'jd-stage1',
-       ANTIGRAVITY_AGENT_ID,
-       { report: s1Rep, rawText: s1RawText, thoughts: s1Thoughts, usage: s1Usage } satisfies CachedStage1Payload,
+       s1Model || 'deepseek-flash',
+       { report: s1Rep, rawText: s1RawText, thoughts: s1Thoughts, model: s1Model, usage: s1Usage } satisfies CachedStage1Payload,
        7 * 24 * 3600_000,
       );
 
@@ -374,6 +390,7 @@ export async function POST(req: Request) {
        payload: {
         kind,
         source,
+        model: s1Model || undefined,
         cacheKey,
         stage1CacheKey,
         stage: 2,
@@ -392,6 +409,7 @@ export async function POST(req: Request) {
        type: 'stage1',
        recordId,
        stage1Cached: false,
+       model: s1Model,
        partialReport: s1Rep,
        thoughts: s1Thoughts,
        usage: s1Usage,
@@ -404,8 +422,8 @@ export async function POST(req: Request) {
       await writePromptCache(
        cacheKey,
        'jd-research',
-       ANTIGRAVITY_AGENT_ID,
-       { report: s1Rep, rawText: s1RawText, thoughts: s1Thoughts, usage: s1Usage } satisfies CachedJdPayload,
+       s1Model || 'deepseek-flash',
+       { report: s1Rep, rawText: s1RawText, thoughts: s1Thoughts, model: s1Model, usage: s1Usage } satisfies CachedJdPayload,
        7 * 24 * 3600_000,
       );
       await saveAiInterviewRecord({
@@ -419,6 +437,7 @@ export async function POST(req: Request) {
        payload: {
         kind,
         source,
+        model: s1Model || undefined,
         cacheKey,
         stage1CacheKey,
         stage: 2,
@@ -435,6 +454,7 @@ export async function POST(req: Request) {
        recordId,
        cached: false,
        stage1Cached,
+       model: s1Model,
        report: s1Rep,
        rawText: s1RawText,
        thoughts: s1Thoughts,
@@ -444,13 +464,15 @@ export async function POST(req: Request) {
       return;
      }
 
-     // 4. Stream Stage 2 (5-Type Study Quizzes per Roadmap Stage + Interview Question Bank)
+     // 4. Stream Stage 2 (5-Type Study Quizzes per Roadmap Stage + Interview Question Bank):
+     // Gemini / Antigravity Agent 优先出题；若 Gemini 不可用（503 繁忙 / 429 限流 / 超时 / 循环 / 解析失败）自动无缝切换 DeepSeek V4.1 Flash（思考）
      activeStage = 2;
      activeStep = 'agent_init';
      send({
       type: 'stage2_start',
       stage: 2,
       stage1Cached,
+      model: 'Antigravity Agent',
       progress: inspectJdStreamProgress(2, '', s1Rep, stage1Cached),
      });
 
@@ -460,73 +482,155 @@ export async function POST(req: Request) {
      }
 
      let s2ThoughtBuf = '';
-     const splitter2 = createThinkJsonStreamSplitter({
-      onThoughtDelta: td => {
-       activeStep = 'thinking';
-       s2ThoughtBuf += td;
-       send({ type: 'thought', stage: 2, text: td });
-      },
-      onJsonDelta: (jd, fullJsonBuf) => {
-       activeStep = 'output';
-       send({
-        type: 'delta',
-        stage: 2,
-        text: jd,
-        chars: fullJsonBuf.length,
-        progress: inspectJdStreamProgress(2, fullJsonBuf, s1Rep, stage1Cached),
-       });
-      },
-     });
+     let s2TextOut = '';
+     let s2Model = 'Antigravity Agent';
+     let s2Usage: AntigravityUsage | undefined;
+     let finalReport: JdResearchReport | null = null;
 
-     const s2Res = await streamAntigravityInteraction({
-      systemInstruction: getJdResearchStage2SystemPrompt(),
-      input: buildJdStage2Input({ kind, source, stage1: s1Rep }),
-      geminiProxy,
-      signal: req.signal,
-      onCreated: ({ id, environmentId }) => {
-       lastInteractionId = id;
-       activeStep = 'thinking';
-       send({ type: 'agent_ready', stage: 2, interactionId: id, environmentId });
-      },
-      onStep: st => {
-       activeStep = st;
-       send({ type: 'step', stage: 2, stepType: st });
-      },
-      onKeepAlive: () => {
-       send({ type: 'ping', stage: 2, step: activeStep });
-      },
-      onThoughtDelta: td => {
-       activeStep = 'thinking';
-       s2ThoughtBuf += td;
-       send({ type: 'thought', stage: 2, text: td });
-      },
-      onTextDelta: td => {
-       splitter2.push(td);
-      },
-     });
+     const makeSplitter2 = () =>
+      createThinkJsonStreamSplitter({
+       onThoughtDelta: td => {
+        activeStep = 'thinking';
+        s2ThoughtBuf += td;
+        send({ type: 'thought', stage: 2, text: td });
+       },
+       onJsonDelta: (jd, fullJsonBuf) => {
+        activeStep = 'output';
+        send({
+         type: 'delta',
+         stage: 2,
+         text: jd,
+         chars: fullJsonBuf.length,
+         progress: inspectJdStreamProgress(2, fullJsonBuf, s1Rep, stage1Cached),
+        });
+       },
+      });
+     let splitter2 = makeSplitter2();
+     const s2SystemPrompt = getJdResearchStage2SystemPrompt();
+     const s2UserInput = buildJdStage2Input({ kind, source, stage1: s1Rep });
+     let s2WroteAny = false;
 
-     splitter2.flush();
-     const extracted2 = extractThoughtsAndJson(s2Res.text);
-     const s2RawText = extracted2.jsonRaw || s2Res.text;
-     const s2Thoughts = [s2Res.thoughts, s2ThoughtBuf.trim() || extracted2.thoughts].filter(Boolean).join('\n\n').trim();
+     // 4a. Primary Stage 2 engine: Antigravity Agent (strict 16s first-step timeout & loop guard)
+     try {
+      send({ type: 'model', stage: 2, model: 'Antigravity Agent' });
+      const agentRes = await streamAntigravityInteraction({
+       systemInstruction: s2SystemPrompt,
+       input: s2UserInput,
+       maxTotalTokens: 32_000,
+       firstStepTimeoutMs: 16_000,
+       maxThoughtSteps: 3,
+       geminiProxy,
+       signal: req.signal,
+       onCreated: ({ id, environmentId }) => {
+        lastInteractionId = id;
+        activeStep = 'thinking';
+        send({ type: 'agent_ready', stage: 2, interactionId: id, environmentId });
+       },
+       onStep: st => {
+        activeStep = st;
+        send({ type: 'step', stage: 2, stepType: st });
+       },
+       onKeepAlive: () => {
+        send({ type: 'ping', stage: 2, step: activeStep });
+       },
+       onThoughtDelta: td => {
+        s2WroteAny = true;
+        activeStep = 'thinking';
+        s2ThoughtBuf += td;
+        send({ type: 'thought', stage: 2, text: td });
+       },
+       onTextDelta: td => {
+        s2WroteAny = true;
+        splitter2.push(td);
+       },
+       onTextReset: () => {
+        splitter2 = makeSplitter2();
+        send({ type: 'reset', stage: 2, keepThoughts: true });
+       },
+      });
 
-     const finalReport = mergeStage1AndStage2Report(s1Rep, s2Res.text);
+      splitter2.flush();
+      const merged = mergeStage1AndStage2Report(s1Rep, agentRes.text);
+      if (merged.questions.length > 0 || hasStructuredStudyQuizzes(merged)) {
+       finalReport = merged;
+       s2TextOut = agentRes.text;
+       s2Usage = agentRes.usage;
+       s2Model = 'Antigravity Agent';
+       if (!s2ThoughtBuf.trim() && agentRes.thoughts) {
+        s2ThoughtBuf = agentRes.thoughts;
+       }
+      } else {
+       throw new AntigravityError('Agent 阶段二题库输出不完整，切换引擎继续。', 502, 'parse_error');
+      }
+     } catch (agentErr) {
+      if (req.signal?.aborted) throw agentErr;
+      // 4b. Fallback Stage 2: Gemini 3.8 Flash -> Gemini 3.6 Flash -> DeepSeek V4.1 Flash（思考）
+      if (s2WroteAny) {
+       s2ThoughtBuf = '';
+       splitter2 = makeSplitter2();
+       send({ type: 'reset', stage: 2 });
+      }
+      const fbRes = await jdResearchModelStream({
+       strategy: 'gemini-then-deepseek',
+       includeHydrogen: false,
+       systemPrompt: s2SystemPrompt,
+       userInput: s2UserInput,
+       maxTokens: 16384,
+       geminiProxy,
+       signal: req.signal,
+       validate: txt => {
+        const m = mergeStage1AndStage2Report(s1Rep!, txt);
+        return m.questions.length > 0 || hasStructuredStudyQuizzes(m);
+       },
+       onModel: m => {
+        activeStep = 'thinking';
+        send({ type: 'model', stage: 2, model: m });
+       },
+       onThoughtDelta: td => {
+        activeStep = 'thinking';
+        s2ThoughtBuf += td;
+        send({ type: 'thought', stage: 2, text: td });
+       },
+       onTextDelta: td => {
+        splitter2.push(td);
+       },
+       onReset: () => {
+        s2ThoughtBuf = '';
+        splitter2 = makeSplitter2();
+        send({ type: 'reset', stage: 2 });
+       },
+      });
+      splitter2.flush();
+      s2TextOut = fbRes.text;
+      s2Model = fbRes.model;
+      if (!s2ThoughtBuf.trim() && fbRes.thoughts) {
+       s2ThoughtBuf = fbRes.thoughts;
+      }
+      finalReport = mergeStage1AndStage2Report(s1Rep, fbRes.text);
+     }
+
+     const extracted2 = extractThoughtsAndJson(s2TextOut);
+     const s2RawText = extracted2.jsonRaw || s2TextOut;
+     const s2Thoughts = (s2ThoughtBuf.trim() || extracted2.thoughts || '').trim();
+     const combinedModel =
+      s1Model && s2Model && s1Model !== s2Model ? `${s1Model} + ${s2Model}` : s2Model || s1Model || ANTIGRAVITY_AGENT_ID;
      const combinedThoughts = [s1Thoughts, s2Thoughts ? (s1Thoughts ? `── 阶段二：按复习路径设计五题型学习题与面试题库 ──\n${s2Thoughts}` : s2Thoughts) : '']
       .filter(Boolean)
       .join('\n\n')
       .trim();
      const combinedRaw = [s1RawText, s2RawText].filter(Boolean).join('\n\n');
-     const combinedUsage = combineUsage(s1Usage, s2Res.usage);
+     const combinedUsage = combineUsage(s1Usage, s2Usage);
 
      if (finalReport && (finalReport.questions.length > 0 || hasStructuredStudyQuizzes(finalReport))) {
       await writePromptCache(
        cacheKey,
        'jd-research',
-       ANTIGRAVITY_AGENT_ID,
+       combinedModel,
        {
         report: finalReport,
         rawText: combinedRaw,
         thoughts: combinedThoughts,
+        model: combinedModel,
         usage: combinedUsage,
        } satisfies CachedJdPayload,
        7 * 24 * 3600_000,
@@ -536,6 +640,7 @@ export async function POST(req: Request) {
      const stored: StoredJdRecordPayload = {
       kind,
       source,
+      model: combinedModel,
       cacheKey,
       stage1CacheKey,
       stage: 2,
@@ -563,6 +668,7 @@ export async function POST(req: Request) {
       recordId,
       cached: false,
       stage1Cached,
+      model: combinedModel,
       report: finalReport,
       rawText: combinedRaw,
       thoughts: combinedThoughts,

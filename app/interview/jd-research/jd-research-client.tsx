@@ -915,7 +915,7 @@ export default function JdResearchClient({
   });
   setRawText('');
   setThoughts('');
-  setStreamModel('Antigravity Agent');
+  setStreamModel('DeepSeek V4.1 Flash（思考）');
   setStreamThoughts('');
   setImportResult(null);
 
@@ -966,6 +966,7 @@ export default function JdResearchClient({
    const dec = new TextDecoder();
    let buf = '';
    let accThoughts = '';
+   let stage1ThoughtsSnap = '';
    let accTail = '';
 
    for (;;) {
@@ -992,6 +993,7 @@ export default function JdResearchClient({
       chars?: number;
       cached?: boolean;
       stage1Cached?: boolean;
+      keepThoughts?: boolean;
       partialReport?: JdResearchReport | null;
       progress?: JdLiveProgress;
       report?: JdResearchReport | null;
@@ -1020,6 +1022,23 @@ export default function JdResearchClient({
      }
      if (ev.title) curTitle = ev.title;
      if (ev.model) setStreamModel(ev.model);
+
+     if (ev.type === 'model') {
+      setPingBeats(b => b + 1);
+      continue;
+     }
+
+     if (ev.type === 'reset') {
+      accTail = '';
+      setStreamTail('');
+      setStreamChars(0);
+      if (!ev.keepThoughts) {
+       accThoughts = ev.stage === 2 ? stage1ThoughtsSnap : '';
+       setStreamThoughts(accThoughts);
+      }
+      setConnState('connected');
+      continue;
+     }
 
      if (ev.type === 'connected') {
       setConnState('connected');
@@ -1122,6 +1141,7 @@ export default function JdResearchClient({
       accTail = '';
       setStreamTail('');
       setStreamChars(0);
+      stage1ThoughtsSnap = accThoughts ? `${accThoughts}\n\n── 阶段二：按复习路径设计五题型学习题与面试题库 ──\n` : '';
       setConnState('agent_ready');
       if (ev.progress) {
        setLiveProgress(ev.progress);
@@ -1677,10 +1697,10 @@ export default function JdResearchClient({
           : connState === 'connecting'
             ? L('正在建立流式连接…', 'Establishing stream connection…')
             : connState === 'connected'
-              ? L('✓ 已连接流式通道，正在建立 Agent 远程推理会话…', '✓ Stream connected, initializing Agent session…')
+              ? L(`✓ 已连接流式通道，等待 ${streamModel || 'AI'} 返回思考…`, `✓ Stream connected, waiting for ${streamModel || 'AI'}…`)
               : L(
-                 `✓ Agent 会话已连接，正在深度拆解岗位技术栈与考点权重…${pingBeats > 1 ? `（心跳 #${pingBeats}）` : ''} ▋`,
-                 `✓ Agent session active, analyzing JD…${pingBeats > 1 ? ` (beat #${pingBeats})` : ''} ▋`,
+                 `✓ ${streamModel || 'AI'} 已连接，正在思考…${pingBeats > 1 ? `（#${pingBeats}）` : ''} ▋`,
+                 `✓ ${streamModel || 'AI'} active…${pingBeats > 1 ? ` (#${pingBeats})` : ''} ▋`,
                 )}
         </pre>
        </div>

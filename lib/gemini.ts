@@ -115,11 +115,12 @@ async function runProviderStream(
  maxTokens:number|undefined,
  onText:(t:string)=>void,
  // thinking / thinkingLevel：控制是否开启思考及思考强度；onThink 收到思考过程里新写出的文字。
- opts:{thinking?:boolean;thinkingLevel?:ThinkingLevel;onThink?:(t:string)=>void;geminiProxy?:boolean;signal?:AbortSignal;siteManaged?:boolean}={}
+ opts:{thinking?:boolean;thinkingLevel?:ThinkingLevel;onThink?:(t:string)=>void;geminiProxy?:boolean;signal?:AbortSignal;siteManaged?:boolean;firstTimeoutMs?:number;totalTimeoutMs?:number}={}
 ):Promise<string>{
- const ctl=new AbortController(),onAbort=()=>ctl.abort();if(opts.signal){if(opts.signal.aborted)ctl.abort();else opts.signal.addEventListener('abort',onAbort,{once:true})}let timer=setTimeout(()=>ctl.abort(),FIRST),text='',alive=false;
+ const firstMs=opts.firstTimeoutMs??FIRST,totalMs=opts.totalTimeoutMs??TOTAL;
+ const ctl=new AbortController(),onAbort=()=>ctl.abort();if(opts.signal){if(opts.signal.aborted)ctl.abort();else opts.signal.addEventListener('abort',onAbort,{once:true})}let timer=setTimeout(()=>ctl.abort(),firstMs),text='',alive=false;
  // 收到第一段内容（思考或正文）后，把“等第一个字”的短超时换成整段回复的长超时。
- const touch=()=>{if(alive)return;alive=true;clearTimeout(timer);timer=setTimeout(()=>ctl.abort(),TOTAL)};
+ const touch=()=>{if(alive)return;alive=true;clearTimeout(timer);timer=setTimeout(()=>ctl.abort(),totalMs)};
  const emit=(chunk:string)=>{
   if(!chunk)return;
   touch();
@@ -732,4 +733,76 @@ export async function extractJdFromImages(images:string[],geminiProxy=true,allow
   }
  }
  throw last instanceof Error?last:new GradeError('图片文字识别失败，请重试或直接粘贴文字。');
+}
+
+// JD / 面经深度调研多引擎流式生成器（彻底不含 gemini-2.5-flash）：
+// - 'deepseek-first'：阶段一（考点画像 + 复习路径）优先 DeepSeek V4.1 Flash（思考），失败自动降级 Gemini 4 / 3.8 / 3.6；
+// - 'gemini-then-deepseek'：阶段二（出题）在 Gemini 模型间尝试，若 Gemini 503/429/超时或无法解析则自动无缝切换 DeepSeek V4.1 Flash（思考）。
+export async function jdResearchModelStream(opts:{
+ strategy:'deepseek-first'|'gemini-then-deepseek';
+ includeHydrogen?:boolean;
+ systemPrompt:string;
+ userInput:string;
+ maxTokens?:number;
+ geminiProxy?:boolean;
+ signal?:AbortSignal;
+ validate?:(text:string)=>boolean;
+ onModel?:(label:string)=>void;
+ onThoughtDelta?:(delta:string)=>void;
+ onTextDelta?:(delta:string)=>void;
+ onReset?:()=>void;
+}):Promise<{text:string;thoughts:string;model:string}>{
+ const e=env as unknown as Record<string,string|undefined>;
+ const dsKey=e?.DEEPSEEK_API_KEY||(typeof process!=='undefined'?process.env?.DEEPSEEK_API_KEY:undefined);
+ const gmKey=e?.GEMINI_API_KEY||(typeof process!=='undefined'?process.env?.GEMINI_API_KEY:undefined);
+ const dsCand:GradeCandidate[]=dsKey?[
+  {provider:'deepseek',model:'deepseek-flash',key:dsKey,thinking:true,label:'DeepSeek V4.1 Flash（思考）'},
+ ]:[];
+ const gmCands:GradeCandidate[]=gmKey?[
+  ...(opts.includeHydrogen!==false?[{provider:'gemini' as const,model:'gemini-4-hydrogen',key:gmKey,thinking:true,label:'Gemini 4 Hydrogen'}]:[]),
+  {provider:'gemini',model:'gemini-3.8-flash',key:gmKey,thinking:true,label:'Gemini 3.8 Flash'},
+  {provider:'gemini',model:'gemini-3.6-flash',key:gmKey,thinking:true,label:'Gemini 3.6 Flash'},
+ ]:[];
+ const candidates=opts.strategy==='deepseek-first'?[...dsCand,...gmCands]:[...gmCands,...dsCand];
+ if(!candidates.length)throw new GradeError('站点未配置可用的 AI 模型密钥。');
+
+ let last:unknown;
+ for(const cand of candidates){
+  if(opts.signal?.aborted)throw last instanceof Error?last:new GradeError('aborted');
+  let wrote=false;
+  let thoughtBuf='';
+  opts.onModel?.(cand.label);
+  try{
+   const text=await runProviderStream(
+    cand.provider,
+    cand.model,
+    cand.key,
+    opts.systemPrompt,
+    [{role:'user',content:opts.userInput}],
+    0.3,
+    false,
+    opts.maxTokens??16384,
+    chunk=>{wrote=true;opts.onTextDelta?.(chunk)},
+    {
+     thinking:true,
+     thinkingLevel:cand.provider==='deepseek'?'high':'auto',
+     onThink:chunk=>{wrote=true;thoughtBuf+=chunk;opts.onThoughtDelta?.(chunk)},
+     geminiProxy:opts.geminiProxy??true,
+     signal:opts.signal,
+     siteManaged:true,
+     firstTimeoutMs:cand.provider==='gemini'?16_000:35_000,
+     totalTimeoutMs:160_000,
+    },
+   );
+   if(opts.validate&&!opts.validate(text)){
+    throw new GradeError(`${cand.model} invalid_json`);
+   }
+   return {text,thoughts:thoughtBuf.trim(),model:cand.label};
+  }catch(err){
+   last=err;
+   if(opts.signal?.aborted)throw err;
+   if(wrote)opts.onReset?.();
+  }
+ }
+ throw last instanceof Error?last:new GradeError('调研生成失败，请重试。');
 }
