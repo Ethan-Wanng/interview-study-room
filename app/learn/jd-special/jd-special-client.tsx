@@ -12,10 +12,13 @@ import {
  BookOpen,
  Check,
  CheckCircle2,
+ ChevronDown,
+ ChevronUp,
  Compass,
  ExternalLink,
  Eye,
  EyeOff,
+ FileText,
  MessageSquare,
  Plus,
  RotateCcw,
@@ -23,6 +26,7 @@ import {
  Square,
  Target,
  X,
+ Zap,
 } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
 import SiteHeader from '../../components/site-header';
@@ -33,20 +37,30 @@ import QuestionCard, { type Item, type Result } from '../../ai/question-card';
 import { Annotated } from '../../interview/annotated';
 import { AnnotatedAnswerBox } from '../../ai/grade-view';
 import { requestGrade, type GradeThinkState } from '../../ai/grade-client';
+import { getGeminiAutoProxy } from '../../ai/gemini-proxy-pref';
 import { useI18n } from '../../components/i18n';
 import { aiQuizTypes, type AiQuiz } from '@/content/journey';
 import { answerBlocks } from '@/lib/my-questions';
 import type { PlaygroundLang } from '@/lib/playground-bridge';
 import type { GradeItem, GradeResult } from '@/lib/grade-types';
+import type { AntigravityUsage } from '@/lib/antigravity-agent';
 import {
  countJdStudyQuizzes,
  hasStructuredStudyQuizzes,
+ type JdInputKind,
  type JdResearchReport,
 } from '@/lib/jd-research-types';
+
+const fmtTok = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}K` : String(n));
 
 export type JdSpecialTopic = {
  id: string;
  title: string;
+ kind?: JdInputKind;
+ source?: string;
+ cached?: boolean;
+ stage1Cached?: boolean;
+ usage?: AntigravityUsage;
  updatedAt: number;
  report: JdResearchReport;
 };
@@ -182,11 +196,20 @@ export default function JdSpecialClient({
  const { locale } = useI18n();
  const L = (zh: string, en: string) => (locale === 'en' ? en : zh);
 
+ const [topicList, setTopicList] = useState<JdSpecialTopic[]>(topics);
+ useEffect(() => {
+  setTopicList(topics);
+ }, [topics]);
+
  const [activeTopicId, setActiveTopicId] = useState<string>(topics[0]?.id || '');
  const [tab, setTab] = useState<ViewTab>('practice');
  const [stepIdx, setStepIdx] = useState(0);
  const [dimIdx, setDimIdx] = useState(0);
  const [qIndex, setQIndex] = useState(0);
+ const [jdOpen, setJdOpen] = useState(false);
+ const [regenKey, setRegenKey] = useState('');
+ const [regenErr, setRegenErr] = useState('');
+ const [regenNonce, setRegenNonce] = useState<Record<string, number>>({});
  const [passed, setPassed] = useState<Set<string>>(() => new Set());
  const [session, setSession] = useState<StoredStepSession>({ results: {}, drafts: {}, orders: {} });
  const sessionRef = useRef<StoredStepSession>(session);
@@ -229,8 +252,8 @@ export default function JdSpecialClient({
  useEffect(() => () => gradeAbortRef.current?.abort(), []);
 
  const topic = useMemo(
-  () => topics.find(t => t.id === activeTopicId) ?? topics[0] ?? null,
-  [topics, activeTopicId],
+  () => topicList.find(t => t.id === activeTopicId) ?? topicList[0] ?? null,
+  [topicList, activeTopicId],
  );
 
  const structured = Boolean(topic && hasStructuredStudyQuizzes(topic.report));
@@ -426,6 +449,58 @@ export default function JdSpecialClient({
   syncUrl(topic.id, tab, safeStepIdx, safeDimIdx, 0);
  };
 
+ const regenerateCurrentQuiz = async () => {
+  if (!topic || !currentEntry || regenKey) return;
+  const targetKey = currentEntry.key;
+  setRegenKey(targetKey);
+  setRegenErr('');
+  try {
+   const r = await fetch('/api/jd-research/regenerate-quiz', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+     recordId: topic.id,
+     stepIdx: currentEntry.stepIdx,
+     quizId: currentEntry.quiz.id,
+     geminiProxy: getGeminiAutoProxy(),
+    }),
+   });
+   const d = (await r.json()) as {
+    ok?: boolean;
+    report?: JdResearchReport;
+    usage?: AntigravityUsage;
+    error?: string;
+   };
+   if (!r.ok || !d.ok || !d.report) {
+    throw new Error(d.error || L('重出题目失败，请重试', 'Regeneration failed'));
+   }
+   setTopicList(prev =>
+    prev.map(t => (t.id === topic.id ? { ...t, report: d.report!, usage: d.usage ?? t.usage } : t)),
+   );
+   updateSession(prev => {
+    const results = { ...prev.results };
+    const drafts = { ...prev.drafts };
+    const orders = { ...prev.orders };
+    delete results[targetKey];
+    delete drafts[targetKey];
+    delete orders[targetKey];
+    return { ...prev, results, drafts, orders };
+   });
+   setPassed(prev => {
+    if (!prev.has(targetKey)) return prev;
+    const next = new Set(prev);
+    next.delete(targetKey);
+    persistPassed(username, next);
+    return next;
+   });
+   setRegenNonce(prev => ({ ...prev, [targetKey]: (prev[targetKey] || 0) + 1 }));
+  } catch (e) {
+   setRegenErr((e as Error).message || L('重出题目失败，请重试', 'Regeneration failed'));
+  } finally {
+   setRegenKey('');
+  }
+ };
+
  const toggleLegacyMastered = () => {
   if (!legacyKey) return;
   setPassed(prev => {
@@ -552,9 +627,9 @@ export default function JdSpecialClient({
      </div>
     ) : (
      <>
-      {topics.length > 1 && (
+      {topicList.length > 1 && (
        <div className="jdr-history-bar" aria-label={L('切换专题', 'Topics')}>
-        {topics.map(t => {
+        {topicList.map(t => {
          const tot = countJdStudyQuizzes(t.report);
          const prefix = `${t.id}:`;
          let done = 0;
@@ -585,6 +660,52 @@ export default function JdSpecialClient({
           {topic.report.inferredLevel && <span className="jdr-style-tag">{topic.report.inferredLevel}</span>}
           {topic.report.prepDays && <span className="jdr-style-tag">{topic.report.prepDays}</span>}
           {topic.report.companyStyle && <span className="jdr-style-tag">{topic.report.companyStyle}</span>}
+          {topic.usage && topic.usage.totalTokens > 0 && (
+           <span
+            className="jdr-model-pill"
+            title={L(
+             `输入 ${fmtTok(topic.usage.inputTokens)} · 缓存 ${fmtTok(topic.usage.cachedTokens)} · 输出 ${fmtTok(topic.usage.outputTokens)}${topic.usage.thoughtTokens > 0 ? ` · 思考 ${fmtTok(topic.usage.thoughtTokens)}` : ''}`,
+             `In ${fmtTok(topic.usage.inputTokens)} · Cache ${fmtTok(topic.usage.cachedTokens)} · Out ${fmtTok(topic.usage.outputTokens)}`,
+            )}
+           >
+            {L(`总消耗 ${fmtTok(topic.usage.totalTokens)} Token`, `${fmtTok(topic.usage.totalTokens)} Tokens`)}
+           </span>
+          )}
+          {topic.cached ? (
+           <span className="jdr-cache-tag">
+            <Zap size={12} />
+            {L('缓存命中 100% · 0 Token', 'Cache Hit 100%')}
+           </span>
+          ) : (topic.stage1Cached || (topic.usage && topic.usage.totalTokens > 0)) ? (
+           <span
+            className="jdr-cache-tag"
+            title={
+             topic.usage && topic.usage.inputTokens > 0
+              ? L(
+                 `命中缓存 ${fmtTok(topic.usage.cachedTokens)} / 总输入 ${fmtTok(topic.usage.inputTokens)} Token`,
+                 `Cached ${fmtTok(topic.usage.cachedTokens)} / Input ${fmtTok(topic.usage.inputTokens)}`,
+                )
+              : undefined
+            }
+           >
+            <Zap size={12} />
+            {(() => {
+             const cTok = topic.usage?.cachedTokens ?? 0;
+             const inTok = topic.usage?.inputTokens ?? 0;
+             const pct = inTok > 0 ? Math.min(100, Math.round((cTok / inTok) * 100)) : 0;
+             if (cTok > 0) {
+              return L(
+               `缓存命中 ${fmtTok(cTok)} Token (${pct}%)${topic.stage1Cached ? ' + 阶段一缓存' : ''}`,
+               `Cached ${fmtTok(cTok)} (${pct}%)${topic.stage1Cached ? ' + S1' : ''}`,
+              );
+             }
+             if (topic.stage1Cached) {
+              return L('阶段一缓存命中', 'Stage 1 Cache Hit');
+             }
+             return L('缓存命中 0 Token (0%)', 'Cached 0 (0%)');
+            })()}
+           </span>
+          ) : null}
          </div>
         </div>
         <a
@@ -602,6 +723,23 @@ export default function JdSpecialClient({
          {L(`已掌握 ${topicMasteredCount} / ${topicTotal} 题`, `${topicMasteredCount} / ${topicTotal}`)}
         </span>
        </div>
+
+       {topic.source && topic.source.trim() && (
+        <div className="arch-thoughts">
+         <button
+          type="button"
+          className="arch-thoughts-btn"
+          onClick={() => setJdOpen(v => !v)}
+         >
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+           <FileText size={13} />
+           {topic.kind === 'experience' ? L('原始面经', 'Interview Log') : L('岗位 JD', 'Job Description')}
+          </span>
+          {jdOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+         </button>
+         {jdOpen && <pre className="arch-thoughts-body">{topic.source}</pre>}
+        </div>
+       )}
       </section>
 
       <div className="jdr-tabs" role="tablist">
@@ -782,8 +920,14 @@ export default function JdSpecialClient({
            </span>
           </div>
 
+          {regenErr && (
+           <p className="ai-grade-error" style={{ margin: 0 }}>
+            {regenErr}
+           </p>
+          )}
+
           <QuestionCard
-           key={studyKey}
+           key={`${studyKey}:${regenNonce[studyKey] || 0}`}
            item={currentStudyItem}
            label={
             tab === 'dimension' && activeDim
@@ -795,6 +939,8 @@ export default function JdSpecialClient({
            onDraftChange={handleStructuredDraft}
            last={safeQIdx === activeEntries.length - 1}
            onAnswer={handleStructuredAnswer}
+           onRegenerate={() => void regenerateCurrentQuiz()}
+           regenerating={regenKey === studyKey}
            onPrev={safeQIdx > 0 ? () => switchQuestion(safeQIdx - 1) : undefined}
            onNext={() => {
             if (safeQIdx < activeEntries.length - 1) {
@@ -1073,6 +1219,18 @@ export default function JdSpecialClient({
             <li key={i}>{t}</li>
            ))}
           </ul>
+         </div>
+        )}
+
+        {topic.source && topic.source.trim() && (
+         <div className="ai-card jdr-traps">
+          <h3>
+           <FileText size={15} />
+           <span>{topic.kind === 'experience' ? L('原始面经', 'Interview Log') : L('岗位 JD', 'Job Description')}</span>
+          </h3>
+          <pre className="arch-thoughts-body" style={{ maxHeight: 360 }}>
+           {topic.source}
+          </pre>
          </div>
         )}
        </section>

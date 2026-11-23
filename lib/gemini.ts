@@ -104,6 +104,8 @@ function geminiThinkingCfgs(model:string,level:ThinkingLevel,defaultOn:boolean):
  return [{includeThoughts:true,thinkingLevel:apiLvl},{includeThoughts:true,thinkingBudget:budget},{includeThoughts:true},undefined];
 }
 
+export type ProviderUsage={totalTokens:number;inputTokens:number;cachedTokens:number;outputTokens:number;thoughtTokens:number};
+
 async function runProviderStream(
  provider:AiProviderId,
  model:string,
@@ -115,7 +117,7 @@ async function runProviderStream(
  maxTokens:number|undefined,
  onText:(t:string)=>void,
  // thinking / thinkingLevel：控制是否开启思考及思考强度；onThink 收到思考过程里新写出的文字。
- opts:{thinking?:boolean;thinkingLevel?:ThinkingLevel;onThink?:(t:string)=>void;geminiProxy?:boolean;signal?:AbortSignal;siteManaged?:boolean;firstTimeoutMs?:number;idleTimeoutMs?:number;totalTimeoutMs?:number}={}
+ opts:{thinking?:boolean;thinkingLevel?:ThinkingLevel;onThink?:(t:string)=>void;onUsage?:(u:ProviderUsage)=>void;geminiProxy?:boolean;signal?:AbortSignal;siteManaged?:boolean;firstTimeoutMs?:number;idleTimeoutMs?:number;totalTimeoutMs?:number}={}
 ):Promise<string>{
  const firstMs=opts.firstTimeoutMs??FIRST,idleMs=opts.idleTimeoutMs??0,totalMs=opts.totalTimeoutMs??TOTAL;
  const ctl=new AbortController(),onAbort=()=>ctl.abort();if(opts.signal){if(opts.signal.aborted)ctl.abort();else opts.signal.addEventListener('abort',onAbort,{once:true})}
@@ -233,15 +235,29 @@ async function runProviderStream(
     }
     if(!res.ok)throw new GradeError(`${provider}:${model} ${res.status}`);
     let thoughtChars=0;
+    let gmUsage:ProviderUsage|undefined;
     for await(const data of sseLines(res)){
-     const ev=JSON.parse(data) as {candidates?:{content?:{parts?:GeminiPart[]}}[]};
+     const ev=JSON.parse(data) as {
+      candidates?:{content?:{parts?:GeminiPart[]}}[];
+      usageMetadata?:{promptTokenCount?:number;cachedContentTokenCount?:number;candidatesTokenCount?:number;thoughtsTokenCount?:number;totalTokenCount?:number};
+     };
+     if(ev.usageMetadata){
+      const um=ev.usageMetadata;
+      const inTok=Number(um.promptTokenCount||0);
+      const cacheTok=Number(um.cachedContentTokenCount||0);
+      const outTok=Number(um.candidatesTokenCount||0);
+      const thTok=Number(um.thoughtsTokenCount||0);
+      const totTok=Number(um.totalTokenCount||0)||(inTok+outTok+thTok);
+      gmUsage={totalTokens:totTok,inputTokens:inTok,cachedTokens:cacheTok,outputTokens:outTok,thoughtTokens:thTok};
+     }
      for(const p of ev.candidates?.[0]?.content?.parts??[]){
       if(p.thought){if(p.text){streamedOut=true;thoughtChars+=p.text.length;think(p.text)}continue;}
       if(p.text){streamedOut=true;emit(p.text);}
      }
     }
+    if(gmUsage)opts.onUsage?.(gmUsage);
     if(enforceSiteLimit&&streamedOut){
-     const actualOutTokens=Math.ceil((text.length+thoughtChars)/2);
+     const actualOutTokens=gmUsage&&gmUsage.outputTokens+gmUsage.thoughtTokens>0?gmUsage.outputTokens+gmUsage.thoughtTokens:Math.ceil((text.length+thoughtChars)/2);
      if(actualOutTokens>512)void recordExtraGeminiTokens(model,actualOutTokens-512);
     }
    }catch(err){
@@ -301,11 +317,35 @@ async function runProviderStream(
     res=await postMessages(fallbackExtra);
    }
    if(!res.ok)throw new GradeError(`${provider}:${model} ${res.status}`);
+   let msgInTok=0,msgCacheTok=0,msgCacheCreateTok=0,msgOutTok=0,msgSawUsage=false;
    for await(const data of sseLines(res)){
-    const ev=JSON.parse(data) as {type?:string;delta?:{type?:string;text?:string;thinking?:string}};
+    const ev=JSON.parse(data) as {
+     type?:string;
+     delta?:{type?:string;text?:string;thinking?:string};
+     message?:{usage?:{input_tokens?:number;cache_read_input_tokens?:number;cache_creation_input_tokens?:number;output_tokens?:number}};
+     usage?:{input_tokens?:number;cache_read_input_tokens?:number;cache_creation_input_tokens?:number;output_tokens?:number};
+    };
+    const u=ev.type==='message_start'?ev.message?.usage:ev.usage;
+    if(u){
+     msgSawUsage=true;
+     if(typeof u.input_tokens==='number')msgInTok=Math.max(msgInTok,u.input_tokens);
+     if(typeof u.cache_read_input_tokens==='number')msgCacheTok=Math.max(msgCacheTok,u.cache_read_input_tokens);
+     if(typeof u.cache_creation_input_tokens==='number')msgCacheCreateTok=Math.max(msgCacheCreateTok,u.cache_creation_input_tokens);
+     if(typeof u.output_tokens==='number')msgOutTok=Math.max(msgOutTok,u.output_tokens);
+    }
     if(ev.type!=='content_block_delta')continue;
     if(ev.delta?.type==='text_delta'&&ev.delta.text)emit(ev.delta.text);
     else if(ev.delta?.type==='thinking_delta'&&ev.delta.thinking)think(ev.delta.thinking);
+   }
+   if(msgSawUsage){
+    const totalIn=msgInTok+msgCacheTok+msgCacheCreateTok;
+    opts.onUsage?.({
+     totalTokens:totalIn+msgOutTok,
+     inputTokens:totalIn,
+     cachedTokens:msgCacheTok,
+     outputTokens:msgOutTok,
+     thoughtTokens:0,
+    });
    }
   }else{
    const ds=provider==='deepseek';
@@ -764,7 +804,7 @@ export async function jdResearchModelStream(opts:{
  onThoughtDelta?:(delta:string)=>void;
  onTextDelta?:(delta:string)=>void;
  onReset?:()=>void;
-}):Promise<{text:string;thoughts:string;model:string}>{
+}):Promise<{text:string;thoughts:string;model:string;usage:ProviderUsage}>{
  const e=env as unknown as Record<string,string|undefined>;
  const dsKey=e?.DEEPSEEK_API_KEY||(typeof process!=='undefined'?process.env?.DEEPSEEK_API_KEY:undefined);
  const gmKey=e?.GEMINI_API_KEY||(typeof process!=='undefined'?process.env?.GEMINI_API_KEY:undefined);
@@ -784,6 +824,7 @@ export async function jdResearchModelStream(opts:{
   if(opts.signal?.aborted)throw last instanceof Error?last:new GradeError('aborted');
   let wrote=false;
   let thoughtBuf='';
+  let capturedUsage:ProviderUsage|undefined;
   opts.onModel?.(cand.label);
   try{
    const text=await runProviderStream(
@@ -800,6 +841,7 @@ export async function jdResearchModelStream(opts:{
      thinking:true,
      thinkingLevel:cand.provider==='deepseek'?(opts.thinkingLevel??'low'):'auto',
      onThink:chunk=>{wrote=true;thoughtBuf+=chunk;opts.onThoughtDelta?.(chunk)},
+     onUsage:u=>{capturedUsage=u},
      geminiProxy:opts.geminiProxy??true,
      signal:opts.signal,
      siteManaged:true,
@@ -811,7 +853,22 @@ export async function jdResearchModelStream(opts:{
    if(opts.validate&&!opts.validate(text)){
     throw new GradeError(`${cand.model} invalid_json`);
    }
-   return {text,thoughts:thoughtBuf.trim(),model:cand.label};
+   const estIn=Math.ceil((opts.systemPrompt.length+opts.userInput.length)/2);
+   const estOut=Math.ceil(text.length/2);
+   const estTh=Math.ceil(thoughtBuf.length/2);
+   const usage:ProviderUsage=capturedUsage&&capturedUsage.totalTokens>0
+    ?{
+      ...capturedUsage,
+      thoughtTokens:capturedUsage.thoughtTokens||estTh,
+     }
+    :{
+      totalTokens:estIn+estOut+estTh,
+      inputTokens:estIn,
+      cachedTokens:0,
+      outputTokens:estOut,
+      thoughtTokens:estTh,
+     };
+   return {text,thoughts:thoughtBuf.trim(),model:cand.label,usage};
   }catch(err){
    last=err;
    if(opts.signal?.aborted)throw err;

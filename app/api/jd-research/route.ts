@@ -372,6 +372,7 @@ export async function POST(req: Request) {
       s1RawText = extracted1.jsonRaw || s1Res.text;
       s1Thoughts = (s1ThoughtBuf.trim() || s1Res.thoughts || extracted1.thoughts || '').trim();
       s1Model = s1Res.model;
+      s1Usage = s1Res.usage;
       s1Rep = parseAndEnrichJdReport(s1Res.text);
 
       if (!s1Rep || (!s1Rep.roadmap.length && !s1Rep.dimensions.length)) {
@@ -673,7 +674,16 @@ export async function POST(req: Request) {
       .join('\n\n')
       .trim();
      const combinedRaw = [s1RawText, s2RawText].filter(Boolean).join('\n\n');
-     const combinedUsage = combineUsage(s1Usage, undefined);
+     let s2Usage: AntigravityUsage | undefined;
+     for (const o of phaseOutcomes) {
+      if (o.status === 'fulfilled' && o.value.res.usage) {
+       s2Usage = combineUsage(s2Usage, o.value.res.usage);
+      }
+     }
+     if (qsRes?.usage) {
+      s2Usage = combineUsage(s2Usage, qsRes.usage);
+     }
+     const combinedUsage = combineUsage(s1Usage, s2Usage);
 
      if (finalReport && (finalReport.questions.length > 0 || hasStructuredStudyQuizzes(finalReport))) {
       await writePromptCache(

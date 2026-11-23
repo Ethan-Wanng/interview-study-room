@@ -36,6 +36,20 @@ const singleWordRe=/([A-Za-z]+(?:['’][A-Za-z]+)*)/g;
 const isSingleWord=(s:string)=>/^[A-Za-z]+(?:['’][A-Za-z]+)*$/.test(s);
 const cleanSpeech=(s:string)=>s.replace(/’/g,"'").replace(/[_＿]+/g,', ').replace(/\s+/g,' ').trim();
 
+// 渲染行内反引号代码（将意外混入反引号内的真实换行转为可见 \n，避免题干被拆断）。
+function renderInlineBackticks(text:string){
+ if(!text||!text.includes('`'))return text;
+ const parts=text.split(/(`[^`]+`)/g);
+ if(parts.length===1)return text;
+ return parts.map((p,i)=>{
+  if(p.startsWith('`')&&p.endsWith('`')&&p.length>2){
+   const inner=p.slice(1,-1).replace(/\r?\n/g,'\\n');
+   return <code key={i} className="inline-code">{inner}</code>;
+  }
+  return p;
+ });
+}
+
 // 英语点读分级（仅在英语模块激活：单词 / 短语 / 句子，配合 speech-drill.tsx 的文章点读构成四级点读）：
 // 1. 单词（1 个词）：直接点单词发音；在未作答选项内右侧带「单词点读」喇叭图标。
 // 2. 短语（2～4 个词且无句末标点）：短语内部不拆分图标，短语末尾带「短语点读」喇叭图标，同时支持点短语内任意单词读单词。
@@ -43,7 +57,8 @@ const cleanSpeech=(s:string)=>s.replace(/’/g,"'").replace(/[_＿]+/g,', ').rep
 export function EnWords({text,inOption,noSentenceHorn}:{text:string;inOption?:boolean;noSentenceHorn?:boolean}){
  const {locale}=useI18n();
  const enableSpeak=useEnglishSpeak();
- if(!enableSpeak||!text||!/[A-Za-z]{2,}/.test(text))return <>{text}</>;
+ if(!enableSpeak)return <>{renderInlineBackticks(text)}</>;
+ if(!text||!/[A-Za-z]{2,}/.test(text))return <>{text}</>;
  const wordTip=locale==='en'?'Word read-aloud':'单词点读';
  const phraseTip=locale==='en'?'Phrase read-aloud':'短语点读';
  const sentTip=locale==='en'?'Sentence read-aloud':'句子点读';

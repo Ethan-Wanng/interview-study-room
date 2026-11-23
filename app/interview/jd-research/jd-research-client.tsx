@@ -328,6 +328,7 @@ export default function JdResearchClient({
  const [reportStage1Cached, setReportStage1Cached] = useState(false);
  const [reportUsage, setReportUsage] = useState<AntigravityUsage | undefined>(undefined);
  const [thoughtsOpen, setThoughtsOpen] = useState(false);
+ const [sourceOpen, setSourceOpen] = useState(false);
  const [tab, setTab] = useState<TabKey>('profile');
 
  const [renaming, setRenaming] = useState(false);
@@ -1880,17 +1881,50 @@ export default function JdResearchClient({
           {reportCached ? (
            <span className="jdr-cache-tag">
             <Zap size={12} />
-            {L('缓存命中 · 0 Token', 'Cache Hit · 0 Tokens')}
+            {L('缓存命中 100% · 0 Token', 'Cache Hit 100% · 0 Tokens')}
            </span>
-          ) : (reportStage1Cached || (reportUsage?.cachedTokens ?? 0) > 0) ? (
-           <span className="jdr-cache-tag">
+          ) : (reportStage1Cached || (reportUsage && reportUsage.totalTokens > 0)) ? (
+           <span
+            className="jdr-cache-tag"
+            title={
+             reportUsage && reportUsage.inputTokens > 0
+              ? L(
+                 `命中缓存 ${fmtTok(reportUsage.cachedTokens)} / 总输入 ${fmtTok(reportUsage.inputTokens)} Token`,
+                 `Cached ${fmtTok(reportUsage.cachedTokens)} / Input ${fmtTok(reportUsage.inputTokens)}`,
+                )
+              : undefined
+            }
+           >
             <Zap size={12} />
-            {(reportUsage?.cachedTokens ?? 0) > 0
-             ? L(`缓存命中 ${fmtTok(reportUsage!.cachedTokens)}`, `Cached ${fmtTok(reportUsage!.cachedTokens)}`)
-             : L('阶段缓存命中', 'Stage Cache Hit')}
+            {(() => {
+             const cTok = reportUsage?.cachedTokens ?? 0;
+             const inTok = reportUsage?.inputTokens ?? 0;
+             const pct = inTok > 0 ? Math.min(100, Math.round((cTok / inTok) * 100)) : 0;
+             if (cTok > 0) {
+              return L(
+               `缓存命中 ${fmtTok(cTok)} Token (${pct}%)${reportStage1Cached ? ' + 阶段一缓存' : ''}`,
+               `Cached ${fmtTok(cTok)} (${pct}%)${reportStage1Cached ? ' + S1' : ''}`,
+              );
+             }
+             if (reportStage1Cached) {
+              return L('阶段一缓存命中', 'Stage 1 Cache Hit');
+             }
+             return L('缓存命中 0 Token (0%)', 'Cached 0 (0%)');
+            })()}
            </span>
           ) : null}
           {reportModel && <span className="jdr-model-pill">{reportModel}</span>}
+          {reportUsage && reportUsage.totalTokens > 0 && (
+           <span
+            className="jdr-model-pill"
+            title={L(
+             `输入 ${fmtTok(reportUsage.inputTokens)} · 缓存 ${fmtTok(reportUsage.cachedTokens)} · 输出 ${fmtTok(reportUsage.outputTokens)}${reportUsage.thoughtTokens > 0 ? ` · 思考 ${fmtTok(reportUsage.thoughtTokens)}` : ''}`,
+             `In ${fmtTok(reportUsage.inputTokens)} · Cache ${fmtTok(reportUsage.cachedTokens)} · Out ${fmtTok(reportUsage.outputTokens)}`,
+            )}
+           >
+            {L(`总消耗 ${fmtTok(reportUsage.totalTokens)} Token`, `${fmtTok(reportUsage.totalTokens)} Tokens`)}
+           </span>
+          )}
          </div>
         </div>
 
@@ -1992,6 +2026,23 @@ export default function JdResearchClient({
        {importErr && <span className="ai-grade-error">{importErr}</span>}
 
        {report?.summary && <p className="jdr-summary">{report.summary}</p>}
+
+       {source.trim() && (
+        <div className="arch-thoughts">
+         <button
+          type="button"
+          className="arch-thoughts-btn"
+          onClick={() => setSourceOpen(v => !v)}
+         >
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+           <FileText size={13} />
+           {kind === 'experience' ? L('原始面经', 'Interview Log') : L('岗位 JD', 'Job Description')}
+          </span>
+          {sourceOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+         </button>
+         {sourceOpen && <pre className="arch-thoughts-body">{source}</pre>}
+        </div>
+       )}
 
        {thoughts && (
         <div className="arch-thoughts">

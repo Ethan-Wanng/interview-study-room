@@ -283,8 +283,8 @@ export function getJdResearchPhaseQuizzesSystemPrompt(): string {
 1. **单选题（\`single\`）：必须正好 8 道**（4 个选项，1 个正确答案 \`answer\` 为 0-3 整数）。
 2. **多选题（\`multi\`）：必须正好 4 道**（4 个选项，至少 2 个正确项，\`answers\` 为升序索引数组）。
 3. **简答题（\`short\`）：必须正好 2 道**（给出 70–150 字简洁准确 \`reference\` 与 3 条 \`points\` 得分要点）。
-4. **代码题（\`code\`）：0 或 1 道（可有可无，严格根据该岗位 JD 与本阶段内容决定）**——若该岗位与本阶段明显涉及编码、算法、框架实现、SQL 或并发控制则出 1 道精炼动手代码题；若偏纯概念、产品/业务协作、架构选型或非编码运维则不出代码题。
-5. **不要出填空题**；全部题目紧扣本阶段目标与原始 JD/面经真实技术栈，题目之间绝不重复，\`explain\` 一句话直击核心原理；每题必须填写 \`dimension\` 字段，取值从给定的「考点画像模块」列表中选择最匹配的一项名称（用于支持按考点画像刷题）。
+4. **代码题（\`code\`）：0 或 1 道（可有可无，严格根据该岗位 JD 与本阶段内容决定）**——若该岗位与本阶段明显涉及编码、算法、框架实现、SQL 或并发控制则出 1 道精炼动手代码题，且**必须附带 \`starters\` 对象，提供 \`python\`、\`go\`、\`java\`、\`ts\`、\`rust\` 共 5 种语言的简洁函数签名与 \`TODO\` 框架代码**（不要把完整答案放进 \`starters\`）；若偏纯概念、产品/业务协作、架构选型或非编码运维则不出代码题。
+5. **不要出填空题**；全部题目紧扣本阶段目标与原始 JD/面经真实技术栈，题目之间绝不重复，\`explain\` 一句话直击核心原理；\`q\` 题干保持紧凑通顺，行内代码反引号内禁止夹带真实换行（如需表达换行符请写字面量 \`\\\\n\`）；每题必须填写 \`dimension\` 字段，取值从给定的「考点画像模块」列表中选择最匹配的一项名称（用于支持按考点画像刷题）。
 6. 严禁调用任何工具，直接输出**一个合法 JSON 对象**（用 \`\`\`json 和 \`\`\` 包裹，不要输出代码块以外的文字），使用简体中文。
 
 \`\`\`json
@@ -293,7 +293,7 @@ export function getJdResearchPhaseQuizzesSystemPrompt(): string {
     { "type": "single", "dimension": "考点画像模块名", "q": "单选题题干", "options": ["选项A", "选项B", "选项C", "选项D"], "answer": 0, "explain": "一句话核心原理" },
     { "type": "multi", "dimension": "考点画像模块名", "q": "多选题题干（至少2个正确项）", "options": ["选项A", "选项B", "选项C", "选项D"], "answers": [0, 2], "explain": "简明解析" },
     { "type": "short", "dimension": "考点画像模块名", "q": "简答题题干", "reference": "简洁准确参考答案（70-150字）", "points": ["得分要点1", "得分要点2", "得分要点3"], "explain": "记忆抓手" },
-    { "type": "code", "dimension": "考点画像模块名", "q": "（按JD决定可有可无）动手代码题题干", "code": "可选函数签名", "reference": "简洁核心代码", "points": ["关键实现", "边界/并发处理"], "explain": "复杂度与细节" }
+    { "type": "code", "dimension": "考点画像模块名", "q": "（按JD决定可有可无）动手代码题题干", "starters": { "python": "def solve():\\n    # TODO\\n    pass", "go": "package main\\nfunc Solve() error {\\n\\t// TODO\\n\\treturn nil\\n}", "java": "public class Solution {\\n    public void solve() {\\n        // TODO\\n    }\\n}", "ts": "export function solve() {\\n  // TODO\\n}", "rust": "pub fn solve() {\\n    // TODO\\n}" }, "reference": "简洁核心参考代码", "points": ["关键实现", "边界/并发处理"], "explain": "复杂度与细节" }
   ]
 }
 \`\`\``;
@@ -848,10 +848,28 @@ function enrichStepLinks(stepTitle: string, goals: string[], existing: JdSiteLin
  return out.slice(0, 3);
 }
 
+function sanitizeQuizStem(raw: string): string {
+ return raw
+  .replace(/`([^`]+)`/g, (_m, inner: string) => '`' + inner.replace(/\r?\n/g, '\\n') + '`')
+  .replace(/\n{2,}/g, '\n')
+  .trim();
+}
+
+function parseCodeStarters(raw: unknown): Partial<Record<'python' | 'go' | 'java' | 'ts' | 'rust', string>> | undefined {
+ if (!raw || typeof raw !== 'object') return undefined;
+ const o = raw as Record<string, unknown>;
+ const out: Partial<Record<'python' | 'go' | 'java' | 'ts' | 'rust', string>> = {};
+ for (const k of ['python', 'go', 'java', 'ts', 'rust'] as const) {
+  const v = str(o[k], 4000);
+  if (v) out[k] = v;
+ }
+ return Object.keys(out).length ? out : undefined;
+}
+
 function parseStudyQuiz(raw: unknown, stepIdx: number, qIdx: number): AiQuiz | null {
  if (!raw || typeof raw !== 'object') return null;
  const o = raw as Record<string, unknown>;
- const q = str(o.q, 2000);
+ const q = sanitizeQuizStem(str(o.q, 2000));
  if (!q) return null;
  const id = `jdq-${stepIdx + 1}-${qIdx + 1}`;
  const code = str(o.code, 4000) || undefined;
@@ -892,7 +910,8 @@ function parseStudyQuiz(raw: unknown, stepIdx: number, qIdx: number): AiQuiz | n
    ? o.points.slice(0, 6).map(x => str(x, 300)).filter(Boolean)
    : [];
   const points = rawPts.length ? rawPts : ['核心原理或关键实现正确', '边界条件与工程细节清晰'];
-  return { id, type: rawType, q, ...extra, reference, points, explain };
+  const starters = rawType === 'code' ? parseCodeStarters(o.starters) : undefined;
+  return { id, type: rawType, q, ...extra, reference, points, ...(starters ? { starters } : {}), explain };
  }
 
  const options = Array.isArray(o.options)
@@ -905,6 +924,32 @@ function parseStudyQuiz(raw: unknown, stepIdx: number, qIdx: number): AiQuiz | n
   ? o.why.map(x => str(x, 300))
   : undefined;
  return { id, type: 'single', q, ...extra, options, answer, ...(why ? { why } : {}), explain };
+}
+
+export function parseSingleStudyQuiz(
+ rawText: string,
+ stepIdx: number,
+ qIdx: number,
+ fallbackId: string,
+ fallbackDimension?: string,
+): AiQuiz | null {
+ const jsonText = extractJsonText(rawText);
+ const parsed = jsonText ? safeParseJson(jsonText) : null;
+ if (!parsed || typeof parsed !== 'object') return null;
+ const obj = parsed as Record<string, unknown>;
+ const target =
+  obj.quiz && typeof obj.quiz === 'object'
+   ? obj.quiz
+   : Array.isArray(obj.quizzes) && obj.quizzes[0]
+     ? obj.quizzes[0]
+     : obj;
+ const qz = parseStudyQuiz(target, stepIdx, qIdx);
+ if (!qz) return null;
+ return {
+  ...qz,
+  id: fallbackId || qz.id,
+  ...(qz.dimension || fallbackDimension ? { dimension: qz.dimension || fallbackDimension } : {}),
+ };
 }
 
 function parseQuestionsArray(rawQuestions: unknown): JdQuestionItem[] {

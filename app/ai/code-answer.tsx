@@ -26,13 +26,58 @@ export type CodeAnswerPlayground={
  backHref?:string;
 };
 
+// 根据题干与已有示例代码生成 5 种语言（Python / Go / Java / JS/TS / Rust）的标准 TODO 框架，
+// 保证动态生成的 JD 代码题与历史专题代码题也都具备完整的五语言切换作答体验。
+export function buildFiveLangStarters(
+ custom?:Partial<Record<CodeLang,string>>,
+ qCode?:string,
+ title?:string,
+):Record<CodeLang,string>{
+ const fnMatch=(qCode||title||'').match(/\b([a-zA-Z_][a-zA-Z0-9_]{2,32})\s*\(/);
+ const rawName=fnMatch?.[1]&&!/^(?:if|for|while|switch|return|print|console|func|async|def|class|struct|impl|public|private|static|void|new|from|import)$/.test(fnMatch[1])
+  ?fnMatch[1]
+  :'solve';
+ const toCamel=(s:string)=>s.replace(/_([a-zA-Z0-9])/g,(_,c:string)=>c.toUpperCase());
+ const toPascal=(s:string)=>{const c=toCamel(s);return c?c[0].toUpperCase()+c.slice(1):'Solve'};
+ const toSnake=(s:string)=>s.replace(/([a-z0-9])([A-Z])/g,'$1_$2').toLowerCase();
+ const pyName=toSnake(rawName);
+ const goName=toPascal(rawName);
+ const jsName=toCamel(rawName);
+ const detected=qCode?detectPlaygroundLang(qCode,undefined,{allowThirdParty:true}):null;
+ const detectedCodeLang:CodeLang|null=detected&&detected!=='sql'?detected:null;
+ const hint=(title||'').replace(/\r?\n/g,' ').slice(0,68);
+ const defaults:Record<CodeLang,string>={
+  python:`# ${hint}\ndef ${pyName}(*args, **kwargs):\n    # TODO: 实现核心逻辑\n    pass\n`,
+  go:`package main\n\n// ${hint}\nfunc ${goName}() error {\n\t// TODO: 实现核心逻辑\n\treturn nil\n}\n`,
+  java:`// ${hint}\npublic class Solution {\n    public Object ${jsName}() {\n        // TODO: 实现核心逻辑\n        return null;\n    }\n}\n`,
+  ts:`// ${hint}\nexport async function ${jsName}(...args: unknown[]): Promise<unknown> {\n  // TODO: 实现核心逻辑\n  return null;\n}\n`,
+  rust:`// ${hint}\npub fn ${pyName}() {\n    // TODO: 实现核心逻辑\n    unimplemented!()\n}\n`,
+ };
+ const out:Record<CodeLang,string>={...defaults};
+ if(detectedCodeLang&&qCode?.trim()){
+  out[detectedCodeLang]=qCode.trim()+'\n';
+ }
+ if(custom){
+  for(const l of codeLangs){
+   const v=custom[l.id];
+   if(typeof v==='string'&&v.trim())out[l.id]=v.trim()+'\n';
+  }
+ }
+ return out;
+}
+
+export function resolveStarters(id:string,customStarters?:Partial<Record<CodeLang,string>>):Partial<Record<CodeLang,string>>|undefined{
+ if(customStarters&&Object.values(customStarters).some(v=>typeof v==='string'&&v.trim()))return customStarters;
+ return startersFor(id);
+}
+
 // 作答框里的内容还是某个语言的原始框架（没补任何 TODO）时，算作还没作答。
-export function untouchedStarter(id:string,text:string){const s=startersFor(id);return !!s&&Object.values(s).some(v=>v.trim()===text.trim())}
+export function untouchedStarter(id:string,text:string,customStarters?:Partial<Record<CodeLang,string>>){const s=resolveStarters(id,customStarters);return !!s&&Object.values(s).some(v=>v&&v.trim()===text.trim())}
 
 // 代码题作答框：这道题有框架时，先选语言，作答框预填该语言的框架，学习者补全 TODO；没有框架的题就是普通代码输入框。支持一键带入操场调试并同步回答题框。
-export default function CodeAnswer({id,value,onChange,disabled,rows=10,placeholder,autoFocus,playground}:{id:string;value:string;onChange:(v:string)=>void;disabled?:boolean;rows?:number;placeholder?:string;autoFocus?:boolean;playground?:CodeAnswerPlayground}){
+export default function CodeAnswer({id,value,onChange,disabled,rows=10,placeholder,autoFocus,playground,customStarters}:{id:string;value:string;onChange:(v:string)=>void;disabled?:boolean;rows?:number;placeholder?:string;autoFocus?:boolean;playground?:CodeAnswerPlayground;customStarters?:Partial<Record<CodeLang,string>>}){
  const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
- const starters=startersFor(id),picked=useCodeLang();
+ const starters=resolveStarters(id,customStarters),picked=useCodeLang();
  const langs=starters?codeLangs.filter(l=>starters[l.id]):[];
  const cur:CodeLang|undefined=starters?(picked&&starters[picked]?picked:langs[0]?.id):undefined;
  const [synced,setSynced]=useState(false);
@@ -68,7 +113,7 @@ export default function CodeAnswer({id,value,onChange,disabled,rows=10,placehold
  },[id,allowPlayground,disabled,starters,onChange]);
  const pick=(l:CodeLang)=>{if(!starters||l===cur)return;
   // 已经补了内容时，换语言会覆盖掉，先确认。
-  if(value.trim()&&!untouchedStarter(id,value)&&!window.confirm(L('换语言会用新语言的框架替换你已经写的内容，确定吗？','Switching replaces what you wrote with the new language template. Continue?')))return;
+  if(value.trim()&&!untouchedStarter(id,value,customStarters)&&!window.confirm(L('换语言会用新语言的框架替换你已经写的内容，确定吗？','Switching replaces what you wrote with the new language template. Continue?')))return;
   setCodeLang(l);onChange(starters[l]!)};
  const playLang:PlaygroundLang|undefined=cur??(playground?(detectPlaygroundLang(value,playground.hintLang,{allowThirdParty:true})??playground.hintLang??undefined):undefined);
  const openPlayground=()=>{

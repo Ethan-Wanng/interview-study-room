@@ -400,6 +400,10 @@ ol.tutor-md-list{list-style:decimal}
 @media(min-width:1280px){.ai-header{flex-wrap:nowrap;padding-left:max(24px,calc((100vw - 932px)/2));padding-right:max(24px,calc((100vw - 932px)/2))}.ai-header .top-actions{flex-wrap:nowrap}}
 /* 题干里的换行照常显示（规则、例子分行写） */
 .ai-question h2,.paper-q h3{white-space:pre-line}
+.inline-code{padding:1px 6px;margin:0 2px;border-radius:6px;background:color-mix(in srgb,var(--primary) 12%,var(--surface-soft));border:1px solid color-mix(in srgb,var(--primary) 20%,var(--line));font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.86em;font-weight:600;color:var(--ink);word-break:break-word}
+.ai-regen-btn{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--surface-soft);color:var(--quiet);font:inherit;font-size:12px;font-weight:600;cursor:pointer;transition:border-color .15s,color .15s}
+.ai-regen-btn:hover:not(:disabled){border-color:var(--primary);color:var(--primary)}
+.ai-regen-btn:disabled{opacity:.65;cursor:not-allowed}
 /* 代码题作答框：选语言 + 提示 */
 .code-answer .code-ref-tabs{align-items:center;margin-bottom:8px}
 .code-answer-label{font-size:13px;color:var(--quiet);margin-right:4px}
