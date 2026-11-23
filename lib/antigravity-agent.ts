@@ -101,8 +101,8 @@ export async function startAntigravityInteraction(opts: {
  if (!quota.allowed) {
   throw new AntigravityError(
    quota.reason === 'rpd'
-    ? '今日高阶架构评审（Antigravity Agent）额度已满（100 次/天），请明天再来。'
-    : '当前请求繁忙（60 次/分 · 100K TPM 限流），请稍候再试。',
+    ? '今日高阶深度评审额度已满，请明天再来。'
+    : '当前请求繁忙，请稍候再试。',
    429,
    'rate_limited',
   );
@@ -133,7 +133,7 @@ export async function startAntigravityInteraction(opts: {
    const errTxt = (await res.text()).slice(0, 1024);
    await refundSiteGeminiLimit(ANTIGRAVITY_AGENT_ID, quota.reservedTokens);
    await markSiteGemini429(ANTIGRAVITY_AGENT_ID, errTxt);
-   throw new AntigravityError('Antigravity Agent 触发限流，请稍后再试。', 429, 'rate_limited');
+   throw new AntigravityError('深度评审服务触发限流，请稍后再试。', 429, 'rate_limited');
   }
   if (!res.ok) {
    const errTxt = (await res.text()).slice(0, 500);
@@ -157,7 +157,7 @@ export async function startAntigravityInteraction(opts: {
  } catch (e) {
   if (!(e instanceof AntigravityError)) {
    await refundSiteGeminiLimit(ANTIGRAVITY_AGENT_ID, quota.reservedTokens);
-   throw new AntigravityError('连接 Antigravity Agent 失败，请重试。', 502, 'network_error');
+   throw new AntigravityError('连接深度评审服务失败，请重试。', 502, 'network_error');
   }
   throw e;
  }

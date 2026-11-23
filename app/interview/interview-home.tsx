@@ -25,12 +25,12 @@ export default function InterviewHome({tracks,mine,member,today,goals,onOpen,onA
    <a href="/interview/architect" className="ai-card learn-subject iv-subject iv-arch">
     <span className="learn-icon">🏛️</span>
     <strong>{L('系统设计深度点评 · 高阶模拟面试','System Design Review & Senior Mock')}</strong>
-    <span className="learn-foot"><span>Antigravity Agent</span><b>{L('进入','Open')}<ArrowRight size={16}/></b></span>
+    <span className="learn-foot"><span/><b>{L('进入','Open')}<ArrowRight size={16}/></b></span>
    </a>
    <a href="/interview/jd-research" className="ai-card learn-subject iv-subject iv-arch">
     <span className="learn-icon">🧭</span>
     <strong>{L('JD / 面经深度调研 · 专题题库与路径','JD & Interview Deep Research')}</strong>
-    <span className="learn-foot"><span>Antigravity Agent</span><b>{L('进入','Open')}<ArrowRight size={16}/></b></span>
+    <span className="learn-foot"><span/><b>{L('进入','Open')}<ArrowRight size={16}/></b></span>
    </a>
   </div></section>
   <section className="learn-space"><h2 className="an-group">{L('学科题库','Subjects')}</h2><div className="learn-subjects">{tracks.map(s=>card(s))}</div></section>

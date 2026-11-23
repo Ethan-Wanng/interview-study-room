@@ -35,6 +35,8 @@
 .iv-row{display:flex;gap:10px;justify-content:flex-end}
 .iv-filter-row{display:contents}
 .iv-study .answer-label{display:flex;align-items:center;gap:7px}
+.ans-inline-code{padding:1px 6px;border-radius:6px;background:var(--surface-soft);border:1px solid var(--line);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.88em;color:var(--ink)}
+.ans-heading{display:block;font-size:1.05em;font-weight:750;color:var(--ink);margin-top:4px}
 .iv-hide-ans{margin-left:auto;display:inline-flex;align-items:center;gap:5px;padding:4px 11px;border:1px solid var(--line);border-radius:999px;background:var(--surface-soft);color:var(--quiet);font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;transition:border-color .15s,color .15s,background .15s}
 .iv-hide-ans:hover{border-color:var(--primary);color:var(--primary);background:var(--surface)}
 /* 沉浸模式里，顶部这一行和下面的工具栏、题目卡片对齐（同样 920px 居中）。 */

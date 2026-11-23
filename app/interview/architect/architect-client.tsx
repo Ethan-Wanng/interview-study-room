@@ -376,7 +376,6 @@ export default function ArchitectClient({username}:{username:string}){
    <main className="ai-main arch-main">
     <div className="arch-top">
      <a href="/interview" className="arch-back"><ArrowLeft size={16}/>{L('返回面试','Back to Interview')}</a>
-     <span className="arch-agent-pill"><Sparkles size={13}/>Antigravity Agent</span>
     </div>
 
     <div className="ai-title arch-title">
@@ -521,10 +520,6 @@ export default function ArchitectClient({username}:{username:string}){
 
             <div className="arch-reply-foot">
              <div className="arch-reply-meta">
-              {turn.cached&&<span className="arch-badge">{L('提示缓存直出','Prompt Cache Hit')}</span>}
-              {!turn.cached&&turn.usage&&turn.usage.cachedTokens>0&&(
-               <span className="arch-badge">{L(`缓存命中 ${fmtTok(turn.usage.cachedTokens)}`,`Cached ${fmtTok(turn.usage.cachedTokens)}`)}</span>
-              )}
               {!turn.cached&&turn.usage&&turn.usage.totalTokens>0&&(
                <span className="arch-meta-txt">{fmtTok(turn.usage.totalTokens)} tokens</span>
               )}

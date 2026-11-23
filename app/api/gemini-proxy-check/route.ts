@@ -7,7 +7,6 @@ import {
  type ProxyNodeSpec,
 } from '@/lib/gemini-worker-proxy';
 import { readSiteGeminiQuotas } from '@/lib/gemini-rate-limit';
-import { readPromptCacheStats } from '@/lib/prompt-cache';
 
 export const dynamic = 'force-dynamic';
 const noCache = { 'Cache-Control': 'no-store' };
@@ -269,7 +268,7 @@ export async function POST(req: Request) {
    (req.headers.get('cf-ray')?.split('-')[1] || '').trim() ||
    '';
 
-  const [checks, quotas, promptCache] = await Promise.all([
+  const [checks, allQuotas] = await Promise.all([
    gatewayBase
     ? Promise.all([probeGateway(gatewayBase, gmKey), probeDirect(gmKey), probeGemini4(gatewayBase, e, gmKey)])
     : Promise.all([
@@ -279,8 +278,11 @@ export async function POST(req: Request) {
        probeGemini4(undefined, e, gmKey),
       ]),
    readSiteGeminiQuotas(),
-   readPromptCacheStats(),
   ]);
+
+  // Never expose raw proxy hostnames, Antigravity internal quota, or cache hit stats in the client response.
+  const sanitizedChecks = checks.map(({ host: _host, ...rest }) => rest);
+  const quotas = allQuotas.filter(q => !q.model.startsWith('antigravity-'));
 
   return Response.json(
    {
@@ -288,9 +290,8 @@ export async function POST(req: Request) {
     slot: sched.slot,
     colo: cfColo,
     mode: gatewayBase ? 'gateway' : 'worker-tunnel',
-    checks,
+    checks: sanitizedChecks,
     quotas,
-    promptCache,
    },
    { headers: noCache },
   );

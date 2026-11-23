@@ -16,11 +16,9 @@ import { searchSite } from './site-search';
 import { MY_LIMITS } from './my-questions';
 import type {
  JdInputKind,
- JdPrepDays,
  JdQuestionItem,
  JdResearchReport,
  JdRoadmapStep,
- JdSeniority,
  JdSiteLink,
  JdSkillDimension,
 } from './jd-research-types';
@@ -89,22 +87,24 @@ let cachedSystemPrompt: string | null = null;
 export function getJdResearchSystemPrompt(): string {
  if (cachedSystemPrompt) return cachedSystemPrompt;
  const { promptText } = getCatalog();
- cachedSystemPrompt = `你是顶级技术面试教研专家与大厂资深架构面试官。请根据用户提供的「岗位 JD」或「真实面经」，进行深度岗位拆解，生成高度针对性的考点画像、可执行复习路径（关联真实站内课程链接）与高质量专题面试题库。
+ cachedSystemPrompt = `你是顶级技术面试教研专家与大厂资深架构面试官。请根据用户提供的「岗位 JD」或「真实面经」，自主判断该岗位的真实职级难度、合理备考周期与需要重点攻克的题目数量，进行深度岗位拆解，生成考点画像、可执行复习路径（关联真实站内课程链接）与高质量专题面试题库。
 
 严格规则：
-1. 不要执行 shell 命令、不要读写文件，直接基于专业工程与面试教研经验输出。
-2. 必须且只能输出**一个合法 JSON 对象**（用 \`\`\`json 和 \`\`\` 包裹，不要在代码块外写任何解释文字）。
+1. 自主决策规模：请依据 JD / 面经的技术广度与考察深度，自主判定 \`inferredLevel\`（如「校招 / 初级」「中高级」「资深 / 架构」）、\`prepDays\`（如「5 天」「7 天」「14 天」「21 天」）、\`roadmap\` 阶段数（3–5 阶段）与 \`questions\` 题数（校招/窄场景 6–8 题，中高级 8–10 题，资深/多轮综合面经 10–14 题）。
+2. 必须且只能输出**一个合法 JSON 对象**（用 \`\`\`json 和 \`\`\` 包裹，不要在代码块外写任何解释文字），字段严格按下方顺序输出。
 3. 复习路径中的 \`siteLinks\` 只能从下方「站内真实课程目录」中选择准确存在的相对路径，严禁编造 URL。
-4. 专题面试题必须紧扣 JD/面经里的真实技术栈、业务场景与高频追问，答案必须深入、结构化、包含关键原理/数字/边界条件或核心代码片段（可使用 \`\`\` 代码块），拒绝空洞八股。
+4. 专题面试题必须紧扣 JD / 面经里的真实技术栈、业务场景与高频追问，答案必须深入、结构化、按点清晰换行（可用 \`\`\` 代码块），包含关键原理、边界条件或生产排障思路，拒绝空洞八股。
 5. 所有输出使用简体中文。
 
 【站内真实课程目录】
 ${promptText}
 
-【必须严格遵守的 JSON 结构】
+【必须严格遵守的 JSON 结构与字段顺序】
 \`\`\`json
 {
   "roleTitle": "岗位或面经主题名称（25字内）",
+  "inferredLevel": "自主判定的职级（如：校招 / 初级、中高级、资深 / 架构）",
+  "prepDays": "自主规划的建议备考周期（如：7 天、14 天）",
   "companyStyle": "考察风格短标签（如：高并发场景 + 底层源码，18字内）",
   "summary": "2-3 句精准核心结论，直指该岗位的核心门槛与考察重心",
   "recommendedSubject": "go | backend | ai-development | frontend | mine",
@@ -135,7 +135,7 @@ ${promptText}
       "section": "专题短标签（如：并发调优，16字内）",
       "difficulty": "基础 | 进阶 | 高阶",
       "whyAsked": "对应 JD/面经的哪条要求（30字内）",
-      "answer": "生产级高质量参考答案（分段清晰，可用 \`\`\` 代码块，200-700字）",
+      "answer": "生产级高质量参考答案（分段清晰，可用 \`\`\` 代码块，200-650字）",
       "followups": ["连环追问1", "连环追问2"]
     }
   ]
@@ -147,22 +147,11 @@ ${promptText}
 export function buildJdResearchInput(opts: {
  kind: JdInputKind;
  source: string;
- days: JdPrepDays;
- level: JdSeniority;
- questionCount: number;
 }): string {
  const kindLabel = opts.kind === 'experience' ? '真实面经 / 面试记录' : '目标岗位 JD';
- const levelLabel =
-  opts.level === 'junior'
-   ? '校招 / 初级工程师（1–2 年）'
-   : opts.level === 'senior'
-     ? '资深 / 架构师（5 年+，侧重高并发、权衡与演进）'
-     : '中级 / 高级工程师（3–5 年，侧重原理、排障与落地）';
  return [
   `【调研类型】${kindLabel}`,
-  `【备考周期】${opts.days} 天（请将 roadmap 合理划分为 3–5 个紧凑阶段，覆盖这 ${opts.days} 天）`,
-  `【目标级别】${levelLabel}`,
-  `【专题题库数量】生成恰好 ${opts.questionCount} 道高命中率实战面试题（覆盖 4–6 个核心考点维度，dimensions 权重之和尽量接近 100）`,
+  '【决策要求】请完全依据下方内容的真实难度、技术栈广度与考察轮次，自主判断目标级别、建议备考周期、复习阶段数与专题出题数量（6–14 题），dimensions 权重之和尽量为 100。',
   '',
   `【原始${opts.kind === 'experience' ? '面经' : '岗位 JD'}内容】`,
   opts.source,
@@ -330,6 +319,8 @@ export function parseAndEnrichJdReport(rawText: string): JdResearchReport | null
  const { validLinks } = getCatalog();
 
  const roleTitle = str(obj.roleTitle, 80) || '岗位深度调研报告';
+ const inferredLevel = str(obj.inferredLevel, 32);
+ const prepDays = str(obj.prepDays, 24);
  const companyStyle = str(obj.companyStyle, 50);
  const summary = str(obj.summary, 600);
  const recRaw = str(obj.recommendedSubject, 32);
@@ -425,6 +416,8 @@ export function parseAndEnrichJdReport(rawText: string): JdResearchReport | null
 
  return {
   roleTitle,
+  inferredLevel: inferredLevel || undefined,
+  prepDays: prepDays || undefined,
   companyStyle,
   summary,
   recommendedSubject,

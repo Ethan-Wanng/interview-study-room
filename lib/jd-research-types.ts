@@ -1,6 +1,4 @@
 export type JdInputKind = 'jd' | 'experience';
-export type JdPrepDays = 3 | 7 | 14 | 30;
-export type JdSeniority = 'junior' | 'mid' | 'senior';
 
 export type JdSkillDimension = {
  name: string;
@@ -32,6 +30,8 @@ export type JdQuestionItem = {
 
 export type JdResearchReport = {
  roleTitle: string;
+ inferredLevel?: string;
+ prepDays?: string;
  companyStyle: string;
  summary: string;
  recommendedSubject: string;
@@ -43,7 +43,8 @@ export type JdResearchReport = {
 
 export function reportToMarkdown(r: JdResearchReport): string {
  const lines: string[] = [];
- lines.push(`# ${r.roleTitle}${r.companyStyle ? `（${r.companyStyle}）` : ''}`);
+ const meta = [r.inferredLevel, r.prepDays ? `建议周期 ${r.prepDays}` : '', r.companyStyle].filter(Boolean).join(' · ');
+ lines.push(`# ${r.roleTitle}${meta ? `（${meta}）` : ''}`);
  if (r.summary) lines.push('', r.summary);
 
  if (r.dimensions.length) {

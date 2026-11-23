@@ -4,9 +4,9 @@ import {
  ANTIGRAVITY_AGENT_ID,
  AntigravityError,
  pollAntigravityInteraction,
- startAntigravityInteraction,
  type AntigravityUsage,
 } from '@/lib/antigravity-agent';
+import { jdResearchStream } from '@/lib/gemini';
 import { readPromptCache, sha256Hex, writePromptCache } from '@/lib/prompt-cache';
 import { getAiInterviewRecord, saveAiInterviewRecord } from '@/lib/ai-interview-records';
 import {
@@ -14,13 +14,10 @@ import {
  getJdResearchSystemPrompt,
  parseAndEnrichJdReport,
 } from '@/lib/jd-research-server';
-import type { JdInputKind, JdPrepDays, JdResearchReport, JdSeniority } from '@/lib/jd-research-types';
+import type { JdInputKind, JdResearchReport } from '@/lib/jd-research-types';
 
 export const dynamic = 'force-dynamic';
 const noCache = { 'Cache-Control': 'no-store' };
-
-const ALLOWED_DAYS = new Set<JdPrepDays>([3, 7, 14, 30]);
-const ALLOWED_COUNTS = new Set([8, 10, 12]);
 
 function signingSecret(): string {
  const e = env as unknown as Record<string, string | undefined>;
@@ -35,34 +32,38 @@ type CachedJdPayload = {
  report: JdResearchReport;
  rawText: string;
  thoughts: string;
+ model?: string;
  usage?: AntigravityUsage;
 };
 
 type StoredJdRecordPayload = {
  kind: JdInputKind;
- days: JdPrepDays;
- level: JdSeniority;
- questionCount: number;
  source: string;
+ model?: string;
  cacheKey?: string;
  report: JdResearchReport | null;
  rawText: string;
  thoughts: string;
- cached?: boolean;
- usage?: AntigravityUsage;
  imported?: { count: number; subject: string } | null;
  error?: string;
 };
 
 function draftTitle(source: string, kind: JdInputKind): string {
- const first = source
-  .split('\n')
-  .map(l => l.trim())
-  .find(Boolean) || '';
+ const first =
+  source
+   .split('\n')
+   .map(l => l.trim())
+   .find(Boolean) || '';
  const clean = first.replace(/^(?:岗位|职位|标题|题目)[:：\s]*/, '').slice(0, 36);
  return clean || (kind === 'experience' ? '面经深度调研' : '岗位 JD 深度调研');
 }
 
+function makeSubtitle(rep: JdResearchReport | null): string {
+ if (!rep) return '';
+ return [rep.inferredLevel, rep.prepDays, rep.companyStyle].filter(Boolean).join(' · ').slice(0, 80);
+}
+
+// Streaming NDJSON endpoint powered by Gemini 4 Hydrogen (high thinking, auto-fallback to Gemini 3.8 Flash / DeepSeek).
 export async function POST(req: Request) {
  try {
   assertSameOrigin(req);
@@ -81,106 +82,140 @@ export async function POST(req: Request) {
 
   const kind: JdInputKind = body.kind === 'experience' ? 'experience' : 'jd';
   const source = typeof body.source === 'string' ? body.source.replace(/\r\n/g, '\n').trim().slice(0, 14_000) : '';
-  const daysRaw = Number(body.days) as JdPrepDays;
-  const days: JdPrepDays = ALLOWED_DAYS.has(daysRaw) ? daysRaw : 7;
-  const level: JdSeniority = body.level === 'junior' || body.level === 'senior' ? body.level : 'mid';
-  const countRaw = Number(body.questionCount);
-  const questionCount = ALLOWED_COUNTS.has(countRaw) ? countRaw : 10;
   const geminiProxy = body.geminiProxy !== false;
 
   if (source.length < 20) throw new AuthError('请粘贴至少 20 字的岗位 JD 或面经内容。');
 
   const recordId = 'jdr-' + crypto.randomUUID();
-  const cacheKey = 'jd:' + (await sha256Hex([kind, String(days), level, String(questionCount), source]));
-  const hit = await readPromptCache<CachedJdPayload>(cacheKey);
-  if (hit?.payload?.report) {
-   const rep = hit.payload.report;
-   const stored: StoredJdRecordPayload = {
-    kind,
-    days,
-    level,
-    questionCount,
-    source,
-    cacheKey,
-    report: rep,
-    rawText: hit.payload.rawText || '',
-    thoughts: hit.payload.thoughts || '',
-    cached: true,
-    usage: hit.payload.usage,
-   };
-   await saveAiInterviewRecord({
-    id: recordId,
-    userId: user.id,
-    kind: 'jd-research',
-    title: rep.roleTitle || draftTitle(source, kind),
-    subtitle: rep.companyStyle || '',
-    status: 'completed',
-    payload: stored,
-   });
-   return Response.json(
-    {
-     recordId,
-     status: 'completed',
-     cached: true,
-     report: rep,
-     rawText: hit.payload.rawText || '',
-     thoughts: hit.payload.thoughts || '',
-     usage: hit.payload.usage,
-    },
-    { headers: noCache },
-   );
-  }
+  const cacheKey = 'jd4:' + (await sha256Hex([kind, source]));
 
-  const started = await startAntigravityInteraction({
-   systemInstruction: getJdResearchSystemPrompt(),
-   input: buildJdResearchInput({ kind, source, days, level, questionCount }),
-   geminiProxy,
-  });
+  const enc = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+   async start(controller) {
+    const send = (ev: Record<string, unknown>) => {
+     try {
+      controller.enqueue(enc.encode(JSON.stringify(ev) + '\n'));
+     } catch {}
+    };
 
-  const sig = await signToken(user.id, started.id);
-  const ckSig = await signToken(user.id, cacheKey);
+    try {
+     // 1. Check D1 deterministic cache first (silent fast return)
+     const hit = await readPromptCache<CachedJdPayload>(cacheKey);
+     if (hit?.payload?.report) {
+      const rep = hit.payload.report;
+      const model = hit.payload.model || hit.model || 'Gemini 4 Hydrogen（高）';
+      const stored: StoredJdRecordPayload = {
+       kind,
+       source,
+       model,
+       cacheKey,
+       report: rep,
+       rawText: hit.payload.rawText || '',
+       thoughts: hit.payload.thoughts || '',
+      };
+      await saveAiInterviewRecord({
+       id: recordId,
+       userId: user.id,
+       kind: 'jd-research',
+       title: rep.roleTitle || draftTitle(source, kind),
+       subtitle: makeSubtitle(rep),
+       status: 'completed',
+       payload: stored,
+      });
+      send({
+       type: 'done',
+       recordId,
+       model,
+       report: rep,
+       rawText: hit.payload.rawText || '',
+       thoughts: hit.payload.thoughts || '',
+      });
+      controller.close();
+      return;
+     }
 
-  // Immediately persist running task to D1 so closing/leaving the page NEVER discards it!
-  const pendingPayload: StoredJdRecordPayload = {
-   kind,
-   days,
-   level,
-   questionCount,
-   source,
-   cacheKey,
-   report: null,
-   rawText: '',
-   thoughts: '',
-  };
-  await saveAiInterviewRecord({
-   id: recordId,
-   userId: user.id,
-   kind: 'jd-research',
-   title: draftTitle(source, kind),
-   subtitle: `${days} 天 · ${questionCount} 题`,
-   status: 'running',
-   interactionId: started.id,
-   payload: pendingPayload,
-  });
+     send({ type: 'start', recordId });
 
-  return Response.json(
-   {
-    recordId,
-    id: started.id,
-    sig,
-    status: started.status,
-    cacheKey,
-    ckSig,
+     const res = await jdResearchStream(
+      getJdResearchSystemPrompt(),
+      buildJdResearchInput({ kind, source }),
+      delta => send({ type: 'delta', text: delta }),
+      () => send({ type: 'reset' }),
+      {
+       onThink: delta => send({ type: 'thought', text: delta }),
+       onModel: model => send({ type: 'model', model }),
+       geminiProxy,
+       signal: req.signal,
+      },
+     );
+
+     const report = parseAndEnrichJdReport(res.text);
+     if (report) {
+      await writePromptCache(
+       cacheKey,
+       'jd-research',
+       res.model,
+       { report, rawText: res.text, thoughts: res.thoughts, model: res.model } satisfies CachedJdPayload,
+       7 * 24 * 3600_000,
+      );
+     }
+
+     const stored: StoredJdRecordPayload = {
+      kind,
+      source,
+      model: res.model,
+      cacheKey,
+      report,
+      rawText: res.text,
+      thoughts: res.thoughts,
+     };
+     await saveAiInterviewRecord({
+      id: recordId,
+      userId: user.id,
+      kind: 'jd-research',
+      title: report?.roleTitle || draftTitle(source, kind),
+      subtitle: makeSubtitle(report),
+      status: 'completed',
+      payload: stored,
+     });
+
+     send({
+      type: 'done',
+      recordId,
+      model: res.model,
+      report,
+      rawText: res.text,
+      thoughts: res.thoughts,
+     });
+    } catch (e) {
+     if (!req.signal.aborted) {
+      const msg = e instanceof Error && e.message && !/^gemini:|^deepseek:/.test(e.message)
+       ? e.message
+       : '深度调研服务暂时不可用，请稍后重试。';
+      send({ type: 'error', error: msg });
+     }
+    } finally {
+     try {
+      controller.close();
+     } catch {}
+    }
    },
-   { headers: noCache },
-  );
+  });
+
+  return new Response(stream, {
+   headers: {
+    'Content-Type': 'application/x-ndjson; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+   },
+  });
  } catch (e) {
   if (e instanceof AuthError) return Response.json({ error: e.message }, { status: e.status, headers: noCache });
-  if (e instanceof AntigravityError) return Response.json({ error: e.message, code: e.code }, { status: e.status, headers: noCache });
   return Response.json({ error: '深度调研服务暂时不可用，请重试。' }, { status: 503, headers: noCache });
  }
 }
 
+// Keep GET polling handler for backward compatibility with any pre-existing running records.
 export async function GET(req: Request) {
  try {
   const user = await sessionUser(req.headers);
@@ -201,7 +236,7 @@ export async function GET(req: Request) {
   const polled = await pollAntigravityInteraction({ interactionId: id, geminiProxy });
   if (polled.status === 'completed') {
    const report = parseAndEnrichJdReport(polled.text);
-   if (report && ck.startsWith('jd:') && ckSig) {
+   if (report && ck.startsWith('jd') && ckSig) {
     const expectedCk = await signToken(user.id, ck);
     if (ckSig === expectedCk) {
      await writePromptCache(
@@ -214,21 +249,15 @@ export async function GET(req: Request) {
     }
    }
 
-   // Persist finished result directly into the user's D1 history record (even on fallback Markdown!)
    if (rid) {
     const prev = await getAiInterviewRecord<StoredJdRecordPayload>(user.id, rid);
     const merged: StoredJdRecordPayload = {
      kind: prev?.payload?.kind || 'jd',
-     days: prev?.payload?.days || 7,
-     level: prev?.payload?.level || 'mid',
-     questionCount: prev?.payload?.questionCount || 10,
      source: prev?.payload?.source || '',
      cacheKey: prev?.payload?.cacheKey || ck,
      report,
      rawText: polled.text,
      thoughts: polled.thoughts,
-     cached: false,
-     usage: polled.usage,
      imported: prev?.payload?.imported ?? null,
     };
     await saveAiInterviewRecord({
@@ -236,7 +265,7 @@ export async function GET(req: Request) {
      userId: user.id,
      kind: 'jd-research',
      title: report?.roleTitle || prev?.title || '深度调研报告',
-     subtitle: report?.companyStyle || prev?.subtitle || '',
+     subtitle: makeSubtitle(report) || prev?.subtitle || '',
      status: 'completed',
      interactionId: id,
      payload: merged,
@@ -252,27 +281,9 @@ export async function GET(req: Request) {
      report,
      rawText: polled.text,
      thoughts: polled.thoughts,
-     usage: polled.usage,
     },
     { headers: noCache },
    );
-  }
-
-  if ((polled.status === 'failed' || polled.status === 'cancelled') && rid) {
-   const prev = await getAiInterviewRecord<StoredJdRecordPayload>(user.id, rid);
-   if (prev) {
-    await saveAiInterviewRecord({
-     id: rid,
-     userId: user.id,
-     kind: 'jd-research',
-     title: prev.title,
-     subtitle: prev.subtitle,
-     status: 'error',
-     interactionId: id,
-     payload: { ...prev.payload, error: polled.error || '调研任务中断' },
-     createdAt: prev.createdAt,
-    });
-   }
   }
 
   return Response.json(polled, { headers: noCache });
