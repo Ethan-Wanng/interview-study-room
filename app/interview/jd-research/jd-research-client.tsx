@@ -968,6 +968,7 @@ export default function JdResearchClient({
    let accThoughts = '';
    let stage1ThoughtsSnap = '';
    let accTail = '';
+   let receivedTerminal = false;
 
    for (;;) {
     const { done, value } = await reader.read();
@@ -1151,6 +1152,7 @@ export default function JdResearchClient({
      }
 
      if (ev.type === 'done') {
+      receivedTerminal = true;
       const doneId = ev.recordId || curRecordId;
       streamingRecordIdRef.current = '';
       if (doneId) removeJdBgTask(doneId);
@@ -1184,12 +1186,50 @@ export default function JdResearchClient({
      }
 
      if (ev.type === 'error') {
+      receivedTerminal = true;
       const errId = ev.recordId || curRecordId;
       streamingRecordIdRef.current = '';
       if (errId) removeJdBgTask(errId);
       throw new Error(ev.error || L('调研流式生成中断，请点击一键重试', 'Stream interrupted'));
      }
     }
+   }
+
+   if (!receivedTerminal && !ctl.signal.aborted) {
+    // Check D1 in case the server completed right as the HTTP stream closed
+    if (curRecordId) {
+     const latest = await refreshRecords();
+     const hit = latest.find(x => x.id === curRecordId);
+     if (hit?.status === 'completed' && hit.payload?.report) {
+      streamingRecordIdRef.current = '';
+      removeJdBgTask(curRecordId);
+      if (!bgModeRef.current) {
+       applyReportView(
+        hit.id,
+        hit.payload.report,
+        hit.payload.rawText || '',
+        hit.payload.thoughts || accThoughts,
+        hit.payload.model || '',
+        hit.payload.imported ?? null,
+        hit.payload.source || resolvedSrc,
+        {
+         cached: hit.payload.cached,
+         stage1Cached: hit.payload.stage1Cached ?? curStage1Cached,
+         usage: hit.payload.usage,
+         kind: hit.payload.kind || kind,
+        },
+       );
+      }
+      stopActive();
+      return;
+     }
+    }
+    throw new Error(
+     L(
+      '流式连接意外断开，请点击「一键重试」（已完成的阶段会自动命中缓存）',
+      'Stream closed unexpectedly — click Retry to resume',
+     ),
+    );
    }
   } catch (e) {
    streamingRecordIdRef.current = '';
@@ -2019,6 +2059,18 @@ export default function JdResearchClient({
               <div className="jdr-bar-fill" style={{ width: `${Math.min(100, d.weight)}%` }} />
              </div>
              {d.focus && <p className="jdr-dim-focus">{d.focus}</p>}
+             {activeId && countJdStudyQuizzes(report) > 0 && (
+              <div className="jdr-links">
+               <a
+                href={`/learn/jd-special?id=${encodeURIComponent(activeId)}&tab=dimension&dim=${i}`}
+                className="jdr-link-pill"
+               >
+                <GraduationCap size={13} />
+                <span>{L('按画像刷题', 'Practice')}</span>
+                <ArrowUpRight size={13} />
+               </a>
+              </div>
+             )}
             </div>
            ))}
           </div>

@@ -5,22 +5,29 @@ import {
  AntigravityError,
  pollAntigravityInteraction,
  startAntigravityInteraction,
- streamAntigravityInteraction,
  type AntigravityUsage,
 } from '@/lib/antigravity-agent';
 import { readPromptCache, sha256Hex, writePromptCache } from '@/lib/prompt-cache';
 import { getAiInterviewRecord, saveAiInterviewRecord } from '@/lib/ai-interview-records';
 import {
+ buildJdPhaseQuizzesInput,
  buildJdStage1Input,
  buildJdStage2Input,
+ buildJdStage2QuestionsInput,
+ combinePhaseQuizzes,
  createThinkJsonStreamSplitter,
  extractThoughtsAndJson,
+ getJdResearchPhaseQuizzesSystemPrompt,
  getJdResearchStage1SystemPrompt,
+ getJdResearchStage2QuestionsSystemPrompt,
  getJdResearchStage2SystemPrompt,
  inspectJdStreamProgress,
  mergeStage1AndStage2Report,
+ mergeStage2Parts,
  normalizeJdSourceForCache,
  parseAndEnrichJdReport,
+ parsePhaseQuizzes,
+ pickInSiteQuizzesForStage,
 } from '@/lib/jd-research-server';
 import { extractJdFromImages, jdResearchModelStream } from '@/lib/gemini';
 import { fetchJdTextFromUrl } from '@/lib/jd-extract';
@@ -155,7 +162,7 @@ export async function POST(req: Request) {
   const recordId = existingRecordId || 'jdr-' + crypto.randomUUID();
   const normSource = normalizeJdSourceForCache(source);
   const hashHex = await sha256Hex([kind, normSource]);
-  const cacheKey = 'jd-auto-v2:' + hashHex;
+  const cacheKey = 'jd-auto-v3:' + hashHex;
   const stage1CacheKey = 'jd-s1-v2:' + hashHex;
   const initialTitle = draftTitle(source, kind);
 
@@ -464,162 +471,209 @@ export async function POST(req: Request) {
       return;
      }
 
-     // 4. Stream Stage 2 (5-Type Study Quizzes per Roadmap Stage + Interview Question Bank):
-     // Gemini / Antigravity Agent 优先出题；若 Gemini 不可用（503 繁忙 / 429 限流 / 超时 / 循环 / 解析失败）自动无缝切换 DeepSeek V4.1 Flash（思考）
+     // 4. Parallel Stage 2: per-phase study quizzes (each phase: 8 single + 4 multi + 2 short + 0-1 optional code) + interview question bank
+     // 按复习路径每个阶段独立并发出题 + 面试专题题库并行生成，既严格满足每阶段 14-15 题量与考点画像标签，又避免单次超长输出超时；
+     // 均优先尝试 Gemini（Gemini 4 Hydrogen -> Gemini 3.8 Flash -> Gemini 3.6 Flash），若 Gemini 503/429/超时则自动无缝切换 DeepSeek V4.1 Flash（思考 · low）
      activeStage = 2;
-     activeStep = 'agent_init';
+     activeStep = 'thinking';
      send({
       type: 'stage2_start',
       stage: 2,
       stage1Cached,
-      model: 'Antigravity Agent',
+      model: 'Gemini / DeepSeek 并行出题',
       progress: inspectJdStreamProgress(2, '', s1Rep, stage1Cached),
      });
 
-     const stage2Header = s1Thoughts ? '\n\n── 阶段二：按复习路径设计五题型学习题与面试题库 ──\n' : '';
+     const stage2Header = s1Thoughts ? '\n\n── 阶段二：按各路径并行出题（单选8+多选4+简答2+可选代码）与面试专题题库 ──\n' : '';
      if (stage2Header) {
       send({ type: 'thought', stage: 2, text: stage2Header });
      }
 
-     let s2ThoughtBuf = '';
-     let s2TextOut = '';
-     let s2Model = 'Antigravity Agent';
-     let s2Usage: AntigravityUsage | undefined;
-     let finalReport: JdResearchReport | null = null;
+     const phaseCount = s1Rep.roadmap.length;
+     const phaseJsonBufs: string[] = Array.from({ length: phaseCount }, () => '');
+     const phaseThoughtBufs: string[] = Array.from({ length: phaseCount }, () => '');
+     let qsJsonBuf = '';
+     let qsThoughtBuf = '';
+     let lastReportedModel = '';
 
-     const makeSplitter2 = () =>
+     const emitStage2Progress = (deltaText: string) => {
+      activeStep = 'output';
+      const combinedBuf = `${phaseJsonBufs.join('\n')}\n${qsJsonBuf}`;
+      const totalChars = phaseJsonBufs.reduce((n, b) => n + b.length, 0) + qsJsonBuf.length;
+      send({
+       type: 'delta',
+       stage: 2,
+       text: deltaText,
+       chars: totalChars,
+       progress: inspectJdStreamProgress(2, combinedBuf, s1Rep, stage1Cached),
+      });
+     };
+
+     const phasePrompt = getJdResearchPhaseQuizzesSystemPrompt();
+     const usedInSiteIds = new Set<string>();
+     const reusedByPhase = s1Rep.roadmap.map((_, idx) => pickInSiteQuizzesForStage(s1Rep!, idx, usedInSiteIds));
+
+     const phasePromises = s1Rep.roadmap.map((step, phaseIdx) => {
+      const reused = reusedByPhase[phaseIdx];
+      const makePhaseSplitter = () =>
+       createThinkJsonStreamSplitter({
+        onThoughtDelta: td => {
+         activeStep = 'thinking';
+         phaseThoughtBufs[phaseIdx] += td;
+         send({ type: 'thought', stage: 2, text: td });
+        },
+        onJsonDelta: (jd, fullBuf) => {
+         phaseJsonBufs[phaseIdx] = fullBuf;
+         emitStage2Progress(jd);
+        },
+       });
+      let splitter = makePhaseSplitter();
+      return jdResearchModelStream({
+       strategy: 'gemini-then-deepseek',
+       includeHydrogen: true,
+       thinkingLevel: 'low',
+       systemPrompt: phasePrompt,
+       userInput: buildJdPhaseQuizzesInput({ kind, source, stage1: s1Rep!, phaseIndex: phaseIdx, reusedQuizzes: reused }),
+       maxTokens: 10240,
+       geminiProxy,
+       signal: req.signal,
+       validate: txt => parsePhaseQuizzes(txt, phaseIdx).length >= 4,
+       onModel: m => {
+        if (m !== lastReportedModel) {
+         lastReportedModel = m;
+         send({ type: 'model', stage: 2, model: m });
+        }
+       },
+       onThoughtDelta: td => {
+        activeStep = 'thinking';
+        phaseThoughtBufs[phaseIdx] += td;
+        if (phaseIdx === 0) {
+         send({ type: 'thought', stage: 2, text: td });
+        }
+       },
+       onTextDelta: td => {
+        splitter.push(td);
+       },
+       onReset: () => {
+        phaseJsonBufs[phaseIdx] = '';
+        phaseThoughtBufs[phaseIdx] = '';
+        splitter = makePhaseSplitter();
+       },
+      }).then(res => {
+       splitter.flush();
+       const generated = parsePhaseQuizzes(res.text, phaseIdx);
+       return {
+        phaseIdx,
+        phaseLabel: `${step.phase} · ${step.title}`,
+        res,
+        quizzes: combinePhaseQuizzes(reused, generated, phaseIdx),
+       };
+      });
+     });
+
+     const makeQsSplitter = () =>
       createThinkJsonStreamSplitter({
        onThoughtDelta: td => {
         activeStep = 'thinking';
-        s2ThoughtBuf += td;
+        qsThoughtBuf += td;
         send({ type: 'thought', stage: 2, text: td });
        },
-       onJsonDelta: (jd, fullJsonBuf) => {
-        activeStep = 'output';
-        send({
-         type: 'delta',
-         stage: 2,
-         text: jd,
-         chars: fullJsonBuf.length,
-         progress: inspectJdStreamProgress(2, fullJsonBuf, s1Rep, stage1Cached),
-        });
+       onJsonDelta: (jd, fullBuf) => {
+        qsJsonBuf = fullBuf;
+        emitStage2Progress(jd);
        },
       });
-     let splitter2 = makeSplitter2();
-     const s2SystemPrompt = getJdResearchStage2SystemPrompt();
-     const s2UserInput = buildJdStage2Input({ kind, source, stage1: s1Rep });
-     let s2WroteAny = false;
+     let qsSplitter = makeQsSplitter();
 
-     // 4a. Primary Stage 2 engine: Antigravity Agent (strict 16s first-step timeout & loop guard)
-     try {
-      send({ type: 'model', stage: 2, model: 'Antigravity Agent' });
-      const agentRes = await streamAntigravityInteraction({
-       systemInstruction: s2SystemPrompt,
-       input: s2UserInput,
-       maxTotalTokens: 32_000,
-       firstStepTimeoutMs: 16_000,
-       maxThoughtSteps: 3,
-       geminiProxy,
-       signal: req.signal,
-       onCreated: ({ id, environmentId }) => {
-        lastInteractionId = id;
-        activeStep = 'thinking';
-        send({ type: 'agent_ready', stage: 2, interactionId: id, environmentId });
-       },
-       onStep: st => {
-        activeStep = st;
-        send({ type: 'step', stage: 2, stepType: st });
-       },
-       onKeepAlive: () => {
-        send({ type: 'ping', stage: 2, step: activeStep });
-       },
-       onThoughtDelta: td => {
-        s2WroteAny = true;
-        activeStep = 'thinking';
-        s2ThoughtBuf += td;
-        send({ type: 'thought', stage: 2, text: td });
-       },
-       onTextDelta: td => {
-        s2WroteAny = true;
-        splitter2.push(td);
-       },
-       onTextReset: () => {
-        splitter2 = makeSplitter2();
-        send({ type: 'reset', stage: 2, keepThoughts: true });
-       },
-      });
-
-      splitter2.flush();
-      const merged = mergeStage1AndStage2Report(s1Rep, agentRes.text);
-      if (merged.questions.length > 0 || hasStructuredStudyQuizzes(merged)) {
-       finalReport = merged;
-       s2TextOut = agentRes.text;
-       s2Usage = agentRes.usage;
-       s2Model = 'Antigravity Agent';
-       if (!s2ThoughtBuf.trim() && agentRes.thoughts) {
-        s2ThoughtBuf = agentRes.thoughts;
-       }
-      } else {
-       throw new AntigravityError('Agent 阶段二题库输出不完整，切换引擎继续。', 502, 'parse_error');
-      }
-     } catch (agentErr) {
-      if (req.signal?.aborted) throw agentErr;
-      // 4b. Fallback Stage 2: Gemini 3.8 Flash -> Gemini 3.6 Flash -> DeepSeek V4.1 Flash（思考）
-      if (s2WroteAny) {
-       s2ThoughtBuf = '';
-       splitter2 = makeSplitter2();
-       send({ type: 'reset', stage: 2 });
-      }
-      const fbRes = await jdResearchModelStream({
-       strategy: 'gemini-then-deepseek',
-       includeHydrogen: false,
-       systemPrompt: s2SystemPrompt,
-       userInput: s2UserInput,
-       maxTokens: 16384,
-       geminiProxy,
-       signal: req.signal,
-       validate: txt => {
-        const m = mergeStage1AndStage2Report(s1Rep!, txt);
-        return m.questions.length > 0 || hasStructuredStudyQuizzes(m);
-       },
-       onModel: m => {
-        activeStep = 'thinking';
+     const qsPromise = jdResearchModelStream({
+      strategy: 'gemini-then-deepseek',
+      includeHydrogen: true,
+      thinkingLevel: 'low',
+      systemPrompt: getJdResearchStage2QuestionsSystemPrompt(),
+      userInput: buildJdStage2QuestionsInput({ kind, source, stage1: s1Rep }),
+      maxTokens: 8192,
+      geminiProxy,
+      signal: req.signal,
+      validate: txt => {
+       const m = mergeStage1AndStage2Report(s1Rep!, txt);
+       return m.questions.length > 0;
+      },
+      onModel: m => {
+       if (m !== lastReportedModel) {
+        lastReportedModel = m;
         send({ type: 'model', stage: 2, model: m });
-       },
-       onThoughtDelta: td => {
-        activeStep = 'thinking';
-        s2ThoughtBuf += td;
-        send({ type: 'thought', stage: 2, text: td });
-       },
-       onTextDelta: td => {
-        splitter2.push(td);
-       },
-       onReset: () => {
-        s2ThoughtBuf = '';
-        splitter2 = makeSplitter2();
-        send({ type: 'reset', stage: 2 });
-       },
-      });
-      splitter2.flush();
-      s2TextOut = fbRes.text;
-      s2Model = fbRes.model;
-      if (!s2ThoughtBuf.trim() && fbRes.thoughts) {
-       s2ThoughtBuf = fbRes.thoughts;
-      }
-      finalReport = mergeStage1AndStage2Report(s1Rep, fbRes.text);
+       }
+      },
+      onThoughtDelta: td => {
+       activeStep = 'thinking';
+       qsThoughtBuf += td;
+       send({ type: 'thought', stage: 2, text: td });
+      },
+      onTextDelta: td => {
+       qsSplitter.push(td);
+      },
+      onReset: () => {
+       qsJsonBuf = '';
+       qsThoughtBuf = '';
+       qsSplitter = makeQsSplitter();
+      },
+     }).then(res => {
+      qsSplitter.flush();
+      return res;
+     });
+
+     const [phaseOutcomes, qsOutcome] = await Promise.all([
+      Promise.allSettled(phasePromises),
+      qsPromise.then(
+       value => ({ status: 'fulfilled' as const, value }),
+       reason => ({ status: 'rejected' as const, reason }),
+      ),
+     ]);
+
+     const phaseQuizLists = phaseOutcomes.map((o, idx) =>
+      o.status === 'fulfilled' ? o.value.quizzes : reusedByPhase[idx].length ? combinePhaseQuizzes(reusedByPhase[idx], [], idx) : null,
+     );
+     const anyPhaseOk = phaseQuizLists.some(q => q && q.length > 0);
+     const qsRes = qsOutcome.status === 'fulfilled' ? qsOutcome.value : null;
+     if (!anyPhaseOk && !qsRes) {
+      const firstErr =
+       phaseOutcomes.find(o => o.status === 'rejected') || (qsOutcome.status === 'rejected' ? qsOutcome : null);
+      throw firstErr && firstErr.status === 'rejected' ? firstErr.reason : new Error('阶段二出题失败');
      }
 
-     const extracted2 = extractThoughtsAndJson(s2TextOut);
-     const s2RawText = extracted2.jsonRaw || s2TextOut;
-     const s2Thoughts = (s2ThoughtBuf.trim() || extracted2.thoughts || '').trim();
+     const qsTextOut = qsRes?.text || '';
+     const finalReport = mergeStage2Parts(s1Rep, phaseQuizLists, qsTextOut);
+
+     const s2ModelSet = new Set<string>();
+     for (const o of phaseOutcomes) {
+      if (o.status === 'fulfilled' && o.value.res.model) s2ModelSet.add(o.value.res.model);
+     }
+     if (qsRes?.model) s2ModelSet.add(qsRes.model);
+     const s2Model = [...s2ModelSet].join(' / ');
      const combinedModel =
-      s1Model && s2Model && s1Model !== s2Model ? `${s1Model} + ${s2Model}` : s2Model || s1Model || ANTIGRAVITY_AGENT_ID;
-     const combinedThoughts = [s1Thoughts, s2Thoughts ? (s1Thoughts ? `── 阶段二：按复习路径设计五题型学习题与面试题库 ──\n${s2Thoughts}` : s2Thoughts) : '']
+      s1Model && s2Model && s1Model !== s2Model ? `${s1Model} + ${s2Model}` : s2Model || s1Model || 'DeepSeek V4.1 Flash（思考）';
+
+     const phaseRawParts = phaseOutcomes
+      .map(o => (o.status === 'fulfilled' ? extractThoughtsAndJson(o.value.res.text).jsonRaw || o.value.res.text : ''))
+      .filter(Boolean);
+     const extractedQs = extractThoughtsAndJson(qsTextOut);
+     const s2RawText = [...phaseRawParts, extractedQs.jsonRaw || qsTextOut].filter(Boolean).join('\n\n');
+     const phaseThoughtsJoined = phaseOutcomes
+      .map((o, idx) => {
+       if (o.status !== 'fulfilled') return '';
+       const t = (phaseThoughtBufs[idx].trim() || o.value.res.thoughts || extractThoughtsAndJson(o.value.res.text).thoughts || '').trim();
+       return t ? `[${o.value.phaseLabel}]\n${t}` : '';
+      })
+      .filter(Boolean)
+      .join('\n\n');
+     const qsThoughtsClean = (qsThoughtBuf.trim() || qsRes?.thoughts || extractedQs.thoughts || '').trim();
+     const s2Thoughts = [phaseThoughtsJoined, qsThoughtsClean ? `[面试专题题库]\n${qsThoughtsClean}` : ''].filter(Boolean).join('\n\n');
+     const combinedThoughts = [s1Thoughts, s2Thoughts ? (s1Thoughts ? `── 阶段二：按各路径并行出题与面试专题题库 ──\n${s2Thoughts}` : s2Thoughts) : '']
       .filter(Boolean)
       .join('\n\n')
       .trim();
      const combinedRaw = [s1RawText, s2RawText].filter(Boolean).join('\n\n');
-     const combinedUsage = combineUsage(s1Usage, s2Usage);
+     const combinedUsage = combineUsage(s1Usage, undefined);
 
      if (finalReport && (finalReport.questions.length > 0 || hasStructuredStudyQuizzes(finalReport))) {
       await writePromptCache(

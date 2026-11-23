@@ -10,6 +10,11 @@ export function groupReleasesByDay(releases:Release[]):ReleaseDay[]{
 }
 
 export const RELEASES:Release[]=[
+ {version:'2026.11.24-4',date:'2026-11-24',title:'专题学习支持「按路径 / 按画像」双模式刷题、每路径 14–15 题并发生成、站内章节真题精选复用与头部排版重排',changes:[
+  'JD / 面经学习专题按每条复习路径独立并发出题：每个阶段固定生成 8 道单选 + 4 道多选 + 2 道简答 + 0–1 道可选代码题（按岗位 JD 决定）；若路径与站内课程章节高度一致，自动从匹配章节及阶段训练题中精选少量真题（最多约 1/3、绝不全出），其余由 AI 紧扣 JD 原创补齐并避重，并与面试专题题库并行流式生成，大幅提速并避免超时。',
+  '学习模块「专题」新增「画像刷题」模式：每道学习题自动标注对应考点画像模块，支持在「按路径刷题」与「按画像刷题」之间无缝切换且做题进度实时互通，考点画像卡片支持一键直达对应维度刷题。',
+  '修复前端流式连接意外断开时页面计时器卡死的问题（断开自动核对云端完成态），并重排调研报告头部布局使标题、标签与操作按钮分行清晰展示。',
+ ]},
  {version:'2026.11.24-3',date:'2026-11-24',title:'修复 JD / 面经深度调研卡在第一步问题，启用 DeepSeek + Gemini 分工协作与自动降级',changes:[
   '修复 Antigravity Agent（Google Interactions API）协议兼容与流式解析问题：移除 CreateAgentInteraction 不支持的顶层 system_instruction（消除上游 deadline_exceeded 超时）、修正 thought_summary 的 delta.content.text 原生思考流提取、补全 event: error 错误识别与多段 model_output 重置保护，并同步修复系统设计评审接口。',
   'JD / 面经深度调研升级为「分工协作 + 多引擎无缝自动降级」：第 1 步（考点画像与分阶段复习路径）由 DeepSeek V4.1 Flash（思考模式）优先流式生成（秒连、稳定输出中文思考过程与画像路径预览，失败自动降级 Gemini）；第 2 步（各阶段 5 题型学习题 + 面试专题题库）由 Antigravity Agent / Gemini 优先出题，若遇 Gemini 503 算力繁忙、429 限流、首步超时或循环思考则自动无缝切换至 DeepSeek V4.1 Flash（思考模式）完成出题，全程实时更新当前引擎标识。',

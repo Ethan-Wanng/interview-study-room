@@ -51,7 +51,59 @@ export type JdSpecialTopic = {
  report: JdResearchReport;
 };
 
-type ViewTab = 'practice' | 'profile';
+type ViewTab = 'practice' | 'dimension' | 'profile';
+
+type IndexedStudyQuiz = {
+ stepIdx: number;
+ stepPhase: string;
+ stepTitle: string;
+ quiz: AiQuiz;
+ key: string;
+};
+
+function tokenizeForMatch(text: string): string[] {
+ const s = text.toLowerCase();
+ const out = new Set<string>();
+ const latin = s.match(/[a-z0-9+#._-]{2,}/g) || [];
+ for (const w of latin) out.add(w);
+ const zhRuns = s.match(/[\u4e00-\u9fa5]{2,}/g) || [];
+ for (const run of zhRuns) {
+  for (let i = 0; i <= run.length - 2; i++) out.add(run.slice(i, i + 2));
+ }
+ return [...out];
+}
+
+function matchQuizToDimensionIndex(
+ entry: IndexedStudyQuiz,
+ dimensions: { name: string; focus: string }[],
+): number {
+ if (!dimensions.length) return -1;
+ const rawDim = (entry.quiz.dimension || '').trim().toLowerCase();
+ if (rawDim) {
+  const exact = dimensions.findIndex(d => d.name.trim().toLowerCase() === rawDim);
+  if (exact >= 0) return exact;
+  const incl = dimensions.findIndex(d => {
+   const dn = d.name.trim().toLowerCase();
+   return dn && (dn.includes(rawDim) || rawDim.includes(dn));
+  });
+  if (incl >= 0) return incl;
+ }
+ const hay = `${entry.quiz.dimension || ''} ${entry.quiz.q} ${entry.quiz.explain} ${entry.stepTitle}`.toLowerCase();
+ let bestIdx = entry.stepIdx % dimensions.length;
+ let bestScore = 0;
+ dimensions.forEach((d, idx) => {
+  const tokens = tokenizeForMatch(`${d.name} ${d.focus}`);
+  let score = 0;
+  for (const tk of tokens) {
+   if (hay.includes(tk)) score += d.name.toLowerCase().includes(tk) ? 3 : 1;
+  }
+  if (score > bestScore) {
+   bestScore = score;
+   bestIdx = idx;
+  }
+ });
+ return bestIdx;
+}
 
 const STORAGE_PREFIX = 'jd-special-journey:v1:';
 const SESSION_PREFIX = 'jd-special-session:v1:';
@@ -133,6 +185,7 @@ export default function JdSpecialClient({
  const [activeTopicId, setActiveTopicId] = useState<string>(topics[0]?.id || '');
  const [tab, setTab] = useState<ViewTab>('practice');
  const [stepIdx, setStepIdx] = useState(0);
+ const [dimIdx, setDimIdx] = useState(0);
  const [qIndex, setQIndex] = useState(0);
  const [passed, setPassed] = useState<Set<string>>(() => new Set());
  const [session, setSession] = useState<StoredStepSession>({ results: {}, drafts: {}, orders: {} });
@@ -160,12 +213,16 @@ export default function JdSpecialClient({
  useEffect(() => {
   const sp = new URLSearchParams(window.location.search);
   const id = sp.get('id');
+  const t = sp.get('tab');
   const st = Number(sp.get('step'));
+  const dm = Number(sp.get('dim'));
   const qi = Number(sp.get('q'));
-  if (id && topics.some(t => t.id === id)) {
+  if (id && topics.some(x => x.id === id)) {
    setActiveTopicId(id);
   }
+  if (t === 'dimension' || t === 'profile' || t === 'practice') setTab(t);
   if (Number.isInteger(st) && st >= 0) setStepIdx(st);
+  if (Number.isInteger(dm) && dm >= 0) setDimIdx(dm);
   if (Number.isInteger(qi) && qi >= 0) setQIndex(qi);
  }, [topics]);
 
@@ -178,9 +235,44 @@ export default function JdSpecialClient({
 
  const structured = Boolean(topic && hasStructuredStudyQuizzes(topic.report));
  const roadmap = topic?.report.roadmap ?? [];
+ const dimensions = topic?.report.dimensions ?? [];
  const safeStepIdx = Math.min(stepIdx, Math.max(0, roadmap.length - 1));
  const activeStep = roadmap[safeStepIdx] ?? null;
- const stepQuizzes = activeStep?.quizzes ?? [];
+
+ const allIndexedQuizzes = useMemo<IndexedStudyQuiz[]>(() => {
+  if (!topic) return [];
+  const out: IndexedStudyQuiz[] = [];
+  topic.report.roadmap.forEach((step, si) => {
+   (step.quizzes ?? []).forEach(quiz => {
+    out.push({
+     stepIdx: si,
+     stepPhase: step.phase,
+     stepTitle: step.title,
+     quiz,
+     key: `${topic.id}:s${si}:${quiz.id}`,
+    });
+   });
+  });
+  return out;
+ }, [topic]);
+
+ const quizzesByDim = useMemo<IndexedStudyQuiz[][]>(() => {
+  if (!dimensions.length) return [];
+  const buckets: IndexedStudyQuiz[][] = dimensions.map(() => []);
+  for (const entry of allIndexedQuizzes) {
+   const idx = matchQuizToDimensionIndex(entry, dimensions);
+   if (idx >= 0 && idx < buckets.length) buckets[idx].push(entry);
+  }
+  return buckets;
+ }, [allIndexedQuizzes, dimensions]);
+
+ const safeDimIdx = Math.min(dimIdx, Math.max(0, dimensions.length - 1));
+ const activeDim = dimensions[safeDimIdx] ?? null;
+
+ const activeEntries: IndexedStudyQuiz[] = useMemo(() => {
+  if (tab === 'dimension') return quizzesByDim[safeDimIdx] ?? [];
+  return allIndexedQuizzes.filter(e => e.stepIdx === safeStepIdx);
+ }, [tab, quizzesByDim, safeDimIdx, allIndexedQuizzes, safeStepIdx]);
 
  // Legacy fallback data
  const legacyQuestions = topic?.report.questions ?? [];
@@ -191,10 +283,11 @@ export default function JdSpecialClient({
  const legacyDraft = legacyKey ? legacyDrafts[legacyKey] ?? '' : '';
  const legacyGrade = legacyKey ? legacyGrades[legacyKey] : undefined;
 
- // Structured study data
- const safeQIdx = Math.min(qIndex, Math.max(0, stepQuizzes.length - 1));
- const currentQuiz = stepQuizzes[safeQIdx] ?? null;
- const studyKey = topic && currentQuiz ? `${topic.id}:s${safeStepIdx}:${currentQuiz.id}` : '';
+ // Structured study data (shared between 路径刷题 and 画像刷题)
+ const safeQIdx = Math.min(qIndex, Math.max(0, activeEntries.length - 1));
+ const currentEntry = activeEntries[safeQIdx] ?? null;
+ const currentQuiz = currentEntry?.quiz ?? null;
+ const studyKey = currentEntry?.key ?? '';
 
  const topicTotal = topic ? countJdStudyQuizzes(topic.report) : 0;
  const topicMasteredCount = useMemo(() => {
@@ -226,9 +319,11 @@ export default function JdSpecialClient({
   setLiveThink(null);
  };
 
- const syncUrl = (tid: string, st: number, qi: number) => {
+ const syncUrl = (tid: string, nextTab: ViewTab, st: number, dm: number, qi: number) => {
   const qs = new URLSearchParams({ id: tid });
-  if (st > 0) qs.set('step', String(st));
+  if (nextTab !== 'practice') qs.set('tab', nextTab);
+  if (nextTab === 'practice' && st > 0) qs.set('step', String(st));
+  if (nextTab === 'dimension' && dm > 0) qs.set('dim', String(dm));
   if (qi > 0) qs.set('q', String(qi));
   window.history.replaceState(null, '', `/learn/jd-special?${qs.toString()}`);
  };
@@ -239,15 +334,40 @@ export default function JdSpecialClient({
   setShowAns(false);
   setActiveTopicId(id);
   setStepIdx(0);
+  setDimIdx(0);
   setQIndex(0);
   setTab('practice');
-  syncUrl(id, 0, 0);
+  syncUrl(id, 'practice', 0, 0, 0);
+ };
+
+ const switchTab = (nextTab: ViewTab) => {
+  setTab(nextTab);
+  if (nextTab === 'dimension') {
+   const firstNonEmpty = quizzesByDim[safeDimIdx]?.length ? safeDimIdx : Math.max(0, quizzesByDim.findIndex(b => b.length > 0));
+   setDimIdx(firstNonEmpty);
+   setQIndex(0);
+   if (topic) syncUrl(topic.id, 'dimension', safeStepIdx, firstNonEmpty, 0);
+   return;
+  }
+  if (nextTab === 'practice') {
+   setQIndex(0);
+   if (topic) syncUrl(topic.id, 'practice', safeStepIdx, safeDimIdx, 0);
+   return;
+  }
+  if (topic) syncUrl(topic.id, 'profile', safeStepIdx, safeDimIdx, 0);
  };
 
  const switchStep = (nextStep: number) => {
   setStepIdx(nextStep);
   setQIndex(0);
-  if (topic) syncUrl(topic.id, nextStep, 0);
+  if (topic) syncUrl(topic.id, 'practice', nextStep, safeDimIdx, 0);
+ };
+
+ const switchDim = (nextDim: number) => {
+  setTab('dimension');
+  setDimIdx(nextDim);
+  setQIndex(0);
+  if (topic) syncUrl(topic.id, 'dimension', safeStepIdx, nextDim, 0);
  };
 
  const switchQuestion = (idx: number) => {
@@ -255,7 +375,7 @@ export default function JdSpecialClient({
   setGradeErr('');
   setShowAns(false);
   setQIndex(idx);
-  if (topic) syncUrl(topic.id, safeStepIdx, idx);
+  if (topic) syncUrl(topic.id, tab, safeStepIdx, safeDimIdx, idx);
  };
 
  const handleStructuredAnswer = (res: Result) => {
@@ -290,9 +410,9 @@ export default function JdSpecialClient({
   });
  };
 
- const resetStepProgress = () => {
-  if (!topic || !activeStep?.quizzes?.length) return;
-  const keys = activeStep.quizzes.map(qz => `${topic.id}:s${safeStepIdx}:${qz.id}`);
+ const resetCurrentGroupProgress = () => {
+  if (!topic || !activeEntries.length) return;
+  const keys = activeEntries.map(e => e.key);
   updateSession(prev => {
    const results = { ...prev.results };
    const drafts = { ...prev.drafts };
@@ -303,7 +423,7 @@ export default function JdSpecialClient({
    return { ...prev, results, drafts };
   });
   setQIndex(0);
-  syncUrl(topic.id, safeStepIdx, 0);
+  syncUrl(topic.id, tab, safeStepIdx, safeDimIdx, 0);
  };
 
  const toggleLegacyMastered = () => {
@@ -392,19 +512,19 @@ export default function JdSpecialClient({
  const legacyBlocks = useMemo(() => (legacyQ ? answerBlocks(legacyQ.answer) : []), [legacyQ]);
 
  const currentStudyItem: Item | null = useMemo(() => {
-  if (!topic || !currentQuiz || !studyKey) return null;
+  if (!topic || !currentEntry || !studyKey) return null;
   return {
    id: studyKey,
-   level: `${topic.id}:s${safeStepIdx}`,
-   quiz: currentQuiz,
-   order: stableOrder(currentQuiz, session.orders[studyKey]),
+   level: `${topic.id}:s${currentEntry.stepIdx}`,
+   quiz: currentEntry.quiz,
+   order: stableOrder(currentEntry.quiz, session.orders[studyKey]),
   };
- }, [topic, currentQuiz, studyKey, safeStepIdx, session.orders]);
+ }, [topic, currentEntry, studyKey, session.orders]);
 
- const stepAnsweredCount = useMemo(() => {
-  if (!topic || !stepQuizzes.length) return 0;
-  return stepQuizzes.filter(qz => Boolean(session.results[`${topic.id}:s${safeStepIdx}:${qz.id}`])).length;
- }, [topic, stepQuizzes, safeStepIdx, session.results]);
+ const activeAnsweredCount = useMemo(() => {
+  if (!activeEntries.length) return 0;
+  return activeEntries.filter(e => Boolean(session.results[e.key])).length;
+ }, [activeEntries, session.results]);
 
  return (
   <div className="ai-shell">
@@ -490,94 +610,158 @@ export default function JdSpecialClient({
         role="tab"
         aria-selected={tab === 'practice'}
         className={tab === 'practice' ? 'on' : ''}
-        onClick={() => setTab('practice')}
+        onClick={() => switchTab('practice')}
        >
         <BookOpen size={14} />
-        <span>{L(`路径刷题 (${topicTotal})`, `Path Practice (${topicTotal})`)}</span>
+        <span>{L(`路径刷题 (${topicTotal})`, `By Path (${topicTotal})`)}</span>
        </button>
+       {structured && dimensions.length > 0 && (
+        <button
+         type="button"
+         role="tab"
+         aria-selected={tab === 'dimension'}
+         className={tab === 'dimension' ? 'on' : ''}
+         onClick={() => switchTab('dimension')}
+        >
+         <Target size={14} />
+         <span>{L(`画像刷题 (${topicTotal})`, `By Skill (${topicTotal})`)}</span>
+        </button>
+       )}
        <button
         type="button"
         role="tab"
         aria-selected={tab === 'profile'}
         className={tab === 'profile' ? 'on' : ''}
-        onClick={() => setTab('profile')}
+        onClick={() => switchTab('profile')}
        >
-        <Target size={14} />
+        <Compass size={14} />
         <span>{L('考点画像', 'Profile')}</span>
        </button>
       </div>
 
-      {tab === 'practice' && structured && activeStep && (
+      {(tab === 'practice' || tab === 'dimension') && structured && (
        <>
-        <div className="jds-paths" role="tablist" aria-label={L('复习路径', 'Roadmap paths')}>
-         {roadmap.map((s, si) => {
-          const qs = s.quizzes ?? [];
-          const done = qs.filter(qz => passed.has(`${topic.id}:s${si}:${qz.id}`)).length;
-          const allDone = qs.length > 0 && done === qs.length;
-          return (
-           <button
-            key={si}
-            type="button"
-            role="tab"
-            aria-selected={si === safeStepIdx}
-            className={'jds-path-btn' + (si === safeStepIdx ? ' on' : '') + (allDone ? ' done' : '')}
-            onClick={() => switchStep(si)}
-           >
-            <span>{s.phase}</span>
-            <span>{s.title}</span>
-            {qs.length > 0 && (
-             <em>
-              {done}/{qs.length}
-             </em>
+        {tab === 'practice' ? (
+         <>
+          <div className="jds-paths" role="tablist" aria-label={L('复习路径', 'Roadmap paths')}>
+           {roadmap.map((s, si) => {
+            const qs = s.quizzes ?? [];
+            const done = qs.filter(qz => passed.has(`${topic.id}:s${si}:${qz.id}`)).length;
+            const allDone = qs.length > 0 && done === qs.length;
+            return (
+             <button
+              key={si}
+              type="button"
+              role="tab"
+              aria-selected={si === safeStepIdx}
+              className={'jds-path-btn' + (si === safeStepIdx ? ' on' : '') + (allDone ? ' done' : '')}
+              onClick={() => switchStep(si)}
+             >
+              <span>{s.phase}</span>
+              <span>{s.title}</span>
+              {qs.length > 0 && (
+               <em>
+                {done}/{qs.length}
+               </em>
+              )}
+             </button>
+            );
+           })}
+          </div>
+
+          {activeStep && (
+           <section className="ai-card jds-path-meta">
+            <div className="jds-path-top">
+             <div className="jdr-step-head">
+              <span className="jdr-phase">{activeStep.phase}</span>
+              <strong>{activeStep.title}</strong>
+             </div>
+             {activeAnsweredCount > 0 && (
+              <button type="button" className="ai-note-pill" onClick={resetCurrentGroupProgress}>
+               <RotateCcw size={12} />
+               <span>{L('重做本阶段', 'Reset Phase')}</span>
+              </button>
+             )}
+            </div>
+            {activeStep.goals.length > 0 && (
+             <ul className="jdr-goals">
+              {activeStep.goals.map((g, gi) => (
+               <li key={gi}>{g}</li>
+              ))}
+             </ul>
             )}
-           </button>
-          );
-         })}
-        </div>
-
-        <section className="ai-card jds-path-meta">
-         <div className="jds-path-top">
-          <div className="jdr-step-head">
-           <span className="jdr-phase">{activeStep.phase}</span>
-           <strong>{activeStep.title}</strong>
-          </div>
-          {stepAnsweredCount > 0 && (
-           <button type="button" className="ai-note-pill" onClick={resetStepProgress}>
-            <RotateCcw size={12} />
-            <span>{L('重做本阶段', 'Reset Phase')}</span>
-           </button>
+            {activeStep.siteLinks.length > 0 && (
+             <div className="jdr-links">
+              {activeStep.siteLinks.map(lk => (
+               <a key={lk.href} href={lk.href} className="jdr-link-pill">
+                <span>{lk.label}</span>
+                <ArrowUpRight size={13} />
+               </a>
+              ))}
+             </div>
+            )}
+           </section>
           )}
-         </div>
-         {activeStep.goals.length > 0 && (
-          <ul className="jdr-goals">
-           {activeStep.goals.map((g, gi) => (
-            <li key={gi}>{g}</li>
-           ))}
-          </ul>
-         )}
-         {activeStep.siteLinks.length > 0 && (
-          <div className="jdr-links">
-           {activeStep.siteLinks.map(lk => (
-            <a key={lk.href} href={lk.href} className="jdr-link-pill">
-             <span>{lk.label}</span>
-             <ArrowUpRight size={13} />
-            </a>
-           ))}
+         </>
+        ) : (
+         <>
+          <div className="jds-paths" role="tablist" aria-label={L('考点画像维度', 'Skill dimensions')}>
+           {dimensions.map((d, di) => {
+            const qs = quizzesByDim[di] ?? [];
+            const done = qs.filter(e => passed.has(e.key)).length;
+            const allDone = qs.length > 0 && done === qs.length;
+            return (
+             <button
+              key={di}
+              type="button"
+              role="tab"
+              aria-selected={di === safeDimIdx}
+              className={'jds-path-btn' + (di === safeDimIdx ? ' on' : '') + (allDone ? ' done' : '')}
+              onClick={() => switchDim(di)}
+             >
+              <span>
+               {d.priority} · {d.weight}%
+              </span>
+              <span>{d.name}</span>
+              <em>
+               {done}/{qs.length}
+              </em>
+             </button>
+            );
+           })}
           </div>
-         )}
-        </section>
 
-        {stepQuizzes.length > 0 && currentStudyItem && (
+          {activeDim && (
+           <section className="ai-card jds-path-meta">
+            <div className="jds-path-top">
+             <div className="jdr-step-head">
+              <span className={'jdr-prio ' + activeDim.priority}>{activeDim.priority}</span>
+              <strong>{activeDim.name}</strong>
+              <span className="jdr-dim-pct">{activeDim.weight}%</span>
+             </div>
+             {activeAnsweredCount > 0 && (
+              <button type="button" className="ai-note-pill" onClick={resetCurrentGroupProgress}>
+               <RotateCcw size={12} />
+               <span>{L('重做本维度', 'Reset')}</span>
+              </button>
+             )}
+            </div>
+            {activeDim.focus && <p className="jdr-dim-focus">{activeDim.focus}</p>}
+           </section>
+          )}
+         </>
+        )}
+
+        {activeEntries.length > 0 && currentStudyItem && currentEntry ? (
          <>
           <div className="jds-qbar-row">
            <div className="jds-qnums" aria-label={L('题号切换', 'Question index')}>
-            {stepQuizzes.map((qz, i) => {
-             const k = `${topic.id}:s${safeStepIdx}:${qz.id}`;
-             const res = session.results[k];
-             const typeLbl = aiQuizTypes[qz.type ?? 'single'];
+            {activeEntries.map((entry, i) => {
+             const res = session.results[entry.key];
+             const typeLbl = aiQuizTypes[entry.quiz.type ?? 'single'];
              return (
               <button
-               key={qz.id}
+               key={entry.key}
                type="button"
                className={
                 'jds-qnum' +
@@ -594,37 +778,58 @@ export default function JdSpecialClient({
             })}
            </div>
            <span className="jds-num" style={{ fontSize: 12.5, color: 'var(--quiet)', fontWeight: 650 }}>
-            {safeQIdx + 1} / {stepQuizzes.length}
+            {safeQIdx + 1} / {activeEntries.length}
            </span>
           </div>
 
           <QuestionCard
            key={studyKey}
            item={currentStudyItem}
-           label={`${activeStep.phase} · ${activeStep.title}`}
+           label={
+            tab === 'dimension' && activeDim
+             ? `${activeDim.name} · ${currentEntry.stepPhase}`
+             : `${currentEntry.stepPhase} · ${currentEntry.stepTitle}`
+           }
            result={session.results[studyKey] ?? null}
            draft={session.drafts[studyKey]}
            onDraftChange={handleStructuredDraft}
-           last={safeQIdx === stepQuizzes.length - 1}
+           last={safeQIdx === activeEntries.length - 1}
            onAnswer={handleStructuredAnswer}
            onPrev={safeQIdx > 0 ? () => switchQuestion(safeQIdx - 1) : undefined}
            onNext={() => {
-            if (safeQIdx < stepQuizzes.length - 1) {
+            if (safeQIdx < activeEntries.length - 1) {
              switchQuestion(safeQIdx + 1);
-            } else if (safeStepIdx < roadmap.length - 1) {
+            } else if (tab === 'practice' && safeStepIdx < roadmap.length - 1) {
              switchStep(safeStepIdx + 1);
+            } else if (tab === 'dimension') {
+             const nextDim = quizzesByDim.findIndex((b, idx) => idx > safeDimIdx && b.length > 0);
+             if (nextDim >= 0) switchDim(nextDim);
             }
            }}
-           noteBackHref={`/learn/jd-special?id=${encodeURIComponent(topic.id)}&step=${safeStepIdx}&q=${safeQIdx}`}
+           noteBackHref={
+            tab === 'dimension'
+             ? `/learn/jd-special?id=${encodeURIComponent(topic.id)}&tab=dimension&dim=${safeDimIdx}&q=${safeQIdx}`
+             : `/learn/jd-special?id=${encodeURIComponent(topic.id)}&step=${safeStepIdx}&q=${safeQIdx}`
+           }
            onBeforeNoteLeave={flushSession}
            playground={{
             subjectName: topic.title.slice(0, 24),
-            levelTitle: `${activeStep.phase} · ${activeStep.title}`,
+            levelTitle:
+             tab === 'dimension' && activeDim
+              ? activeDim.name
+              : `${currentEntry.stepPhase} · ${currentEntry.stepTitle}`,
             hintLang: subjectHintLang(topic.report.recommendedSubject),
-            backHref: `/learn/jd-special?id=${encodeURIComponent(topic.id)}&step=${safeStepIdx}&q=${safeQIdx}`,
+            backHref:
+             tab === 'dimension'
+              ? `/learn/jd-special?id=${encodeURIComponent(topic.id)}&tab=dimension&dim=${safeDimIdx}&q=${safeQIdx}`
+              : `/learn/jd-special?id=${encodeURIComponent(topic.id)}&step=${safeStepIdx}&q=${safeQIdx}`,
            }}
           />
          </>
+        ) : (
+         <div className="ai-card jds-empty">
+          <p>{L('该维度暂无匹配题目', 'No quizzes in this dimension')}</p>
+         </div>
         )}
        </>
       )}
@@ -829,21 +1034,32 @@ export default function JdSpecialClient({
       {tab === 'profile' && (
        <section className="jdr-panel">
         <div className="jdr-dim-list">
-         {topic.report.dimensions.map((d, i) => (
-          <div key={i} className="ai-card jdr-dim-card">
-           <div className="jdr-dim-top">
-            <span className="jdr-dim-name">
-             <span className={'jdr-prio ' + d.priority}>{d.priority}</span>
-             <span>{d.name}</span>
-            </span>
-            <span className="jdr-dim-pct">{d.weight}%</span>
+         {topic.report.dimensions.map((d, i) => {
+          const qs = quizzesByDim[i] ?? [];
+          return (
+           <div key={i} className="ai-card jdr-dim-card">
+            <div className="jdr-dim-top">
+             <span className="jdr-dim-name">
+              <span className={'jdr-prio ' + d.priority}>{d.priority}</span>
+              <span>{d.name}</span>
+             </span>
+             <span className="jdr-dim-pct">{d.weight}%</span>
+            </div>
+            <div className="jdr-bar-track">
+             <div className="jdr-bar-fill" style={{ width: `${Math.min(100, d.weight)}%` }} />
+            </div>
+            {d.focus && <p className="jdr-dim-focus">{d.focus}</p>}
+            {structured && qs.length > 0 && (
+             <div className="jdr-links">
+              <button type="button" className="jdr-link-pill" onClick={() => switchDim(i)}>
+               <span>{L(`按画像刷题 (${qs.length})`, `Practice (${qs.length})`)}</span>
+               <ArrowUpRight size={13} />
+              </button>
+             </div>
+            )}
            </div>
-           <div className="jdr-bar-track">
-            <div className="jdr-bar-fill" style={{ width: `${Math.min(100, d.weight)}%` }} />
-           </div>
-           {d.focus && <p className="jdr-dim-focus">{d.focus}</p>}
-          </div>
-         ))}
+          );
+         })}
         </div>
 
         {topic.report.traps.length > 0 && (

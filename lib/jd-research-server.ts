@@ -13,7 +13,13 @@ import { rustLevels } from '@/content/rust-journey';
 import { pythonLevels } from '@/content/python-journey';
 import { projectLevels } from '@/content/project-journey';
 import { aiSupportLevels } from '@/content/ai-support-journey';
-import type { AiLevel, AiQuiz } from '@/content/journey';
+import { aiExams } from '@/content/exams/ai';
+import { goExams } from '@/content/exams/go';
+import { backendExams } from '@/content/exams/backend';
+import { frontendExams } from '@/content/exams/frontend';
+import { rustExams } from '@/content/exams/rust';
+import { pythonExams } from '@/content/exams/python';
+import type { AiLevel, AiQuiz, Exam } from '@/content/journey';
 import { searchSite } from './site-search';
 import { MY_LIMITS } from './my-questions';
 import type {
@@ -29,13 +35,13 @@ import type {
 
 const VALID_SUBJECTS = new Set(['go', 'backend', 'ai-development', 'frontend', 'mine']);
 
-const COURSES: { id: string; name: string; levels: AiLevel[] }[] = [
- { id: 'go', name: 'Go 开发', levels: goLevels },
- { id: 'backend', name: '后端通用', levels: backendLevels },
- { id: 'ai', name: 'AI 开发', levels: aiLevels },
- { id: 'frontend', name: '前端开发', levels: frontendLevels },
- { id: 'rust', name: 'Rust 开发', levels: rustLevels },
- { id: 'python', name: 'Python 开发', levels: pythonLevels },
+const COURSES: { id: string; name: string; levels: AiLevel[]; exams?: Exam[] }[] = [
+ { id: 'go', name: 'Go 开发', levels: goLevels, exams: goExams },
+ { id: 'backend', name: '后端通用', levels: backendLevels, exams: backendExams },
+ { id: 'ai', name: 'AI 开发', levels: aiLevels, exams: aiExams },
+ { id: 'frontend', name: '前端开发', levels: frontendLevels, exams: frontendExams },
+ { id: 'rust', name: 'Rust 开发', levels: rustLevels, exams: rustExams },
+ { id: 'python', name: 'Python 开发', levels: pythonLevels, exams: pythonExams },
  { id: 'ai-support', name: '智能 AI 客服实战', levels: aiSupportLevels },
  { id: 'project', name: '复刻面试自习室', levels: projectLevels },
 ];
@@ -259,11 +265,267 @@ export function buildJdStage2Input(opts: {
   '【已确定的分阶段复习路径】',
   roadmapText,
   '',
-  '【第 2 步任务】请先在 studyQuizzes 中为上面每一个 phaseIndex 各生成 5 道学习题（single、multi、fill、short、code 各 1 题），再在 questions 中生成 6–10 道与学习题不重复的高频深度面试题。',
+  '【第 2 步任务】请先在 studyQuizzes 中为上面每一个 phaseIndex 各生成 5 道学习题（single、multi、fill、short、code 各 1 题），再在 questions 中生成 6–8 道与学习题不重复的高频深度面试题。',
   '',
   `【原始${opts.kind === 'experience' ? '面经' : '岗位 JD'}内容】`,
   opts.source,
  ].join('\n');
+}
+
+// Focused Stage 2A prompt: generates study quizzes for ONE single roadmap phase in parallel
+// so each phase reliably outputs the exact quota (8 single + 4 multi + 2 short + 0-1 optional code) without truncation.
+let cachedPhaseQuizzesPrompt: string | null = null;
+export function getJdResearchPhaseQuizzesSystemPrompt(): string {
+ if (cachedPhaseQuizzesPrompt) return cachedPhaseQuizzesPrompt;
+ cachedPhaseQuizzesPrompt = `你是顶级技术面试教研专家。当前任务：【为指定的单个复习路径阶段生成高质量学习练习题】。
+
+严格题量与题型要求（必须严格遵守）：
+1. **单选题（\`single\`）：必须正好 8 道**（4 个选项，1 个正确答案 \`answer\` 为 0-3 整数）。
+2. **多选题（\`multi\`）：必须正好 4 道**（4 个选项，至少 2 个正确项，\`answers\` 为升序索引数组）。
+3. **简答题（\`short\`）：必须正好 2 道**（给出 70–150 字简洁准确 \`reference\` 与 3 条 \`points\` 得分要点）。
+4. **代码题（\`code\`）：0 或 1 道（可有可无，严格根据该岗位 JD 与本阶段内容决定）**——若该岗位与本阶段明显涉及编码、算法、框架实现、SQL 或并发控制则出 1 道精炼动手代码题；若偏纯概念、产品/业务协作、架构选型或非编码运维则不出代码题。
+5. **不要出填空题**；全部题目紧扣本阶段目标与原始 JD/面经真实技术栈，题目之间绝不重复，\`explain\` 一句话直击核心原理；每题必须填写 \`dimension\` 字段，取值从给定的「考点画像模块」列表中选择最匹配的一项名称（用于支持按考点画像刷题）。
+6. 严禁调用任何工具，直接输出**一个合法 JSON 对象**（用 \`\`\`json 和 \`\`\` 包裹，不要输出代码块以外的文字），使用简体中文。
+
+\`\`\`json
+{
+  "quizzes": [
+    { "type": "single", "dimension": "考点画像模块名", "q": "单选题题干", "options": ["选项A", "选项B", "选项C", "选项D"], "answer": 0, "explain": "一句话核心原理" },
+    { "type": "multi", "dimension": "考点画像模块名", "q": "多选题题干（至少2个正确项）", "options": ["选项A", "选项B", "选项C", "选项D"], "answers": [0, 2], "explain": "简明解析" },
+    { "type": "short", "dimension": "考点画像模块名", "q": "简答题题干", "reference": "简洁准确参考答案（70-150字）", "points": ["得分要点1", "得分要点2", "得分要点3"], "explain": "记忆抓手" },
+    { "type": "code", "dimension": "考点画像模块名", "q": "（按JD决定可有可无）动手代码题题干", "code": "可选函数签名", "reference": "简洁核心代码", "points": ["关键实现", "边界/并发处理"], "explain": "复杂度与细节" }
+  ]
+}
+\`\`\``;
+ return cachedPhaseQuizzesPrompt;
+}
+
+export function buildJdPhaseQuizzesInput(opts: {
+ kind: JdInputKind;
+ source: string;
+ stage1: JdResearchReport;
+ phaseIndex: number;
+ reusedQuizzes?: AiQuiz[];
+}): string {
+ const step = opts.stage1.roadmap[opts.phaseIndex];
+ const dimList = opts.stage1.dimensions.map(d => d.name).filter(Boolean);
+ const otherPhases = opts.stage1.roadmap
+  .map((s, idx) => (idx === opts.phaseIndex ? null : `- 阶段${idx + 1} [${s.phase} · ${s.title}]`))
+  .filter(Boolean)
+  .join('\n');
+ const reused = opts.reusedQuizzes ?? [];
+ const rSingle = reused.filter(q => !q.type || q.type === 'single').length;
+ const rMulti = reused.filter(q => q.type === 'multi').length;
+ const rShort = reused.filter(q => q.type === 'short').length;
+ const needSingle = Math.max(0, 8 - rSingle);
+ const needMulti = Math.max(0, 4 - rMulti);
+ const needShort = Math.max(0, 2 - rShort);
+ const reusedHint = reused.length
+  ? [
+     `【已从高度匹配的站内章节与阶段训练题精选 ${reused.length} 道（单选 ${rSingle}、多选 ${rMulti}、简答 ${rShort}），严禁重复出题】`,
+     ...reused.map((q, i) => `${i + 1}. (${q.type || 'single'}) ${q.q.slice(0, 80)}`),
+     '',
+     `【本次需补齐的剩余题量】请严格只生成剩余部分：${needSingle} 道单选（single）+ ${needMulti} 道多选（multi）+ ${needShort} 道简答（short）+ 0 或 1 道代码题（code，根据 JD 与本阶段是否需要编码自主决定），直接输出 JSON。`,
+    ].join('\n')
+  : '【题量要求】请严格为当前阶段生成：8 道单选（single）+ 4 道多选（multi）+ 2 道简答（short）+ 0 或 1 道代码题（code，根据 JD 与本阶段是否需要编码自主决定），共 14–15 道题，直接输出 JSON。';
+ return [
+  `【岗位主题】${opts.stage1.roleTitle}（${[opts.stage1.inferredLevel, opts.stage1.companyStyle].filter(Boolean).join(' · ')}）`,
+  dimList.length ? `【考点画像模块（每题 dimension 字段必须从中选一项）】${dimList.join(' | ')}` : '',
+  `【当前出题阶段（第 ${opts.phaseIndex + 1} / ${opts.stage1.roadmap.length} 阶段）】`,
+  `- 时间与标题：${step.phase} · ${step.title}`,
+  `- 阶段目标：${step.goals.join('；')}`,
+  otherPhases ? `【其他阶段（避免题目撞车）】\n${otherPhases}` : '',
+  '',
+  reusedHint,
+  '',
+  `【原始${opts.kind === 'experience' ? '面经' : '岗位 JD'}】`,
+  opts.source,
+ ]
+  .filter(Boolean)
+  .join('\n');
+}
+
+function matchTokens(text: string): string[] {
+ const s = text.toLowerCase();
+ const out = new Set<string>();
+ for (const w of s.match(/[a-z0-9+#._-]{2,}/g) || []) out.add(w);
+ for (const run of s.match(/[\u4e00-\u9fa5]{2,}/g) || []) {
+  for (let i = 0; i <= run.length - 2; i++) out.add(run.slice(i, i + 2));
+ }
+ return [...out];
+}
+
+function overlapScore(a: string, b: string): number {
+ const tks = matchTokens(a);
+ if (!tks.length) return 0;
+ const hay = b.toLowerCase();
+ let score = 0;
+ for (const tk of tks) {
+  if (hay.includes(tk)) score++;
+ }
+ return score;
+}
+
+function bestDimensionForQuiz(q: AiQuiz, stepTitle: string, dimensions: JdSkillDimension[]): string | undefined {
+ if (!dimensions.length) return undefined;
+ const hay = `${q.q} ${q.explain} ${stepTitle}`.toLowerCase();
+ let best = dimensions[0].name;
+ let bestScore = -1;
+ for (const d of dimensions) {
+  const s = overlapScore(d.name, hay) * 3 + overlapScore(d.focus, hay);
+  if (s > bestScore) {
+   bestScore = s;
+   best = d.name;
+  }
+ }
+ return best;
+}
+
+// When a roadmap phase aligns closely with in-site course chapters (via verified siteLinks),
+// cherry-picks a small subset (capped at <=3 single, <=1 multi, <=1 short — never all!) from
+// those chapters and their corresponding course training exams so the remaining majority is
+// freshly tailored by AI to the exact JD.
+export function pickInSiteQuizzesForStage(
+ stage1: JdResearchReport,
+ phaseIndex: number,
+ usedOrigIds: Set<string>,
+): AiQuiz[] {
+ const step = stage1.roadmap[phaseIndex];
+ if (!step?.siteLinks?.length) return [];
+
+ const stepText = `${step.title} ${step.goals.join(' ')}`;
+ type Cand = { quiz: AiQuiz; score: number; fromTraining: boolean };
+ const cands: Cand[] = [];
+ const seenLocal = new Set<string>();
+
+ const pushQuiz = (q: AiQuiz, baseBonus: number, fromTraining: boolean) => {
+  if (seenLocal.has(q.id) || usedOrigIds.has(q.id)) return;
+  if (q.say || q.passage) return;
+  const t = q.type ?? 'single';
+  if (t !== 'single' && t !== 'multi' && t !== 'short') return;
+  seenLocal.add(q.id);
+  const rel = overlapScore(stepText, `${q.q} ${q.explain}`);
+  cands.push({ quiz: q, score: baseBonus + rel * 2, fromTraining });
+ };
+
+ for (const lk of step.siteLinks) {
+  const m = lk.href.match(/^\/learn\/([^/?]+)\?level=([^&]+)/);
+  if (!m) continue;
+  const courseId = decodeURIComponent(m[1]);
+  const levelId = decodeURIComponent(m[2]);
+  const course = COURSES.find(c => c.id === courseId);
+  if (!course) continue;
+  const level = course.levels.find(l => l.id === levelId);
+  if (!level) continue;
+
+  // Verify high alignment between this roadmap phase and the linked chapter
+  const chapterAlign = overlapScore(stepText, `${level.title} ${level.summary}`);
+  if (chapterAlign < 1) continue;
+
+  for (const q of level.quiz) {
+   pushQuiz(q, 4 + chapterAlign, false);
+  }
+  const matchingTrainings = (course.exams ?? []).filter(
+   e => e.kind === 'training' && e.requires.includes(levelId),
+  );
+  for (const ex of matchingTrainings) {
+   for (const q of ex.quiz) {
+    // Only include training exam items that genuinely match this phase's topic
+    if (overlapScore(stepText, `${q.q} ${q.explain}`) >= 1) {
+     pushQuiz(q, 5 + chapterAlign, true);
+    }
+   }
+  }
+ }
+
+ if (!cands.length) return [];
+ cands.sort((a, b) => b.score - a.score);
+
+ const picked: AiQuiz[] = [];
+ const pickByType = (type: 'single' | 'multi' | 'short', cap: number) => {
+  const pool = cands.filter(c => (c.quiz.type ?? 'single') === type);
+  // Prefer a mix of chapter & training exam items when both are available
+  const trainingPool = pool.filter(c => c.fromTraining);
+  const chapterPool = pool.filter(c => !c.fromTraining);
+  const ordered: Cand[] = [];
+  const maxLen = Math.max(trainingPool.length, chapterPool.length);
+  for (let i = 0; i < maxLen; i++) {
+   if (chapterPool[i]) ordered.push(chapterPool[i]);
+   if (trainingPool[i]) ordered.push(trainingPool[i]);
+  }
+  for (const item of ordered.slice(0, cap)) {
+   usedOrigIds.add(item.quiz.id);
+   const dim = bestDimensionForQuiz(item.quiz, step.title, stage1.dimensions);
+   picked.push({ ...item.quiz, ...(dim ? { dimension: dim } : {}) });
+  }
+ };
+
+ // Strict caps (never all — max 5 of 14-15 quizzes, ~1/3 from in-site chapters/training)
+ pickByType('single', 3);
+ pickByType('multi', 1);
+ pickByType('short', 1);
+ return picked;
+}
+
+export function combinePhaseQuizzes(reused: AiQuiz[], generated: AiQuiz[], phaseIndex: number): AiQuiz[] {
+ const seenStems = new Set<string>();
+ const all: AiQuiz[] = [];
+ for (const q of [...reused, ...generated]) {
+  const stem = q.q.trim().toLowerCase().replace(/\s+/g, '').slice(0, 40);
+  if (!stem || seenStems.has(stem)) continue;
+  seenStems.add(stem);
+  all.push(q);
+ }
+ const typeOrder: Record<string, number> = { single: 0, multi: 1, short: 2, code: 3, fill: 4 };
+ all.sort((a, b) => (typeOrder[a.type ?? 'single'] ?? 9) - (typeOrder[b.type ?? 'single'] ?? 9));
+ return all.slice(0, 20).map((q, idx) => ({
+  ...q,
+  id: `jdq-${phaseIndex + 1}-${idx + 1}`,
+ }));
+}
+
+// Focused Stage 2B prompt: ONLY Interview Question Bank (fast, compact, runs in parallel with Stage 2A).
+let cachedStage2QuestionsPrompt: string | null = null;
+export function getJdResearchStage2QuestionsSystemPrompt(): string {
+ if (cachedStage2QuestionsPrompt) return cachedStage2QuestionsPrompt;
+ cachedStage2QuestionsPrompt = `你是大厂资深架构面试官。当前任务：【围绕目标岗位 JD / 面经生成高频开放式面试专题题库】。
+
+严格规则：
+1. 生成 **6–8 道**贴近真实一二三面场景的高频深度面试题（偏架构设计、线上排障、底层原理与工程取舍，避免基础概念背诵题）。
+2. 每题 \`answer\` 结构化分段清晰（可用 \`\`\` 代码块），直击核心原理、边界条件与落地指标，每题 150–320 字，精炼硬核。
+3. 严禁调用任何工具，直接输出**一个合法 JSON 对象**（用 \`\`\`json 和 \`\`\` 包裹，不要输出代码块以外的文字），使用简体中文。
+
+\`\`\`json
+{
+  "questions": [
+    {
+      "title": "贴合该 JD/面经真实生产场景的面试题干",
+      "section": "专题短标签（16字内）",
+      "difficulty": "基础 | 进阶 | 高阶",
+      "whyAsked": "对应 JD/面经哪条要求（30字内）",
+      "answer": "生产级高质量参考答案（150-320字，按点换行）",
+      "followups": ["连环追问1", "连环追问2"]
+    }
+  ]
+}
+\`\`\``;
+ return cachedStage2QuestionsPrompt;
+}
+
+export function buildJdStage2QuestionsInput(opts: {
+ kind: JdInputKind;
+ source: string;
+ stage1: JdResearchReport;
+}): string {
+ const dims = opts.stage1.dimensions.map(d => `${d.name}(${d.priority},${d.weight}%)`).join('、');
+ return [
+  `【岗位主题】${opts.stage1.roleTitle}（${[opts.stage1.inferredLevel, opts.stage1.companyStyle].filter(Boolean).join(' · ')}）`,
+  dims ? `【核心考点】${dims}` : '',
+  '【任务】请生成 6–8 道高质量场景化深度面试题与连环追问，直接输出 JSON。',
+  '',
+  `【原始${opts.kind === 'experience' ? '面经' : '岗位 JD'}】`,
+  opts.source,
+ ].filter(Boolean).join('\n');
 }
 
 export function buildJdResearchInput(opts: {
@@ -593,8 +855,10 @@ function parseStudyQuiz(raw: unknown, stepIdx: number, qIdx: number): AiQuiz | n
  if (!q) return null;
  const id = `jdq-${stepIdx + 1}-${qIdx + 1}`;
  const code = str(o.code, 4000) || undefined;
+ const dimension = str(o.dimension, 60) || undefined;
  const explain = str(o.explain, 2000) || '见参考答案与得分要点。';
  const rawType = str(o.type, 16).toLowerCase();
+ const extra = { ...(code ? { code } : {}), ...(dimension ? { dimension } : {}) };
 
  if (rawType === 'multi') {
   const options = Array.isArray(o.options)
@@ -608,7 +872,7 @@ function parseStudyQuiz(raw: unknown, stepIdx: number, qIdx: number): AiQuiz | n
   const why = Array.isArray(o.why) && o.why.length === options.length
    ? o.why.map(x => str(x, 300))
    : undefined;
-  return { id, type: 'multi', q, ...(code ? { code } : {}), options, answers, ...(why ? { why } : {}), explain };
+  return { id, type: 'multi', q, ...extra, options, answers, ...(why ? { why } : {}), explain };
  }
 
  if (rawType === 'fill') {
@@ -618,7 +882,7 @@ function parseStudyQuiz(raw: unknown, stepIdx: number, qIdx: number): AiQuiz | n
      ? [o.accepted.trim().slice(0, 120)]
      : [];
   if (!accepted.length) return null;
-  return { id, type: 'fill', q, ...(code ? { code } : {}), accepted, explain };
+  return { id, type: 'fill', q, ...extra, accepted, explain };
  }
 
  if (rawType === 'short' || rawType === 'code') {
@@ -628,7 +892,7 @@ function parseStudyQuiz(raw: unknown, stepIdx: number, qIdx: number): AiQuiz | n
    ? o.points.slice(0, 6).map(x => str(x, 300)).filter(Boolean)
    : [];
   const points = rawPts.length ? rawPts : ['核心原理或关键实现正确', '边界条件与工程细节清晰'];
-  return { id, type: rawType, q, ...(code ? { code } : {}), reference, points, explain };
+  return { id, type: rawType, q, ...extra, reference, points, explain };
  }
 
  const options = Array.isArray(o.options)
@@ -640,7 +904,7 @@ function parseStudyQuiz(raw: unknown, stepIdx: number, qIdx: number): AiQuiz | n
  const why = Array.isArray(o.why) && o.why.length === options.length
   ? o.why.map(x => str(x, 300))
   : undefined;
- return { id, type: 'single', q, ...(code ? { code } : {}), options, answer, ...(why ? { why } : {}), explain };
+ return { id, type: 'single', q, ...extra, options, answer, ...(why ? { why } : {}), explain };
 }
 
 function parseQuestionsArray(rawQuestions: unknown): JdQuestionItem[] {
@@ -743,7 +1007,7 @@ export function parseAndEnrichJdReport(rawText: string): JdResearchReport | null
       const siteLinks = enrichStepLinks(title, goals, rawLinks, validLinks);
       const quizzes: AiQuiz[] = Array.isArray(o.quizzes)
        ? o.quizzes
-          .slice(0, 8)
+          .slice(0, 20)
           .map((qz, qi) => parseStudyQuiz(qz, idx, qi))
           .filter((x): x is AiQuiz => x !== null)
        : [];
@@ -788,7 +1052,7 @@ export function mergeStage1AndStage2Report(stage1: JdResearchReport, stage2RawTe
    if (pIdx < 0 || pIdx >= stage1.roadmap.length) return;
    const rawList = Array.isArray(go.quizzes) ? go.quizzes : [];
    const quizzes = rawList
-    .slice(0, 8)
+    .slice(0, 20)
     .map((qz, qi) => parseStudyQuiz(qz, pIdx, qi))
     .filter((x): x is AiQuiz => x !== null);
    if (quizzes.length) quizzesByPhase.set(pIdx, quizzes);
@@ -799,7 +1063,7 @@ export function mergeStage1AndStage2Report(stage1: JdResearchReport, stage2RawTe
    const so = step as Record<string, unknown>;
    const rawList = Array.isArray(so.quizzes) ? so.quizzes : [];
    const quizzes = rawList
-    .slice(0, 8)
+    .slice(0, 20)
     .map((qz, qi) => parseStudyQuiz(qz, pIdx, qi))
     .filter((x): x is AiQuiz => x !== null);
    if (quizzes.length) quizzesByPhase.set(pIdx, quizzes);
@@ -817,6 +1081,39 @@ export function mergeStage1AndStage2Report(stage1: JdResearchReport, stage2RawTe
   roadmap: mergedRoadmap,
   questions: questions.length ? questions : stage1.questions,
  };
+}
+
+export function parsePhaseQuizzes(rawText: string, phaseIndex: number): AiQuiz[] {
+ const jsonText = extractJsonText(rawText);
+ const parsed = jsonText ? safeParseJson(jsonText) : null;
+ if (!parsed || typeof parsed !== 'object') return [];
+ const obj = parsed as Record<string, unknown>;
+ let rawList: unknown[] = [];
+ if (Array.isArray(obj.quizzes)) {
+  rawList = obj.quizzes;
+ } else if (Array.isArray(obj.studyQuizzes) && obj.studyQuizzes[0] && typeof obj.studyQuizzes[0] === 'object') {
+  const first = obj.studyQuizzes[0] as Record<string, unknown>;
+  if (Array.isArray(first.quizzes)) rawList = first.quizzes;
+ }
+ return rawList
+  .slice(0, 20)
+  .map((qz, qi) => parseStudyQuiz(qz, phaseIndex, qi))
+  .filter((x): x is AiQuiz => x !== null);
+}
+
+export function mergeStage2Parts(
+ stage1: JdResearchReport,
+ phaseQuizLists: (AiQuiz[] | null)[],
+ questionsRawText: string,
+): JdResearchReport {
+ const withQuizzes: JdResearchReport = {
+  ...stage1,
+  roadmap: stage1.roadmap.map((step, idx) => {
+   const qz = phaseQuizLists[idx];
+   return qz && qz.length ? { ...step, quizzes: qz } : step;
+  }),
+ };
+ return questionsRawText ? mergeStage1AndStage2Report(withQuizzes, questionsRawText) : withQuizzes;
 }
 
 function unescapePreview(s: string): string {

@@ -115,12 +115,23 @@ async function runProviderStream(
  maxTokens:number|undefined,
  onText:(t:string)=>void,
  // thinking / thinkingLevel：控制是否开启思考及思考强度；onThink 收到思考过程里新写出的文字。
- opts:{thinking?:boolean;thinkingLevel?:ThinkingLevel;onThink?:(t:string)=>void;geminiProxy?:boolean;signal?:AbortSignal;siteManaged?:boolean;firstTimeoutMs?:number;totalTimeoutMs?:number}={}
+ opts:{thinking?:boolean;thinkingLevel?:ThinkingLevel;onThink?:(t:string)=>void;geminiProxy?:boolean;signal?:AbortSignal;siteManaged?:boolean;firstTimeoutMs?:number;idleTimeoutMs?:number;totalTimeoutMs?:number}={}
 ):Promise<string>{
- const firstMs=opts.firstTimeoutMs??FIRST,totalMs=opts.totalTimeoutMs??TOTAL;
- const ctl=new AbortController(),onAbort=()=>ctl.abort();if(opts.signal){if(opts.signal.aborted)ctl.abort();else opts.signal.addEventListener('abort',onAbort,{once:true})}let timer=setTimeout(()=>ctl.abort(),firstMs),text='',alive=false;
- // 收到第一段内容（思考或正文）后，把“等第一个字”的短超时换成整段回复的长超时。
- const touch=()=>{if(alive)return;alive=true;clearTimeout(timer);timer=setTimeout(()=>ctl.abort(),totalMs)};
+ const firstMs=opts.firstTimeoutMs??FIRST,idleMs=opts.idleTimeoutMs??0,totalMs=opts.totalTimeoutMs??TOTAL;
+ const ctl=new AbortController(),onAbort=()=>ctl.abort();if(opts.signal){if(opts.signal.aborted)ctl.abort();else opts.signal.addEventListener('abort',onAbort,{once:true})}
+ let timer=setTimeout(()=>ctl.abort(),firstMs),idleTimer:ReturnType<typeof setTimeout>|null=null,text='',alive=false;
+ // 收到第一段内容（思考或正文）后，把“等第一个字”的短超时换成整段回复的总超时，并按片刷新空闲看门狗（若配置了 idleTimeoutMs）。
+ const touch=()=>{
+  if(!alive){
+   alive=true;
+   clearTimeout(timer);
+   timer=setTimeout(()=>ctl.abort(),totalMs);
+  }
+  if(idleMs>0){
+   if(idleTimer)clearTimeout(idleTimer);
+   idleTimer=setTimeout(()=>ctl.abort(),idleMs);
+  }
+ };
  const emit=(chunk:string)=>{
   if(!chunk)return;
   touch();
@@ -348,6 +359,7 @@ async function runProviderStream(
   return text;
  }finally{
   clearTimeout(timer);
+  if(idleTimer)clearTimeout(idleTimer);
   opts.signal?.removeEventListener('abort',onAbort);
  }
 }
@@ -741,6 +753,7 @@ export async function extractJdFromImages(images:string[],geminiProxy=true,allow
 export async function jdResearchModelStream(opts:{
  strategy:'deepseek-first'|'gemini-then-deepseek';
  includeHydrogen?:boolean;
+ thinkingLevel?:ThinkingLevel;
  systemPrompt:string;
  userInput:string;
  maxTokens?:number;
@@ -781,17 +794,18 @@ export async function jdResearchModelStream(opts:{
     [{role:'user',content:opts.userInput}],
     0.3,
     false,
-    opts.maxTokens??16384,
+    opts.maxTokens??12288,
     chunk=>{wrote=true;opts.onTextDelta?.(chunk)},
     {
      thinking:true,
-     thinkingLevel:cand.provider==='deepseek'?'high':'auto',
+     thinkingLevel:cand.provider==='deepseek'?(opts.thinkingLevel??'low'):'auto',
      onThink:chunk=>{wrote=true;thoughtBuf+=chunk;opts.onThoughtDelta?.(chunk)},
      geminiProxy:opts.geminiProxy??true,
      signal:opts.signal,
      siteManaged:true,
-     firstTimeoutMs:cand.provider==='gemini'?16_000:35_000,
-     totalTimeoutMs:160_000,
+     firstTimeoutMs:cand.provider==='gemini'?12_000:28_000,
+     idleTimeoutMs:45_000,
+     totalTimeoutMs:210_000,
     },
    );
    if(opts.validate&&!opts.validate(text)){
