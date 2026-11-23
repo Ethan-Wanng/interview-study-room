@@ -17,9 +17,9 @@ export const ANTIGRAVITY_AGENT_ID = 'antigravity-preview-09-2026';
 // Strictly excludes `gemini-2.5-flash`.
 export const ANTIGRAVITY_MODEL_CHAIN: (string | undefined)[] = [
  undefined,
- 'gemini-3.5-flash-lite',
  'gemini-3.8-flash',
  'gemini-3.6-flash',
+ 'gemini-3.5-flash-lite',
 ];
 
 export function antigravityModelLabel(agentModel?: string): string {
@@ -31,9 +31,50 @@ export class AntigravityError extends Error {
   message: string,
   public status = 502,
   public code = 'agent_error',
+  public rawDetail?: string,
  ) {
   super(message);
  }
+}
+
+const RATE_LIMIT_TEXT_PATTERNS = [
+ 'resource_exhausted',
+ 'rate_limited',
+ 'rate limit',
+ 'ratelimit',
+ 'too many requests',
+ 'quota',
+ '429',
+ '限流',
+ '额度已满',
+ 'rpm',
+ 'tpm',
+ 'rpd',
+];
+
+export function isAntigravityRateLimitText(msg?: string): boolean {
+ const low = (msg || '').toLowerCase();
+ if (!low) return false;
+ return RATE_LIMIT_TEXT_PATTERNS.some(p => low.includes(p));
+}
+
+export function isAntigravityRateLimitError(err: unknown): boolean {
+ if (err instanceof AntigravityError) {
+  return (
+   err.status === 429 ||
+   err.code === 'rate_limited' ||
+   isAntigravityRateLimitText(err.message) ||
+   isAntigravityRateLimitText(err.rawDetail)
+  );
+ }
+ if (err instanceof Error) {
+  return isAntigravityRateLimitText(err.message);
+ }
+ return false;
+}
+
+export async function markAntigravityAgentRateLimited(detail = ''): Promise<void> {
+ await markSiteGemini429(ANTIGRAVITY_AGENT_ID, detail);
 }
 
 function resolveKeyAndGateway(geminiProxy: boolean): {
@@ -67,14 +108,14 @@ async function callInteractionsApi(
   if (init.signal.aborted) ctl.abort();
   else init.signal.addEventListener('abort', onAbort, { once: true });
  }
- const timer = setTimeout(() => ctl.abort(), init.timeoutMs ?? 25_000);
+ const timer = setTimeout(() => ctl.abort(), init.timeoutMs ?? 30_000);
 
  try {
   if (useWorkerTunnel) {
    try {
     const { res } = await fetchGeminiViaScheduledProxy(
      pathWithQuery,
-     { method: init.method, headers, body: init.body, signal: ctl.signal, connectTimeoutMs: 7000 },
+     { method: init.method, headers, body: init.body, signal: ctl.signal, connectTimeoutMs: 8500 },
      envMap,
     );
     return res;
@@ -173,6 +214,7 @@ export async function startAntigravityInteraction(opts: {
  previousInteractionId?: string;
  agentModel?: string;
  maxTotalTokens?: number;
+ deferAgentCooldown?: boolean;
  geminiProxy?: boolean;
  signal?: AbortSignal;
 }): Promise<AntigravityStartResult> {
@@ -186,6 +228,7 @@ export async function startAntigravityInteraction(opts: {
     : '当前请求繁忙，请稍候再试。',
    429,
    'rate_limited',
+   'local_d1_limit:' + quota.reason,
   );
  }
 
@@ -207,14 +250,19 @@ export async function startAntigravityInteraction(opts: {
    body: JSON.stringify(payload),
    geminiProxy: opts.geminiProxy !== false,
    signal: opts.signal,
-   timeoutMs: 25_000,
+   timeoutMs: 30_000,
   });
 
   if (res.status === 429) {
    const errTxt = (await res.text()).slice(0, 1024);
    await refundSiteGeminiLimit(ANTIGRAVITY_AGENT_ID, quota.reservedTokens);
-   await markSiteGemini429(opts.agentModel || ANTIGRAVITY_AGENT_ID, errTxt);
-   throw new AntigravityError('深度评审服务触发限流，请稍后再试。', 429, 'rate_limited');
+   if (opts.agentModel) {
+    await markSiteGemini429(opts.agentModel, errTxt);
+   }
+   if (!opts.deferAgentCooldown) {
+    await markSiteGemini429(ANTIGRAVITY_AGENT_ID, errTxt);
+   }
+   throw new AntigravityError('Antigravity Agent 触发限流（HTTP 429）。', 429, 'rate_limited', errTxt);
   }
   if (!res.ok) {
    const errTxt = (await res.text()).slice(0, 500);
@@ -265,6 +313,7 @@ export type AntigravityPollResult = {
  thoughts: string;
  usage?: AntigravityUsage;
  error?: string;
+ rateLimited?: boolean;
 };
 
 export async function pollAntigravityInteraction(opts: {
@@ -276,8 +325,12 @@ export async function pollAntigravityInteraction(opts: {
   method: 'GET',
   geminiProxy: opts.geminiProxy !== false,
   signal: opts.signal,
-  timeoutMs: 15_000,
+  timeoutMs: 20_000,
  });
+ if (res.status === 429) {
+  const errTxt = (await res.text()).slice(0, 1024);
+  throw new AntigravityError('Agent 轮询触发限流（HTTP 429）', 429, 'rate_limited', errTxt);
+ }
  if (!res.ok) {
   throw new AntigravityError(`查询评审进度失败（HTTP ${res.status}）`, 502, 'poll_error');
  }
@@ -287,7 +340,7 @@ export async function pollAntigravityInteraction(opts: {
   steps?: RawStep[];
   outputs?: { text?: string }[];
   output_text?: string;
-  error?: { message?: string };
+  error?: { message?: string; code?: string };
   usage?: {
    total_tokens?: number;
    total_input_tokens?: number;
@@ -327,11 +380,20 @@ export async function pollAntigravityInteraction(opts: {
  const status: AntigravityPollResult['status'] =
   rawStatus === 'completed'
    ? 'completed'
-   : rawStatus === 'failed'
-    ? 'failed'
-    : rawStatus === 'cancelled'
-     ? 'cancelled'
-     : 'in_progress';
+   : rawStatus === 'incomplete'
+    ? finalOutputText
+      ? 'completed'
+      : 'failed'
+    : rawStatus === 'failed'
+     ? 'failed'
+     : rawStatus === 'cancelled'
+      ? 'cancelled'
+      : 'in_progress';
+
+ const errDetail =
+  rawStatus === 'incomplete' && !finalOutputText
+   ? j.error?.message || '达到单步 Token 上限（incomplete）'
+   : [j.error?.code, j.error?.message].filter(Boolean).join(': ');
 
  const usage: AntigravityUsage | undefined = j.usage
   ? {
@@ -353,7 +415,8 @@ export async function pollAntigravityInteraction(opts: {
   text: finalOutputText,
   thoughts: thoughtParts.join('\n\n'),
   usage,
-  error: j.error?.message,
+  error: errDetail || undefined,
+  rateLimited: status === 'failed' && isAntigravityRateLimitText(errDetail),
  };
 }
 
@@ -367,6 +430,7 @@ export type AntigravitySliceResult = {
  deltaThoughts: string;
  usage?: AntigravityUsage;
  error?: string;
+ rateLimited?: boolean;
 };
 
 // Watches a background Antigravity interaction (`background: true`) for up to `maxSliceMs`
@@ -415,6 +479,7 @@ export async function streamAntigravitySlice(opts: {
  let usage: AntigravityUsage | undefined;
  let finalStatus: AntigravitySliceResult['status'] = 'in_progress';
  let finalError = '';
+ let rateLimited = false;
  let needPollFallback = false;
 
  const parseUsageObj = (u: Record<string, unknown> | undefined): AntigravityUsage | undefined => {
@@ -466,7 +531,7 @@ export async function streamAntigravitySlice(opts: {
    try {
     const out = await fetchGeminiViaScheduledProxy(
      pathWithQuery,
-     { method: 'GET', headers, signal: ctl.signal, connectTimeoutMs: 7500 },
+     { method: 'GET', headers, signal: ctl.signal, connectTimeoutMs: 8500 },
      envMap,
     );
     res = out.res;
@@ -537,7 +602,13 @@ export async function streamAntigravitySlice(opts: {
 
       if (evType === 'error' || (ev.error && !ev.interaction)) {
        const errObj = ev.error as { message?: string; code?: string } | undefined;
-       finalError = errObj?.message || errObj?.code || 'stream_error';
+       const errText = [errObj?.code, errObj?.message].filter(Boolean).join(': ') || 'stream_error';
+       finalError = errText;
+       if (isAntigravityRateLimitText(errText)) {
+        rateLimited = true;
+        finalStatus = 'failed';
+        break;
+       }
        needPollFallback = true;
        break;
       }
@@ -552,10 +623,24 @@ export async function streamAntigravitySlice(opts: {
         extractStepsFromInteraction(inter);
         break;
        }
+       if (inter.status === 'incomplete') {
+        extractStepsFromInteraction(inter);
+        if (fullText || deltaText) {
+         finalStatus = 'completed';
+        } else {
+         finalStatus = 'failed';
+         finalError = '达到单步 Token 上限（incomplete）';
+        }
+        break;
+       }
        if (evType === 'interaction.failed' || inter.status === 'failed' || inter.status === 'cancelled') {
         finalStatus = inter.status === 'cancelled' ? 'cancelled' : 'failed';
         const errObj = (inter.error || ev.error) as { message?: string; code?: string } | undefined;
-        finalError = errObj?.message || errObj?.code || finalStatus;
+        const errText = [errObj?.code, errObj?.message].filter(Boolean).join(': ') || finalStatus;
+        finalError = errText;
+        if (isAntigravityRateLimitText(errText)) {
+         rateLimited = true;
+        }
         break;
        }
        continue;
@@ -612,11 +697,21 @@ export async function streamAntigravitySlice(opts: {
     } catch {}
    }
   } else if (res && !sliceTimedOut) {
-   // GET ?stream=true not SSE or non-200 -> fall back to JSON polling
-   try {
-    await res.body?.cancel();
-   } catch {}
-   needPollFallback = true;
+   if (res.status === 429) {
+    let errTxt = '';
+    try {
+     errTxt = (await res.text()).slice(0, 1024);
+    } catch {}
+    rateLimited = true;
+    finalStatus = 'failed';
+    finalError = errTxt || 'HTTP 429 rate_limited';
+   } else {
+    // GET ?stream=true not SSE or non-200 -> fall back to JSON polling
+    try {
+     await res.body?.cancel();
+    } catch {}
+    needPollFallback = true;
+   }
   }
  } catch (e) {
   if (e instanceof AntigravityError && e.code === 'aborted') throw e;
@@ -645,10 +740,17 @@ export async function streamAntigravitySlice(opts: {
       if (polled.thoughts) fullThoughts = polled.thoughts;
       if (polled.usage) usage = polled.usage;
       if (polled.error) finalError = polled.error;
+      if (polled.rateLimited) rateLimited = true;
       break;
      }
-    } catch {
+    } catch (pollErr) {
      if (opts.signal?.aborted) break;
+     if (isAntigravityRateLimitError(pollErr)) {
+      rateLimited = true;
+      finalStatus = 'failed';
+      finalError = pollErr instanceof Error ? pollErr.message : 'rate_limited';
+      break;
+     }
     }
     opts.onKeepAlive?.();
     const waitMs = Math.min(2800, Math.max(400, deadlineAt - Date.now() - 500));
@@ -674,7 +776,13 @@ export async function streamAntigravitySlice(opts: {
     if (polled.thoughts) fullThoughts = polled.thoughts;
     if (polled.usage) usage = polled.usage;
     if (polled.error) finalError = polled.error;
-   } catch {
+    if (polled.rateLimited) rateLimited = true;
+   } catch (pollErr) {
+    if (isAntigravityRateLimitError(pollErr)) {
+     rateLimited = true;
+     finalStatus = 'failed';
+     finalError = pollErr instanceof Error ? pollErr.message : 'rate_limited';
+    }
     // Still treat as in_progress if transient poll failed so caller resumes cleanly
    }
   }
@@ -711,11 +819,14 @@ export async function streamAntigravitySlice(opts: {
   deltaThoughts,
   usage,
   error: finalError || undefined,
+  rateLimited: rateLimited || isAntigravityRateLimitText(finalError),
  };
 }
 
 // Runs a background Antigravity Agent interaction to completion within a single request
-// (with model-chain fallback across supported Antigravity underlying models; never uses DeepSeek).
+// with patient multi-round retries on transient non-rate-limit errors, throwing a `429 / rate_limited`
+// `AntigravityError` immediately when all Antigravity underlying models hit rate limiting so callers
+// can safely fall back to DeepSeek.
 export async function runAntigravityBackgroundToCompletion(opts: {
  systemInstruction: string;
  input: string;
@@ -724,48 +835,90 @@ export async function runAntigravityBackgroundToCompletion(opts: {
  signal?: AbortSignal;
  validate?: (text: string) => boolean;
 }): Promise<{ text: string; thoughts: string; modelLabel: string; usage?: AntigravityUsage }> {
+ const sleep = (ms: number) =>
+  new Promise<void>(resolve => {
+   const t = setTimeout(resolve, ms);
+   opts.signal?.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true });
+  });
+
  let lastErr: unknown;
- for (const agentModel of ANTIGRAVITY_MODEL_CHAIN) {
-  if (opts.signal?.aborted) throw new AntigravityError('已取消。', 499, 'aborted');
-  const label = antigravityModelLabel(agentModel);
-  try {
-   const started = await startAntigravityInteraction({
-    systemInstruction: opts.systemInstruction,
-    input: opts.input,
-    agentModel,
-    maxTotalTokens: opts.maxTotalTokens ?? 16_000,
-    geminiProxy: opts.geminiProxy,
-    signal: opts.signal,
-   });
-   const deadline = Date.now() + 95_000;
-   let polled = await pollAntigravityInteraction({
-    interactionId: started.id,
-    geminiProxy: opts.geminiProxy,
-    signal: opts.signal,
-   });
-   while (polled.status === 'in_progress' && Date.now() < deadline && !opts.signal?.aborted) {
-    await new Promise<void>(resolve => {
-     const t = setTimeout(resolve, 2500);
-     opts.signal?.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true });
+ let lastRateLimitErr: AntigravityError | undefined;
+ let lastRoundRateLimits = 0;
+ let lastRoundTried = 0;
+
+ for (let round = 0; round < 2; round++) {
+  let roundRateLimits = 0;
+  let roundTried = 0;
+  for (const agentModel of ANTIGRAVITY_MODEL_CHAIN) {
+   if (opts.signal?.aborted) throw new AntigravityError('已取消。', 499, 'aborted');
+   roundTried++;
+   const label = antigravityModelLabel(agentModel);
+   try {
+    const started = await startAntigravityInteraction({
+     systemInstruction: opts.systemInstruction,
+     input: opts.input,
+     agentModel,
+     maxTotalTokens: opts.maxTotalTokens ?? 24_000,
+     deferAgentCooldown: true,
+     geminiProxy: opts.geminiProxy,
+     signal: opts.signal,
     });
-    if (opts.signal?.aborted) break;
-    polled = await pollAntigravityInteraction({
+    const deadline = Date.now() + 110_000;
+    let polled = await pollAntigravityInteraction({
      interactionId: started.id,
      geminiProxy: opts.geminiProxy,
      signal: opts.signal,
     });
-   }
-   if (polled.status === 'completed' && polled.text.trim()) {
-    if (!opts.validate || opts.validate(polled.text)) {
-     return { text: polled.text, thoughts: polled.thoughts, modelLabel: label, usage: polled.usage };
+    while (polled.status === 'in_progress' && Date.now() < deadline && !opts.signal?.aborted) {
+     await sleep(2500);
+     if (opts.signal?.aborted) break;
+     polled = await pollAntigravityInteraction({
+      interactionId: started.id,
+      geminiProxy: opts.geminiProxy,
+      signal: opts.signal,
+     });
     }
-    throw new AntigravityError(`${label} 输出格式校验失败`, 502, 'parse_error');
+    if (polled.status === 'completed' && polled.text.trim()) {
+     if (!opts.validate || opts.validate(polled.text)) {
+      return { text: polled.text, thoughts: polled.thoughts, modelLabel: label, usage: polled.usage };
+     }
+     throw new AntigravityError(`${label} 输出格式校验失败`, 502, 'parse_error');
+    }
+    if (polled.rateLimited || isAntigravityRateLimitText(polled.error)) {
+     throw new AntigravityError(polled.error || `${label} 触发限流`, 429, 'rate_limited', polled.error);
+    }
+    throw new AntigravityError(polled.error || `${label} ${polled.status}`, 502, 'agent_failed');
+   } catch (e) {
+    lastErr = e;
+    if (opts.signal?.aborted) throw e;
+    if (isAntigravityRateLimitError(e)) {
+     roundRateLimits++;
+     lastRateLimitErr =
+      e instanceof AntigravityError
+       ? e
+       : new AntigravityError(e instanceof Error ? e.message : 'Agent 触发限流', 429, 'rate_limited');
+     if (e instanceof AntigravityError && e.rawDetail?.startsWith('local_d1_limit')) {
+      throw lastRateLimitErr;
+     }
+     continue;
+    }
+    await sleep(round === 0 ? 1500 : 3500);
    }
-   throw new AntigravityError(polled.error || `${label} ${polled.status}`, 502, 'agent_failed');
-  } catch (e) {
-   lastErr = e;
-   if (opts.signal?.aborted) throw e;
   }
+  lastRoundRateLimits = roundRateLimits;
+  lastRoundTried = roundTried;
+  if (round === 0) {
+   if (roundTried > 0 && roundRateLimits === roundTried && lastRateLimitErr) {
+    await markAntigravityAgentRateLimited(lastRateLimitErr.rawDetail || lastRateLimitErr.message);
+    throw lastRateLimitErr;
+   }
+   await sleep(2500);
+  }
+ }
+
+ if (lastRoundTried > 0 && lastRoundRateLimits === lastRoundTried && lastRateLimitErr) {
+  await markAntigravityAgentRateLimited(lastRateLimitErr.rawDetail || lastRateLimitErr.message);
+  throw lastRateLimitErr;
  }
  throw lastErr instanceof Error ? lastErr : new AntigravityError('Antigravity Agent 重出失败，请重试。', 502, 'agent_failed');
 }

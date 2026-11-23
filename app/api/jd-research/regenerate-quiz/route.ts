@@ -1,7 +1,8 @@
 import { AuthError, assertSameOrigin, rateLimit, sessionUser } from '@/lib/site-auth';
 import { getAiInterviewRecord, saveAiInterviewRecord } from '@/lib/ai-interview-records';
 import { parseSingleStudyQuiz } from '@/lib/jd-research-server';
-import { runAntigravityBackgroundToCompletion, type AntigravityUsage } from '@/lib/antigravity-agent';
+import { isAntigravityRateLimitError, runAntigravityBackgroundToCompletion, type AntigravityUsage } from '@/lib/antigravity-agent';
+import { runDeepSeekJdFallbackStream } from '@/lib/gemini';
 import type { JdInputKind, JdResearchReport } from '@/lib/jd-research-types';
 
 export const dynamic = 'force-dynamic';
@@ -106,17 +107,41 @@ export async function POST(req: Request) {
    .filter(Boolean)
    .join('\n\n');
 
-  const out = await runAntigravityBackgroundToCompletion({
-   systemInstruction: REGEN_SYSTEM,
-   input: userInput,
-   maxTotalTokens: 12_000,
-   geminiProxy,
-   signal: req.signal,
-   validate: txt => {
-    const parsed = parseSingleStudyQuiz(txt, stepIdx, qIdx, oldQuiz.id, oldQuiz.dimension);
-    return Boolean(parsed && (parsed.type ?? 'single') === targetType);
-   },
-  });
+  const validateQuiz = (txt: string) => {
+   const parsed = parseSingleStudyQuiz(txt, stepIdx, qIdx, oldQuiz.id, oldQuiz.dimension);
+   return Boolean(parsed && (parsed.type ?? 'single') === targetType);
+  };
+
+  let out: { text: string; thoughts: string; modelLabel: string; usage?: AntigravityUsage };
+  try {
+   out = await runAntigravityBackgroundToCompletion({
+    systemInstruction: REGEN_SYSTEM,
+    input: userInput,
+    maxTotalTokens: 24_000,
+    geminiProxy,
+    signal: req.signal,
+    validate: validateQuiz,
+   });
+  } catch (agentErr) {
+   // Strictly fallback to DeepSeek ONLY when Antigravity Agent hits rate limiting (429 / quota / resource_exhausted).
+   if (req.signal?.aborted || !isAntigravityRateLimitError(agentErr)) {
+    throw agentErr;
+   }
+   const dsOut = await runDeepSeekJdFallbackStream({
+    systemPrompt: REGEN_SYSTEM,
+    userInput,
+    maxTokens: 6144,
+    thinkingLevel: 'low',
+    signal: req.signal,
+    validate: validateQuiz,
+   });
+   out = {
+    text: dsOut.text,
+    thoughts: dsOut.thoughts,
+    modelLabel: dsOut.model,
+    usage: dsOut.usage,
+   };
+  }
 
   const nextQuiz = parseSingleStudyQuiz(out.text, stepIdx, qIdx, oldQuiz.id, oldQuiz.dimension);
   if (!nextQuiz) {

@@ -963,6 +963,8 @@ export default function JdResearchClient({
    setConnState(prev => (prev === 'streaming' ? prev : 'thinking'));
   };
 
+  type StepError = Error & { status?: number; code?: string };
+
   const postJsonStep = async <T extends Record<string, unknown>>(payload: Record<string, unknown>): Promise<T> => {
    const r = await fetch('/api/jd-research', {
     method: 'POST',
@@ -975,10 +977,9 @@ export default function JdResearchClient({
     data = (await r.json()) as Record<string, unknown>;
    } catch {}
    if (!r.ok) {
-    const err = new Error((typeof data.error === 'string' && data.error) || L('请求失败，请重试', 'Request failed')) as Error & {
-     status?: number;
-    };
+    const err = new Error((typeof data.error === 'string' && data.error) || L('请求失败，请重试', 'Request failed')) as StepError;
     err.status = r.status;
+    if (typeof data.code === 'string' && data.code) err.code = data.code;
     throw err;
    }
    return data as T;
@@ -1008,27 +1009,37 @@ export default function JdResearchClient({
    usage?: AntigravityUsage;
    model?: string;
    reason?: string;
+   rateLimited?: boolean;
    error?: string;
   };
 
   const watchNdjsonSlice = async (
    payload: Record<string, unknown>,
    onEv: (ev: WatchEv) => void,
-  ): Promise<{ terminal?: WatchEv; cont?: { interactionId: string; lastEventId: string }; retryReason?: string }> => {
+   actionName: 'watch' | 'deepseek_step' = 'watch',
+  ): Promise<{
+   terminal?: WatchEv;
+   cont?: { interactionId: string; lastEventId: string };
+   retryReason?: string;
+   retryRateLimited?: boolean;
+  }> => {
    const r = await fetch('/api/jd-research', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ action: 'watch', ...payload, geminiProxy }),
+    body: JSON.stringify({ ...payload, action: actionName, geminiProxy }),
     signal: ctl.signal,
    });
    if (!r.ok || !r.body) {
     let msg = L('监听进度失败', 'Watch failed');
+    let code: string | undefined;
     try {
-     const j = (await r.json()) as { error?: string };
+     const j = (await r.json()) as { error?: string; code?: string };
      if (j.error) msg = j.error;
+     if (j.code) code = j.code;
     } catch {}
-    const err = new Error(msg) as Error & { status?: number };
+    const err = new Error(msg) as StepError;
     err.status = r.status;
+    if (code) err.code = code;
     throw err;
    }
    const reader = r.body.getReader();
@@ -1037,6 +1048,7 @@ export default function JdResearchClient({
    let cont: { interactionId: string; lastEventId: string } | undefined;
    let terminal: WatchEv | undefined;
    let retryReason: string | undefined;
+   let retryRateLimited = false;
 
    for (;;) {
     const { done, value } = await reader.read();
@@ -1063,6 +1075,7 @@ export default function JdResearchClient({
      }
      if (ev.type === 'retry_step') {
       retryReason = ev.reason || L('步骤输出异常，自动重试', 'Step retry requested');
+      retryRateLimited = Boolean(ev.rateLimited);
       continue;
      }
      if (ev.type === 'stage1' || ev.type === 'phase_done' || ev.type === 'questions_done') {
@@ -1071,10 +1084,10 @@ export default function JdResearchClient({
      onEv(ev);
     }
    }
-   return { terminal, cont, retryReason };
+   return { terminal, cont, retryReason, retryRateLimited };
   };
 
-  const runAntigravityStep = async (optsStep: {
+  type AntigravityStepConfig = {
    label: string;
    startStep: () => Promise<Record<string, unknown>>;
    startNewAttempt: (attempt: number) => Promise<Record<string, unknown>>;
@@ -1082,25 +1095,136 @@ export default function JdResearchClient({
    onTerminal: (ev: WatchEv) => void;
    onCached: (res: Record<string, unknown>) => void;
    onDelta?: (ev: WatchEv, sliceChars: number) => void;
-  }): Promise<boolean> => {
+  };
+
+  const makeWatchEventHandler =
+   (optsStep: AntigravityStepConfig, onChars: (n: number) => void) =>
+   (ev: WatchEv) => {
+    if (ev.type === 'connected' || ev.type === 'step' || ev.type === 'ping') {
+     setPingBeats(b => b + 1);
+     if (ev.stepType === 'thought' || ev.stepType === 'thought_signature' || ev.step === 'thinking') {
+      setConnState(prev => (prev === 'streaming' ? prev : 'thinking'));
+     }
+     return;
+    }
+    if (ev.type === 'reset') {
+     accTail = '';
+     setStreamTail('');
+     onChars(0);
+     setStreamChars(completedCharsBase);
+     return;
+    }
+    if (ev.type === 'thought' && typeof ev.text === 'string') {
+     appendThought(ev.text);
+     return;
+    }
+    if (ev.type === 'delta') {
+     setConnState('streaming');
+     let latestChars = 0;
+     if (typeof ev.chars === 'number') {
+      latestChars = ev.chars;
+      onChars(ev.chars);
+      setStreamChars(completedCharsBase + ev.chars);
+     }
+     if (typeof ev.text === 'string' && ev.text) {
+      accTail = (accTail + ev.text).replace(/\s+/g, ' ').slice(-180);
+      setStreamTail(accTail);
+     }
+     optsStep.onDelta?.(ev, latestChars);
+    }
+   };
+
+  const runDeepSeekFallbackStep = async (
+   optsStep: AntigravityStepConfig,
+   watchMetaObj: Record<string, unknown>,
+   markAgentRateLimited: boolean,
+  ): Promise<boolean> => {
+   appendThought(
+    L(
+     `\n[⚡ Antigravity Agent 触发限流，切换 DeepSeek 接力完成「${optsStep.label}」…]\n`,
+     `\n[⚡ Antigravity Agent rate-limited, falling back to DeepSeek for ${optsStep.label}…]\n`,
+    ),
+   );
+   setStreamModel('DeepSeek V4.1 Flash（Agent限流兜底）');
+
+   for (let dsAtt = 0; dsAtt < 3 && !ctl.signal.aborted; dsAtt++) {
+    let stepStartedSliceChars = 0;
+    try {
+     setConnState(prev => (prev === 'streaming' || prev === 'thinking' ? prev : 'thinking'));
+     const out = await watchNdjsonSlice(
+      {
+       ...watchMetaObj,
+       recordId: curRecordId,
+       markAgentRateLimited: markAgentRateLimited && dsAtt === 0,
+      },
+      makeWatchEventHandler(optsStep, n => {
+       stepStartedSliceChars = n;
+      }),
+      'deepseek_step',
+     );
+     if (out.terminal) {
+      completedCharsBase += stepStartedSliceChars;
+      optsStep.onTerminal(out.terminal);
+      return true;
+     }
+     if (dsAtt < 2) {
+      appendThought(
+       `\n[↺ DeepSeek 接力「${optsStep.label}」第 ${dsAtt + 1} 次重试（${out.retryReason || '输出不完整'}）…]\n`,
+      );
+      await sleep(2500 * (dsAtt + 1));
+     }
+    } catch (e) {
+     if (ctl.signal.aborted) throw e;
+     const err = e as StepError;
+     if (err.status === 401 || err.status === 403 || err.code === 'daily_quota_exceeded') throw e;
+     if (dsAtt < 2) {
+      appendThought(`\n[↺ DeepSeek 接力「${optsStep.label}」第 ${dsAtt + 1} 次重连…]\n`);
+      await sleep(2500 * (dsAtt + 1));
+     } else {
+      throw e;
+     }
+    }
+   }
+   return false;
+  };
+
+  const runAntigravityStep = async (optsStep: AntigravityStepConfig): Promise<boolean> => {
    let attempt = 0;
-   const maxAttempts = 4;
+   const maxAttempts = 8;
+   let watchRateLimitHits = 0;
+   let lastAttemptWasRateLimit = false;
+   let rateBurst429 = 0;
 
    while (attempt < maxAttempts && !ctl.signal.aborted) {
     let startRes: Record<string, unknown>;
     try {
      startRes = attempt === 0 ? await optsStep.startStep() : await optsStep.startNewAttempt(attempt);
     } catch (e) {
-     const st = (e as Error & { status?: number }).status;
-     if (ctl.signal.aborted || st === 400 || st === 401 || st === 403 || st === 429) throw e;
+     const err = e as StepError;
+     const st = err.status;
+     if (ctl.signal.aborted || st === 400 || st === 401 || st === 403 || err.code === 'daily_quota_exceeded') {
+      throw e;
+     }
+     if (err.code === 'rate_limited') {
+      return await runDeepSeekFallbackStep(optsStep, optsStep.watchMeta({}), false);
+     }
+     if (st === 429 && rateBurst429 < 6) {
+      rateBurst429++;
+      appendThought(`\n[↺ ${optsStep.label} 请求频率受限，等待 5 秒后重试…]\n`);
+      await sleep(5000);
+      continue;
+     }
      attempt++;
      if (attempt >= maxAttempts) throw e;
-     appendThought(`\n[↺ ${optsStep.label} 第 ${attempt} 次重试连接…]\n`);
-     await sleep(1600 * attempt);
+     appendThought(`\n[↺ ${optsStep.label} 第 ${attempt} 次耐心重试 Antigravity Agent…]\n`);
+     await sleep(Math.min(15_000, 2500 * attempt));
      continue;
     }
 
     if (typeof startRes.model === 'string' && startRes.model) setStreamModel(startRes.model);
+    if (startRes.status === 'rate_limited_fallback') {
+     return await runDeepSeekFallbackStep(optsStep, optsStep.watchMeta(startRes), false);
+    }
     if (startRes.status === 'done' || startRes.status === 'stage1_ready' || startRes.status === 'step_cached') {
      optsStep.onCached(startRes);
      return true;
@@ -1112,10 +1236,9 @@ export default function JdResearchClient({
     let stepStartedSliceChars = 0;
     let sliceIdx = 0;
     let netErrors = 0;
-    let shouldRestartNewAttempt = false;
     let lastFailureReason = '';
 
-    while (sliceIdx < 16 && !ctl.signal.aborted) {
+    while (sliceIdx < 30 && !ctl.signal.aborted) {
      sliceIdx++;
      try {
       setConnState(prev => (prev === 'streaming' || prev === 'thinking' ? prev : 'agent_ready'));
@@ -1127,38 +1250,10 @@ export default function JdResearchClient({
         lastEventId,
         model: typeof startRes.model === 'string' ? startRes.model : undefined,
        },
-       ev => {
-        if (ev.type === 'connected' || ev.type === 'step' || ev.type === 'ping') {
-         setPingBeats(b => b + 1);
-         if (ev.stepType === 'thought' || ev.stepType === 'thought_signature' || ev.step === 'thinking') {
-          setConnState(prev => (prev === 'streaming' ? prev : 'thinking'));
-         }
-         return;
-        }
-        if (ev.type === 'reset') {
-         accTail = '';
-         setStreamTail('');
-         stepStartedSliceChars = 0;
-         setStreamChars(completedCharsBase);
-         return;
-        }
-        if (ev.type === 'thought' && typeof ev.text === 'string') {
-         appendThought(ev.text);
-         return;
-        }
-        if (ev.type === 'delta') {
-         setConnState('streaming');
-         if (typeof ev.chars === 'number') {
-          stepStartedSliceChars = ev.chars;
-          setStreamChars(completedCharsBase + ev.chars);
-         }
-         if (typeof ev.text === 'string' && ev.text) {
-          accTail = (accTail + ev.text).replace(/\s+/g, ' ').slice(-180);
-          setStreamTail(accTail);
-         }
-         optsStep.onDelta?.(ev, stepStartedSliceChars);
-        }
-       },
+       makeWatchEventHandler(optsStep, n => {
+        stepStartedSliceChars = n;
+       }),
+       'watch',
       );
 
       netErrors = 0;
@@ -1175,8 +1270,14 @@ export default function JdResearchClient({
        continue;
       }
       if (out.retryReason) {
-       shouldRestartNewAttempt = true;
        lastFailureReason = out.retryReason;
+       lastAttemptWasRateLimit = Boolean(out.retryRateLimited);
+       if (out.retryRateLimited) {
+        watchRateLimitHits++;
+        if (watchRateLimitHits >= 4) {
+         return await runDeepSeekFallbackStep(optsStep, baseWatch, true);
+        }
+       }
        break;
       }
       // Stream EOF without terminal frame: resume the same interactionId + lastEventId
@@ -1184,16 +1285,33 @@ export default function JdResearchClient({
       await sleep(1000);
      } catch (e) {
       if (ctl.signal.aborted) throw e;
-      const st = (e as Error & { status?: number }).status;
-      if (st === 401 || st === 403 || st === 429) throw e;
+      const err = e as StepError;
+      const st = err.status;
+      if (st === 401 || st === 403 || err.code === 'daily_quota_exceeded') throw e;
+      if (err.code === 'rate_limited') {
+       watchRateLimitHits++;
+       lastAttemptWasRateLimit = true;
+       if (watchRateLimitHits >= 4) {
+        return await runDeepSeekFallbackStep(optsStep, baseWatch, true);
+       }
+       lastFailureReason = err.message || 'Agent 限流';
+       break;
+      }
       netErrors++;
       setPingBeats(b => b + 1);
-      if (netErrors <= 3) {
+      if (st === 429) {
+       if (netErrors <= 6) {
+        await sleep(3500);
+        continue;
+       }
+       lastFailureReason = err.message || L('请求频率受限，稍候重试', 'Rate limit backoff');
+       break;
+      }
+      if (netErrors <= 6) {
        // Transient HTTP/Worker drop: resume the exact same background interaction & event_id
-       await sleep(1400 * netErrors);
+       await sleep(Math.min(10_000, 1500 * netErrors));
        continue;
       }
-      shouldRestartNewAttempt = true;
       lastFailureReason = (e as Error).message || L('连接波动', 'Connection unstable');
       break;
      }
@@ -1202,10 +1320,18 @@ export default function JdResearchClient({
     if (ctl.signal.aborted) return false;
     attempt++;
     if (attempt < maxAttempts) {
-     appendThought(
-      `\n[↺ ${optsStep.label} 切换 Antigravity 模型重试（${lastFailureReason || '超时重试'}）…]\n`,
-     );
-     await sleep(1800);
+     if (lastAttemptWasRateLimit) {
+      appendThought(
+       `\n[↺ ${optsStep.label} 切换下一个 Antigravity 模型试探（${lastFailureReason || '触发限流'}）…]\n`,
+      );
+      lastAttemptWasRateLimit = false;
+      await sleep(800);
+     } else {
+      appendThought(
+       `\n[↺ ${optsStep.label} 第 ${attempt}/${maxAttempts} 次耐心重连 Antigravity Agent（${lastFailureReason || '超时重试'}）…]\n`,
+      );
+      await sleep(Math.min(12_000, 2500 * attempt));
+     }
      continue;
     }
    }
@@ -1409,10 +1535,13 @@ export default function JdResearchClient({
 
    let anyStage2Succeeded = false;
 
-   for (let pi = 0; pi < totalPhases; pi++) {
-    if (ctl.signal.aborted) return;
+   const runStage2Phase = async (pi: number, isRetryPass: boolean): Promise<boolean> => {
     const step = s1Ready.roadmap[pi];
-    appendThought(`\n\n── 路径 ${pi + 1}/${totalPhases}：${step.phase} · ${step.title} ──\n`);
+    appendThought(
+     isRetryPass
+      ? `\n\n── 补救路径 ${pi + 1}/${totalPhases}：${step.phase} · ${step.title} ──\n`
+      : `\n\n── 路径 ${pi + 1}/${totalPhases}：${step.phase} · ${step.title} ──\n`,
+    );
     try {
      const okPhase = await runAntigravityStep({
       label: L(`路径 ${pi + 1}/${totalPhases}`, `Phase ${pi + 1}`),
@@ -1422,7 +1551,7 @@ export default function JdResearchClient({
         recordId: curRecordId,
         step: 'phase',
         phaseIndex: pi,
-        ...(opts?.bypassCache ? { bypassCache: true } : {}),
+        ...(opts?.bypassCache && !isRetryPass ? { bypassCache: true } : {}),
         attempt: 0,
        }),
       startNewAttempt: att =>
@@ -1458,69 +1587,107 @@ export default function JdResearchClient({
        syncStage2Progress('quizzes');
       },
      });
-     if (!okPhase) {
-      appendThought(L(`! 路径 ${pi + 1} 暂未完整生成，先继续后续步骤\n`, `! Phase ${pi + 1} skipped\n`));
+     if (!okPhase && !isRetryPass) {
+      appendThought(L(`! 路径 ${pi + 1} 暂未完整生成，先继续后续步骤并在末尾补救\n`, `! Phase ${pi + 1} deferred\n`));
      }
+     return okPhase;
     } catch (phaseErr) {
      if (ctl.signal.aborted) throw phaseErr;
-     const st = (phaseErr as Error & { status?: number }).status;
-     if (st === 401 || st === 403 || st === 429) throw phaseErr;
-     appendThought(L(`! 路径 ${pi + 1} 出现异常（已完成部分已保留），继续下一步…\n`, `! Phase ${pi + 1} failed, continuing…\n`));
+     const err = phaseErr as StepError;
+     if (err.status === 401 || err.status === 403 || err.code === 'daily_quota_exceeded') throw phaseErr;
+     appendThought(
+      L(
+       `! 路径 ${pi + 1} 出现波动（已完成部分已保留），继续下一步…\n`,
+       `! Phase ${pi + 1} transient error, continuing…\n`,
+      ),
+     );
+     return false;
     }
+   };
+
+   const runStage2Questions = async (isRetryPass: boolean): Promise<boolean> => {
+    syncStage2Progress('questions');
+    appendThought(isRetryPass ? `\n\n── 补救面试专题题库 ──\n` : `\n\n── 面试专题题库 ──\n`);
+    try {
+     return await runAntigravityStep({
+      label: L('面试专题题库', 'Interview Questions'),
+      startStep: () =>
+       postJsonStep({
+        action: 'start_step',
+        recordId: curRecordId,
+        step: 'questions',
+        ...(opts?.bypassCache && !isRetryPass ? { bypassCache: true } : {}),
+        attempt: 0,
+       }),
+      startNewAttempt: att =>
+       postJsonStep({
+        action: 'start_step',
+        recordId: curRecordId,
+        step: 'questions',
+        bypassCache: false,
+        attempt: att,
+       }),
+      watchMeta: () => ({ step: 'questions' }),
+      onCached: res => {
+       const titles = Array.isArray(res.qTitles) ? (res.qTitles as string[]) : [];
+       if (titles.length) liveQTitles = titles;
+       if (Number(res.questionCount || titles.length) > 0) anyStage2Succeeded = true;
+       appendThought(L(`✓ 已命中断点缓存（${titles.length || res.questionCount || 0} 题，0 Token）\n`, `✓ Checkpoint hit (0 tokens)\n`));
+       syncStage2Progress('questions');
+      },
+      onDelta: ev => {
+       if (Array.isArray(ev.qTitles) && ev.qTitles.length) {
+        liveQTitles = ev.qTitles;
+        syncStage2Progress('questions');
+       }
+      },
+      onTerminal: ev => {
+       const titles = Array.isArray(ev.qTitles) ? ev.qTitles : [];
+       if (titles.length) liveQTitles = titles;
+       if (Number(ev.questionCount || titles.length) > 0) anyStage2Succeeded = true;
+       appendThought(L(`✓ 面试题库完成并保存（${titles.length || ev.questionCount || 0} 题）\n`, `✓ Saved\n`));
+       syncStage2Progress('questions');
+      },
+     });
+    } catch (qErr) {
+     if (ctl.signal.aborted) throw qErr;
+     const err = qErr as StepError;
+     if (err.status === 401 || err.status === 403 || err.code === 'daily_quota_exceeded') throw qErr;
+     appendThought(L(`! 面试题库出现波动，将在汇总前自动补救…\n`, `! Questions transient error, retrying shortly…\n`));
+     return false;
+    }
+   };
+
+   const incompletePhases: number[] = [];
+   for (let pi = 0; pi < totalPhases; pi++) {
+    if (ctl.signal.aborted) return;
+    const okPhase = await runStage2Phase(pi, false);
+    if (!okPhase) incompletePhases.push(pi);
    }
 
    if (ctl.signal.aborted) return;
+   let okQs = await runStage2Questions(false);
 
-   // ---- Step 2B: Interview Question Bank ----
-   syncStage2Progress('questions');
-   appendThought(`\n\n── 面试专题题库 ──\n`);
-   try {
-    const okQs = await runAntigravityStep({
-     label: L('面试专题题库', 'Interview Questions'),
-     startStep: () =>
-      postJsonStep({
-       action: 'start_step',
-       recordId: curRecordId,
-       step: 'questions',
-       ...(opts?.bypassCache ? { bypassCache: true } : {}),
-       attempt: 0,
-      }),
-     startNewAttempt: att =>
-      postJsonStep({
-       action: 'start_step',
-       recordId: curRecordId,
-       step: 'questions',
-       bypassCache: false,
-       attempt: att,
-      }),
-     watchMeta: () => ({ step: 'questions' }),
-     onCached: res => {
-      const titles = Array.isArray(res.qTitles) ? (res.qTitles as string[]) : [];
-      if (titles.length) liveQTitles = titles;
-      if (Number(res.questionCount || titles.length) > 0) anyStage2Succeeded = true;
-      appendThought(L(`✓ 已命中断点缓存（${titles.length || res.questionCount || 0} 题，0 Token）\n`, `✓ Checkpoint hit (0 tokens)\n`));
-      syncStage2Progress('questions');
-     },
-     onDelta: ev => {
-      if (Array.isArray(ev.qTitles) && ev.qTitles.length) {
-       liveQTitles = ev.qTitles;
-       syncStage2Progress('questions');
-      }
-     },
-     onTerminal: ev => {
-      const titles = Array.isArray(ev.qTitles) ? ev.qTitles : [];
-      if (titles.length) liveQTitles = titles;
-      if (Number(ev.questionCount || titles.length) > 0) anyStage2Succeeded = true;
-      appendThought(L(`✓ 面试题库完成并保存（${titles.length || ev.questionCount || 0} 题）\n`, `✓ Saved\n`));
-      syncStage2Progress('questions');
-     },
-    });
-    if (!okQs && !anyStage2Succeeded) {
-     throw new Error(L('阶段二题库生成失败，请点击「一键重试」（阶段一已保存，不会重复耗 Token）。', 'Stage 2 failed — click Retry'));
+   if (!ctl.signal.aborted && (incompletePhases.length > 0 || !okQs)) {
+    appendThought(
+     L(
+      '\n\n── 对未完成步骤进行第二轮补救（已完成步骤自动跳过）──\n',
+      '\n\n── Recovering incomplete steps ──\n',
+     ),
+    );
+    for (const pi of incompletePhases) {
+     if (ctl.signal.aborted) return;
+     await sleep(1500);
+     await runStage2Phase(pi, true);
     }
-   } catch (qErr) {
-    if (ctl.signal.aborted) throw qErr;
-    if (!anyStage2Succeeded) throw qErr;
+    if (!okQs && !ctl.signal.aborted) {
+     await sleep(1500);
+     okQs = await runStage2Questions(true);
+    }
+   }
+
+   if (!ctl.signal.aborted && !okQs && !anyStage2Succeeded) {
+    throw new Error(L('阶段二题库生成失败，请点击「一键重试」（已完成步骤已保存，不会重复耗 Token）。', 'Stage 2 failed — click Retry'));
    }
 
    if (ctl.signal.aborted) return;

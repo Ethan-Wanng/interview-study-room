@@ -10,11 +10,14 @@ export function groupReleasesByDay(releases:Release[]):ReleaseDay[]{
 }
 
 export const RELEASES:Release[]=[
- {version:'2026.11.24-9',date:'2026-11-24',title:'JD 调研全面切换纯 Antigravity Agent 后台续传架构、全步骤断点持久化与新澳洲备用节点',changes:[
+ {version:'2026.11.24-10',date:'2026-11-24',title:'JD / 面经深度调研与单题重出支持仅在 Agent 限流时自动切换 DeepSeek 接力并强化慢速耐错重试',changes:[
+  '严格约束 DeepSeek 触发条件：JD / 面经深度调研全步骤及单题「AI 重出」平时始终优先使用 Antigravity Agent；仅当 Antigravity Agent 触发上游限流（429 / quota / resource_exhausted）且底层模型均受限时，才自动切换至 DeepSeek V4.1 Flash（思考模式）接力完成，绝不因普通超时或网络波动误切模型。',
+  '强化 Antigravity Agent 非限流场景下的多轮耐心重试与切片续传容错（扩大单步 Token 上限并正确收敛 incomplete 状态、提升代理建连与轮询超时容忍度），兼顾「可以慢但尽量不报错」，确保断点缓存与步骤完整性。',
+ ]},
+ {version:'2026.11.24-9',date:'2026-11-24',title:'JD 调研切换 Antigravity Agent 后台续传架构与全步骤断点持久化',changes:[
   '彻底移除 JD / 面经深度调研及单题重出中的 DeepSeek 调用，全流程（画像路径、各路径学习题、面试题库、单题重出）统一由 Antigravity Agent 驱动。',
   '采用 Google 官方 background: true 后台执行 + last_event_id 40 秒分片断线无感续传与轮询兜底架构，按「画像路径 -> 逐条路径学习题 -> 面试题库 -> 汇总落库」顺序稳定推进，彻底消除 60 秒断连与 Worker 超时报错。',
   '每完成一步立即持久化至 D1 断点缓存（7 天有效）与云端记录，单步异常自动切换 Agent 底层模型并重试，断点续跑或重试绝不重跑已完成步骤、不浪费 Token。',
-  '备用代理节点更新为 🇦🇺19澳洲-移动优化(AnyTLS)（19sdy.quandao.com:4430）。',
  ]},
  {version:'2026.11.24-8',date:'2026-11-24',title:'JD / 面经深度调研接入每日限额（普通用户每日 1 份，管理员不限）与游客访问拦截',changes:[
   '普通登录用户每日限生成 1 份 JD / 面经深度调研（按北京时间次日 0 点重置；完整生成与中途取消均计入当日额度，系统报错自动退还），管理员账号不限次数。',

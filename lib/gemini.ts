@@ -877,3 +877,89 @@ export async function jdResearchModelStream(opts:{
  }
  throw last instanceof Error?last:new GradeError('调研生成失败，请重试。');
 }
+
+// 仅在 Antigravity Agent 触发限流（429 / quota / resource_exhausted）时启用的纯 DeepSeek V4.1 Flash（思考）兜底流式生成器：
+// 绝不调用任何 Gemini 模型（含 gemini-2.5-flash），对瞬时波动最多耐心尝试 2 轮。
+export async function runDeepSeekJdFallbackStream(opts:{
+ systemPrompt:string;
+ userInput:string;
+ maxTokens?:number;
+ thinkingLevel?:ThinkingLevel;
+ signal?:AbortSignal;
+ validate?:(text:string)=>boolean;
+ onModel?:(label:string)=>void;
+ onThoughtDelta?:(delta:string)=>void;
+ onTextDelta?:(delta:string)=>void;
+ onReset?:()=>void;
+}):Promise<{text:string;thoughts:string;model:string;usage:ProviderUsage}>{
+ const e=env as unknown as Record<string,string|undefined>;
+ const dsKey=e?.DEEPSEEK_API_KEY||(typeof process!=='undefined'?process.env?.DEEPSEEK_API_KEY:undefined);
+ if(!dsKey)throw new GradeError('站点未配置 DeepSeek 兜底密钥。');
+
+ const label='DeepSeek V4.1 Flash（Agent限流兜底）';
+ opts.onModel?.(label);
+
+ const sleep=(ms:number)=>new Promise<void>(resolve=>{
+  const t=setTimeout(resolve,ms);
+  opts.signal?.addEventListener('abort',()=>{clearTimeout(t);resolve();},{once:true});
+ });
+
+ let last:unknown;
+ for(let attempt=0;attempt<2;attempt++){
+  if(opts.signal?.aborted)throw last instanceof Error?last:new GradeError('aborted');
+  if(attempt>0)opts.onReset?.();
+  let wrote=false;
+  let thoughtBuf='';
+  let capturedUsage:ProviderUsage|undefined;
+  try{
+   const text=await runProviderStream(
+    'deepseek',
+    'deepseek-flash',
+    dsKey,
+    opts.systemPrompt,
+    [{role:'user',content:opts.userInput}],
+    0.3,
+    false,
+    opts.maxTokens??12288,
+    chunk=>{wrote=true;opts.onTextDelta?.(chunk)},
+    {
+     thinking:true,
+     thinkingLevel:opts.thinkingLevel??'low',
+     onThink:chunk=>{wrote=true;thoughtBuf+=chunk;opts.onThoughtDelta?.(chunk)},
+     onUsage:u=>{capturedUsage=u},
+     geminiProxy:false,
+     signal:opts.signal,
+     siteManaged:true,
+     firstTimeoutMs:35_000,
+     idleTimeoutMs:55_000,
+     totalTimeoutMs:220_000,
+    },
+   );
+   if(opts.validate&&!opts.validate(text)){
+    throw new GradeError('deepseek-flash invalid_json');
+   }
+   const estIn=Math.ceil((opts.systemPrompt.length+opts.userInput.length)/2);
+   const estOut=Math.ceil(text.length/2);
+   const estTh=Math.ceil(thoughtBuf.length/2);
+   const usage:ProviderUsage=capturedUsage&&capturedUsage.totalTokens>0
+    ?{
+      ...capturedUsage,
+      thoughtTokens:capturedUsage.thoughtTokens||estTh,
+     }
+    :{
+      totalTokens:estIn+estOut+estTh,
+      inputTokens:estIn,
+      cachedTokens:0,
+      outputTokens:estOut,
+      thoughtTokens:estTh,
+     };
+   return {text,thoughts:thoughtBuf.trim(),model:label,usage};
+  }catch(err){
+   last=err;
+   if(opts.signal?.aborted)throw err;
+   if(wrote)opts.onReset?.();
+   if(attempt===0)await sleep(1500);
+  }
+ }
+ throw last instanceof Error?last:new GradeError('DeepSeek 限流兜底生成失败，请重试。');
+}

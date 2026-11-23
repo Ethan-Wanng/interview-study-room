@@ -7,6 +7,8 @@ import {
  ANTIGRAVITY_MODEL_CHAIN,
  AntigravityError,
  antigravityModelLabel,
+ isAntigravityRateLimitError,
+ markAntigravityAgentRateLimited,
  pollAntigravityInteraction,
  startAntigravityInteraction,
  streamAntigravitySlice,
@@ -33,7 +35,7 @@ import {
  parsePhaseQuizzes,
  pickInSiteQuizzesForStage,
 } from '@/lib/jd-research-server';
-import { extractJdFromImages } from '@/lib/gemini';
+import { extractJdFromImages, runDeepSeekJdFallbackStream } from '@/lib/gemini';
 import { fetchJdTextFromUrl } from '@/lib/jd-extract';
 import type { AiQuiz } from '@/content/journey';
 import {
@@ -174,6 +176,8 @@ function extractStreamQuestionTitles(buf: string): string[] {
  return qTitles;
 }
 
+const DEEPSEEK_FALLBACK_LABEL = 'DeepSeek V4.1 Flash（Agent限流兜底）';
+
 async function startAntigravityWithModelFallback(opts: {
  systemInstruction: string;
  input: string;
@@ -184,16 +188,22 @@ async function startAntigravityWithModelFallback(opts: {
 }) {
  const len = ANTIGRAVITY_MODEL_CHAIN.length;
  const startAt = Math.max(0, opts.attemptOffset || 0) % len;
- let lastErr: unknown;
+ let triedCount = 0;
+ let rateLimitCount = 0;
+ let lastRateLimitErr: AntigravityError | undefined;
+ let nonRateLimitErr: unknown;
+
  for (let step = 0; step < len; step++) {
   const attemptIdx = (startAt + step) % len;
   const agentModel = ANTIGRAVITY_MODEL_CHAIN[attemptIdx];
+  triedCount++;
   try {
    const started = await startAntigravityInteraction({
     systemInstruction: opts.systemInstruction,
     input: opts.input,
     agentModel,
     maxTotalTokens: opts.maxTotalTokens,
+    deferAgentCooldown: true,
     geminiProxy: opts.geminiProxy,
     signal: opts.signal,
    });
@@ -203,18 +213,300 @@ async function startAntigravityWithModelFallback(opts: {
     attemptIdx,
    };
   } catch (e) {
-   lastErr = e;
    if (opts.signal?.aborted) throw e;
    if (e instanceof AntigravityError && (e.code === 'geo_blocked' || e.code === 'missing_key')) {
     throw e;
    }
+   if (isAntigravityRateLimitError(e)) {
+    rateLimitCount++;
+    lastRateLimitErr =
+     e instanceof AntigravityError
+      ? e
+      : new AntigravityError(e instanceof Error ? e.message : 'Agent 触发限流', 429, 'rate_limited');
+    if (e instanceof AntigravityError && e.rawDetail?.startsWith('local_d1_limit')) {
+     break;
+    }
+    continue;
+   }
+   nonRateLimitErr = e;
   }
  }
- throw lastErr instanceof Error ? lastErr : new AntigravityError('启动 Antigravity Agent 失败，请重试。', 502, 'agent_error');
+
+ if (triedCount > 0 && rateLimitCount === triedCount && lastRateLimitErr) {
+  if (!lastRateLimitErr.rawDetail?.startsWith('local_d1_limit')) {
+   await markAntigravityAgentRateLimited(lastRateLimitErr.rawDetail || lastRateLimitErr.message);
+  }
+  throw lastRateLimitErr;
+ }
+ throw nonRateLimitErr instanceof Error
+  ? nonRateLimitErr
+  : new AntigravityError('启动 Antigravity Agent 失败，请重试。', 502, 'agent_error');
 }
 
-// Exclusively uses the Antigravity Managed Agent (`background: true` + resumable `last_event_id` SSE slices
-// with polling fallback + per-step D1 checkpointing so completed steps never re-run or waste tokens).
+async function persistCompletedStage1(opts: {
+ userId: string;
+ recordId: string;
+ freshRec: { title: string; subtitle: string; interactionId?: string; createdAt?: number; payload: StoredJdRecordPayload };
+ hashHex: string;
+ interactionId?: string;
+ modelLabel: string;
+ rawText: string;
+ thoughts: string;
+ usage?: AntigravityUsage;
+}): Promise<Record<string, unknown> | null> {
+ const s1Rep = parseAndEnrichJdReport(opts.rawText);
+ if (!s1Rep || (!s1Rep.roadmap.length && !s1Rep.dimensions.length)) return null;
+ const extracted = extractThoughtsAndJson(opts.rawText);
+ const rawJsonText = extracted.jsonRaw || opts.rawText;
+ const cleanThoughts = (opts.thoughts || extracted.thoughts || '').trim();
+ const s1CacheKey = stage1CacheKeyOf(opts.hashHex);
+ await writePromptCache(
+  s1CacheKey,
+  'jd-stage1',
+  opts.modelLabel,
+  {
+   report: s1Rep,
+   rawText: rawJsonText,
+   thoughts: cleanThoughts,
+   model: opts.modelLabel,
+   usage: opts.usage,
+  } satisfies CachedStage1Payload,
+  7 * 24 * 3600_000,
+ );
+ await saveAiInterviewRecord({
+  id: opts.recordId,
+  userId: opts.userId,
+  kind: 'jd-research',
+  title: s1Rep.roleTitle || opts.freshRec.title,
+  subtitle: makeSubtitle(s1Rep),
+  status: 'running',
+  interactionId: opts.interactionId || opts.freshRec.interactionId || undefined,
+  payload: {
+   ...opts.freshRec.payload,
+   hashHex: opts.hashHex,
+   model: opts.modelLabel,
+   stage1CacheKey: s1CacheKey,
+   stage: 2,
+   stage1Cached: false,
+   partialReport: s1Rep,
+   stage1RawText: rawJsonText,
+   stage1Thoughts: cleanThoughts,
+   stage1Usage: opts.usage,
+   thoughts: cleanThoughts,
+  },
+  createdAt: opts.freshRec.createdAt,
+ });
+ return {
+  type: 'stage1',
+  recordId: opts.recordId,
+  stage1Cached: false,
+  model: opts.modelLabel,
+  partialReport: s1Rep,
+  thoughts: cleanThoughts,
+  usage: opts.usage,
+  progress: inspectJdStreamProgress(2, '', s1Rep, false),
+ };
+}
+
+async function persistCompletedPhase(opts: {
+ userId: string;
+ recordId: string;
+ freshRec: { title: string; subtitle: string; interactionId?: string; createdAt?: number; payload: StoredJdRecordPayload };
+ s1Rep: JdResearchReport;
+ hashHex: string;
+ phaseIndex: number;
+ interactionId?: string;
+ modelLabel: string;
+ rawText: string;
+ thoughts: string;
+ usage?: AntigravityUsage;
+}): Promise<Record<string, unknown> | null> {
+ const generated = parsePhaseQuizzes(opts.rawText, opts.phaseIndex);
+ if (generated.length < 4) return null;
+ const extracted = extractThoughtsAndJson(opts.rawText);
+ const rawJsonText = extracted.jsonRaw || opts.rawText;
+ const cleanThoughts = (opts.thoughts || extracted.thoughts || '').trim();
+ const reused = getReusedQuizzesForPhase(opts.s1Rep, opts.phaseIndex);
+ const quizzes = combinePhaseQuizzes(reused, generated, opts.phaseIndex);
+ const phaseKey = phaseCacheKeyOf(opts.hashHex, opts.phaseIndex);
+ await writePromptCache(
+  phaseKey,
+  'jd-phase',
+  opts.modelLabel,
+  {
+   quizzes,
+   rawText: rawJsonText,
+   thoughts: cleanThoughts,
+   model: opts.modelLabel,
+   usage: opts.usage,
+  } satisfies CachedPhasePayload,
+  7 * 24 * 3600_000,
+ );
+ const updatedPartial: JdResearchReport = {
+  ...opts.s1Rep,
+  roadmap: opts.s1Rep.roadmap.map((st, idx) => (idx === opts.phaseIndex ? { ...st, quizzes } : st)),
+ };
+ await saveAiInterviewRecord({
+  id: opts.recordId,
+  userId: opts.userId,
+  kind: 'jd-research',
+  title: opts.freshRec.title,
+  subtitle: opts.freshRec.subtitle,
+  status: 'running',
+  interactionId: opts.interactionId || opts.freshRec.interactionId || undefined,
+  payload: {
+   ...opts.freshRec.payload,
+   hashHex: opts.hashHex,
+   partialReport: updatedPartial,
+  },
+  createdAt: opts.freshRec.createdAt,
+ });
+ return {
+  type: 'phase_done',
+  phaseIndex: opts.phaseIndex,
+  cached: false,
+  quizCount: quizzes.length,
+  model: opts.modelLabel,
+  thoughts: cleanThoughts,
+  usage: opts.usage,
+ };
+}
+
+async function persistCompletedQuestions(opts: {
+ userId: string;
+ recordId: string;
+ freshRec: { title: string; subtitle: string; interactionId?: string; createdAt?: number; payload: StoredJdRecordPayload };
+ s1Rep: JdResearchReport;
+ hashHex: string;
+ interactionId?: string;
+ modelLabel: string;
+ rawText: string;
+ thoughts: string;
+ usage?: AntigravityUsage;
+}): Promise<Record<string, unknown> | null> {
+ const mergedQs = mergeStage1AndStage2Report(opts.s1Rep, opts.rawText).questions;
+ if (!mergedQs.length) return null;
+ const extracted = extractThoughtsAndJson(opts.rawText);
+ const rawJsonText = extracted.jsonRaw || opts.rawText;
+ const cleanThoughts = (opts.thoughts || extracted.thoughts || '').trim();
+ const qKey = questionsCacheKeyOf(opts.hashHex);
+ await writePromptCache(
+  qKey,
+  'jd-questions',
+  opts.modelLabel,
+  {
+   questions: mergedQs,
+   rawText: rawJsonText,
+   thoughts: cleanThoughts,
+   model: opts.modelLabel,
+   usage: opts.usage,
+  } satisfies CachedQuestionsPayload,
+  7 * 24 * 3600_000,
+ );
+ const updatedPartial: JdResearchReport = {
+  ...opts.s1Rep,
+  questions: mergedQs,
+ };
+ await saveAiInterviewRecord({
+  id: opts.recordId,
+  userId: opts.userId,
+  kind: 'jd-research',
+  title: opts.freshRec.title,
+  subtitle: opts.freshRec.subtitle,
+  status: 'running',
+  interactionId: opts.interactionId || opts.freshRec.interactionId || undefined,
+  payload: {
+   ...opts.freshRec.payload,
+   hashHex: opts.hashHex,
+   partialReport: updatedPartial,
+  },
+  createdAt: opts.freshRec.createdAt,
+ });
+ return {
+  type: 'questions_done',
+  cached: false,
+  questionCount: mergedQs.length,
+  qTitles: mergedQs.map(q => q.title),
+  model: opts.modelLabel,
+  thoughts: cleanThoughts,
+  usage: opts.usage,
+ };
+}
+
+function createJdStepNdjsonBridge(opts: {
+ step: 'stage1' | 'phase' | 'questions';
+ phaseIndex: number;
+ send: (ev: Record<string, unknown>) => void;
+ onActiveStep: (st: string) => void;
+}) {
+ let deltaBuf = '';
+ let lastDeltaInspectAt = 0;
+ const emitDelta = (jd: string, fullBuf: string, force = false) => {
+  deltaBuf = fullBuf;
+  opts.onActiveStep('output');
+  const now = Date.now();
+  if (!force && now - lastDeltaInspectAt < 400) return;
+  lastDeltaInspectAt = now;
+  if (opts.step === 'stage1') {
+   opts.send({
+    type: 'delta',
+    stage: 1,
+    text: jd,
+    chars: deltaBuf.length,
+    progress: inspectJdStreamProgress(1, deltaBuf, null, false),
+   });
+  } else if (opts.step === 'phase') {
+   const phaseQuizCount = (deltaBuf.match(/"type"\s*:\s*"(?:single|multi|fill|short|code)"/g) || []).length;
+   opts.send({
+    type: 'delta',
+    stage: 2,
+    phaseIndex: opts.phaseIndex,
+    text: jd,
+    chars: deltaBuf.length,
+    phaseQuizCount,
+   });
+  } else {
+   const qTitles = extractStreamQuestionTitles(deltaBuf);
+   opts.send({
+    type: 'delta',
+    stage: 2,
+    text: jd,
+    chars: deltaBuf.length,
+    qTitles,
+   });
+  }
+ };
+
+ const makeSplitter = () =>
+  createThinkJsonStreamSplitter({
+   onThoughtDelta: td => {
+    opts.onActiveStep('thinking');
+    opts.send({ type: 'thought', stage: opts.step === 'stage1' ? 1 : 2, text: td });
+   },
+   onJsonDelta: (jd, fullBuf) => {
+    emitDelta(jd, fullBuf, false);
+   },
+  });
+
+ let splitter = makeSplitter();
+ return {
+  pushText(chunk: string) {
+   splitter.push(chunk);
+  },
+  flush() {
+   splitter.flush();
+  },
+  reset() {
+   deltaBuf = '';
+   splitter = makeSplitter();
+   opts.send({ type: 'reset', stage: opts.step === 'stage1' ? 1 : 2, keepThoughts: true });
+  },
+ };
+}
+
+// Defaults exclusively to the Antigravity Managed Agent (`background: true` + resumable `last_event_id`
+// SSE slices with polling fallback + per-step D1 checkpointing), and switches a step to DeepSeek
+// V4.1 Flash ONLY when Antigravity Agent hits rate limiting (429 / quota / resource_exhausted).
 export async function POST(req: Request) {
  try {
   assertSameOrigin(req);
@@ -235,7 +527,11 @@ export async function POST(req: Request) {
 
   const rawAction = typeof body.action === 'string' ? body.action.trim() : 'start';
   const action =
-   rawAction === 'start_step' || rawAction === 'watch' || rawAction === 'finalize' || rawAction === 'fail'
+   rawAction === 'start_step' ||
+   rawAction === 'watch' ||
+   rawAction === 'deepseek_step' ||
+   rawAction === 'finalize' ||
+   rawAction === 'fail'
     ? rawAction
     : 'start';
   const geminiProxy = body.geminiProxy !== false;
@@ -291,7 +587,13 @@ export async function POST(req: Request) {
    if (!isAdmin && !resumingToday) {
     const daily = await tryConsumeDailyJdQuota(user.id);
     if (!daily.allowed) {
-     throw new AuthError('每位用户每天限生成 1 份 JD / 面经深度调研，今日额度已用完，请明天再来。', 429);
+     return Response.json(
+      {
+       error: '每位用户每天限生成 1 份 JD / 面经深度调研，今日额度已用完，请明天再来。',
+       code: 'daily_quota_exceeded',
+      },
+      { status: 429, headers: noCache },
+     );
     }
     reservedDailyDay = daily.dayKey;
    }
@@ -430,7 +732,7 @@ export async function POST(req: Request) {
     const { started, modelLabel, attemptIdx } = await startAntigravityWithModelFallback({
      systemInstruction: getJdResearchStage1SystemPrompt(),
      input: buildJdStage1Input({ kind, source }),
-     maxTotalTokens: 24_000,
+     maxTotalTokens: 48_000,
      attemptOffset,
      geminiProxy,
      signal: req.signal,
@@ -482,7 +784,52 @@ export async function POST(req: Request) {
      { headers: noCache },
     );
    } catch (startErr) {
-    if (!req.signal?.aborted && reservedDailyDay && !isAdmin) {
+    if (isAntigravityRateLimitError(startErr)) {
+     await saveAiInterviewRecord({
+      id: recordId,
+      userId: user.id,
+      kind: 'jd-research',
+      title: existingRec?.title || initialTitle,
+      subtitle: existingRec?.subtitle || '',
+      status: 'running',
+      interactionId: existingRec?.interactionId || undefined,
+      payload: {
+       kind,
+       source,
+       hashHex,
+       dailyDayKey: reservedDailyDay || undefined,
+       dailyRefunded: false,
+       model: DEEPSEEK_FALLBACK_LABEL,
+       cacheKey,
+       stage1CacheKey,
+       stage: 1,
+       stage1Cached: false,
+       partialReport: existingRec?.payload?.partialReport ?? null,
+       stage1RawText: '',
+       stage1Thoughts: '',
+       report: null,
+       rawText: '',
+       thoughts: '',
+       imported: existingRec?.payload?.imported ?? null,
+      },
+      createdAt: existingRec?.createdAt,
+     });
+     return Response.json(
+      {
+       ok: true,
+       status: 'rate_limited_fallback',
+       step: 'stage1',
+       recordId,
+       hashHex,
+       title: existingRec?.title || initialTitle,
+       model: DEEPSEEK_FALLBACK_LABEL,
+       reason: 'Antigravity Agent 触发限流，切换 DeepSeek 接力',
+       extractedSource: source,
+      },
+      { headers: noCache },
+     );
+    }
+    if (!req.signal?.aborted && !resumingToday && reservedDailyDay && !isAdmin) {
      await refundDailyJdQuota(user.id, reservedDailyDay);
     }
     throw startErr;
@@ -491,7 +838,7 @@ export async function POST(req: Request) {
 
   // ---- Action 2: start_step (Stage 2 per-phase quizzes or interview questions, checkpoint-aware) ----
   if (action === 'start_step') {
-   await rateLimit('jd-research-step:' + user.id, 90);
+   await rateLimit('jd-research-step:' + user.id, 180);
    const recordId = typeof body.recordId === 'string' ? body.recordId.trim().slice(0, 80) : '';
    const step = body.step === 'questions' ? 'questions' : 'phase';
    const phaseIndex = Number.isInteger(Number(body.phaseIndex)) ? Number(body.phaseIndex) : 0;
@@ -555,26 +902,43 @@ export async function POST(req: Request) {
     }
 
     const reusedQuizzes = getReusedQuizzesForPhase(s1Rep, phaseIndex);
-    const { started, modelLabel, attemptIdx } = await startAntigravityWithModelFallback({
-     systemInstruction: getJdResearchPhaseQuizzesSystemPrompt(),
-     input: buildJdPhaseQuizzesInput({ kind, source, stage1: s1Rep, phaseIndex, reusedQuizzes }),
-     maxTotalTokens: 32_000,
-     attemptOffset,
-     geminiProxy,
-     signal: req.signal,
-    });
-    return Response.json(
-     {
-      ok: true,
-      status: 'started',
-      step: 'phase',
-      phaseIndex,
-      interactionId: started.id,
-      model: modelLabel,
-      attemptUsed: attemptIdx,
-     },
-     { headers: noCache },
-    );
+    try {
+     const { started, modelLabel, attemptIdx } = await startAntigravityWithModelFallback({
+      systemInstruction: getJdResearchPhaseQuizzesSystemPrompt(),
+      input: buildJdPhaseQuizzesInput({ kind, source, stage1: s1Rep, phaseIndex, reusedQuizzes }),
+      maxTotalTokens: 56_000,
+      attemptOffset,
+      geminiProxy,
+      signal: req.signal,
+     });
+     return Response.json(
+      {
+       ok: true,
+       status: 'started',
+       step: 'phase',
+       phaseIndex,
+       interactionId: started.id,
+       model: modelLabel,
+       attemptUsed: attemptIdx,
+      },
+      { headers: noCache },
+     );
+    } catch (e) {
+     if (isAntigravityRateLimitError(e)) {
+      return Response.json(
+       {
+        ok: true,
+        status: 'rate_limited_fallback',
+        step: 'phase',
+        phaseIndex,
+        model: DEEPSEEK_FALLBACK_LABEL,
+        reason: 'Antigravity Agent 触发限流，切换 DeepSeek 接力',
+       },
+       { headers: noCache },
+      );
+     }
+     throw e;
+    }
    }
 
    // step === 'questions'
@@ -621,30 +985,46 @@ export async function POST(req: Request) {
     }
    }
 
-   const { started, modelLabel, attemptIdx } = await startAntigravityWithModelFallback({
-    systemInstruction: getJdResearchStage2QuestionsSystemPrompt(),
-    input: buildJdStage2QuestionsInput({ kind, source, stage1: s1Rep }),
-    maxTotalTokens: 32_000,
-    attemptOffset,
-    geminiProxy,
-    signal: req.signal,
-   });
-   return Response.json(
-    {
-     ok: true,
-     status: 'started',
-     step: 'questions',
-     interactionId: started.id,
-     model: modelLabel,
-     attemptUsed: attemptIdx,
-    },
-    { headers: noCache },
-   );
+   try {
+    const { started, modelLabel, attemptIdx } = await startAntigravityWithModelFallback({
+     systemInstruction: getJdResearchStage2QuestionsSystemPrompt(),
+     input: buildJdStage2QuestionsInput({ kind, source, stage1: s1Rep }),
+     maxTotalTokens: 56_000,
+     attemptOffset,
+     geminiProxy,
+     signal: req.signal,
+    });
+    return Response.json(
+     {
+      ok: true,
+      status: 'started',
+      step: 'questions',
+      interactionId: started.id,
+      model: modelLabel,
+      attemptUsed: attemptIdx,
+     },
+     { headers: noCache },
+    );
+   } catch (e) {
+    if (isAntigravityRateLimitError(e)) {
+     return Response.json(
+      {
+       ok: true,
+       status: 'rate_limited_fallback',
+       step: 'questions',
+       model: DEEPSEEK_FALLBACK_LABEL,
+       reason: 'Antigravity Agent 触发限流，切换 DeepSeek 接力',
+      },
+      { headers: noCache },
+     );
+    }
+    throw e;
+   }
   }
 
   // ---- Action 3: watch (NDJSON 40s resumable SSE slice using background interactionId + lastEventId) ----
   if (action === 'watch') {
-   await rateLimit('jd-research-watch:' + user.id, 180);
+   await rateLimit('jd-research-watch:' + user.id, 300);
    const recordId = typeof body.recordId === 'string' ? body.recordId.trim().slice(0, 80) : '';
    const interactionId = typeof body.interactionId === 'string' ? body.interactionId.trim().slice(0, 180) : '';
    const lastEventIdIn = typeof body.lastEventId === 'string' ? body.lastEventId.trim().slice(0, 200) : '';
@@ -693,55 +1073,14 @@ export async function POST(req: Request) {
        model: modelLabel,
       });
 
-      let deltaBuf = '';
-      let lastDeltaInspectAt = 0;
-      const emitDelta = (jd: string, fullBuf: string, force = false) => {
-       deltaBuf = fullBuf;
-       activeStep = 'output';
-       const now = Date.now();
-       if (!force && now - lastDeltaInspectAt < 400) return;
-       lastDeltaInspectAt = now;
-       if (step === 'stage1') {
-        send({
-         type: 'delta',
-         stage: 1,
-         text: jd,
-         chars: deltaBuf.length,
-         progress: inspectJdStreamProgress(1, deltaBuf, null, false),
-        });
-       } else if (step === 'phase') {
-        const phaseQuizCount = (deltaBuf.match(/"type"\s*:\s*"(?:single|multi|fill|short|code)"/g) || []).length;
-        send({
-         type: 'delta',
-         stage: 2,
-         phaseIndex,
-         text: jd,
-         chars: deltaBuf.length,
-         phaseQuizCount,
-        });
-       } else {
-        const qTitles = extractStreamQuestionTitles(deltaBuf);
-        send({
-         type: 'delta',
-         stage: 2,
-         text: jd,
-         chars: deltaBuf.length,
-         qTitles,
-        });
-       }
-      };
-
-      const makeSplitter = () =>
-       createThinkJsonStreamSplitter({
-        onThoughtDelta: td => {
-         activeStep = 'thinking';
-         send({ type: 'thought', stage: step === 'stage1' ? 1 : 2, text: td });
-        },
-        onJsonDelta: (jd, fullBuf) => {
-         emitDelta(jd, fullBuf, false);
-        },
-       });
-      let splitter = makeSplitter();
+      const bridge = createJdStepNdjsonBridge({
+       step,
+       phaseIndex,
+       send,
+       onActiveStep: st => {
+        activeStep = st;
+       },
+      });
 
       const slice = await streamAntigravitySlice({
        interactionId,
@@ -761,15 +1100,13 @@ export async function POST(req: Request) {
         send({ type: 'thought', stage: step === 'stage1' ? 1 : 2, text: td });
        },
        onTextDelta: td => {
-        splitter.push(td);
+        bridge.pushText(td);
        },
        onTextReset: () => {
-        deltaBuf = '';
-        splitter = makeSplitter();
-        send({ type: 'reset', stage: step === 'stage1' ? 1 : 2, keepThoughts: true });
+        bridge.reset();
        },
       });
-      splitter.flush();
+      bridge.flush();
 
       if (req.signal?.aborted) return;
 
@@ -788,69 +1125,31 @@ export async function POST(req: Request) {
         step,
         phaseIndex: step === 'phase' ? phaseIndex : undefined,
         reason: slice.error || `Antigravity Agent 状态异常（${slice.status}）`,
+        rateLimited: Boolean(slice.rateLimited),
        });
        return;
       }
 
       // Completed! Parse, validate, and IMMEDIATELY persist checkpoint to D1 prompt_cache + record!
       const freshRec = (await getAiInterviewRecord<StoredJdRecordPayload>(user.id, recordId)) || rec;
-      const extracted = extractThoughtsAndJson(slice.text);
-      const rawJsonText = extracted.jsonRaw || slice.text;
-      const cleanThoughts = (slice.thoughts || extracted.thoughts || '').trim();
 
       if (step === 'stage1') {
-       const s1Rep = parseAndEnrichJdReport(slice.text);
-       if (!s1Rep || (!s1Rep.roadmap.length && !s1Rep.dimensions.length)) {
+       const doneEv = await persistCompletedStage1({
+        userId: user.id,
+        recordId,
+        freshRec,
+        hashHex,
+        interactionId,
+        modelLabel,
+        rawText: slice.text,
+        thoughts: slice.thoughts,
+        usage: slice.usage,
+       });
+       if (!doneEv) {
         send({ type: 'retry_step', step: 'stage1', reason: '阶段一 JSON 解析不完整，自动重试' });
         return;
        }
-       const s1CacheKey = stage1CacheKeyOf(hashHex);
-       await writePromptCache(
-        s1CacheKey,
-        'jd-stage1',
-        modelLabel,
-        {
-         report: s1Rep,
-         rawText: rawJsonText,
-         thoughts: cleanThoughts,
-         model: modelLabel,
-         usage: slice.usage,
-        } satisfies CachedStage1Payload,
-        7 * 24 * 3600_000,
-       );
-       await saveAiInterviewRecord({
-        id: recordId,
-        userId: user.id,
-        kind: 'jd-research',
-        title: s1Rep.roleTitle || freshRec.title,
-        subtitle: makeSubtitle(s1Rep),
-        status: 'running',
-        interactionId,
-        payload: {
-         ...freshRec.payload,
-         hashHex,
-         model: modelLabel,
-         stage1CacheKey: s1CacheKey,
-         stage: 2,
-         stage1Cached: false,
-         partialReport: s1Rep,
-         stage1RawText: rawJsonText,
-         stage1Thoughts: cleanThoughts,
-         stage1Usage: slice.usage,
-         thoughts: cleanThoughts,
-        },
-        createdAt: freshRec.createdAt,
-       });
-       send({
-        type: 'stage1',
-        recordId,
-        stage1Cached: false,
-        model: modelLabel,
-        partialReport: s1Rep,
-        thoughts: cleanThoughts,
-        usage: slice.usage,
-        progress: inspectJdStreamProgress(2, '', s1Rep, false),
-       });
+       send(doneEv);
        return;
       }
 
@@ -861,106 +1160,44 @@ export async function POST(req: Request) {
       }
 
       if (step === 'phase') {
-       const generated = parsePhaseQuizzes(slice.text, phaseIndex);
-       if (generated.length < 4) {
+       const doneEv = await persistCompletedPhase({
+        userId: user.id,
+        recordId,
+        freshRec,
+        s1Rep,
+        hashHex,
+        phaseIndex,
+        interactionId,
+        modelLabel,
+        rawText: slice.text,
+        thoughts: slice.thoughts,
+        usage: slice.usage,
+       });
+       if (!doneEv) {
         send({ type: 'retry_step', step: 'phase', phaseIndex, reason: '路径题库解析不完整，自动切换模型重试' });
         return;
        }
-       const reused = getReusedQuizzesForPhase(s1Rep, phaseIndex);
-       const quizzes = combinePhaseQuizzes(reused, generated, phaseIndex);
-       const phaseKey = phaseCacheKeyOf(hashHex, phaseIndex);
-       await writePromptCache(
-        phaseKey,
-        'jd-phase',
-        modelLabel,
-        {
-         quizzes,
-         rawText: rawJsonText,
-         thoughts: cleanThoughts,
-         model: modelLabel,
-         usage: slice.usage,
-        } satisfies CachedPhasePayload,
-        7 * 24 * 3600_000,
-       );
-       const updatedPartial: JdResearchReport = {
-        ...s1Rep,
-        roadmap: s1Rep.roadmap.map((st, idx) => (idx === phaseIndex ? { ...st, quizzes } : st)),
-       };
-       await saveAiInterviewRecord({
-        id: recordId,
-        userId: user.id,
-        kind: 'jd-research',
-        title: freshRec.title,
-        subtitle: freshRec.subtitle,
-        status: 'running',
-        interactionId,
-        payload: {
-         ...freshRec.payload,
-         hashHex,
-         partialReport: updatedPartial,
-        },
-        createdAt: freshRec.createdAt,
-       });
-       send({
-        type: 'phase_done',
-        phaseIndex,
-        cached: false,
-        quizCount: quizzes.length,
-        model: modelLabel,
-        thoughts: cleanThoughts,
-        usage: slice.usage,
-       });
+       send(doneEv);
        return;
       }
 
-      // step === 'questions'
-      const mergedQs = mergeStage1AndStage2Report(s1Rep, slice.text).questions;
-      if (!mergedQs.length) {
+      const doneEv = await persistCompletedQuestions({
+       userId: user.id,
+       recordId,
+       freshRec,
+       s1Rep,
+       hashHex,
+       interactionId,
+       modelLabel,
+       rawText: slice.text,
+       thoughts: slice.thoughts,
+       usage: slice.usage,
+      });
+      if (!doneEv) {
        send({ type: 'retry_step', step: 'questions', reason: '面试题库解析不完整，自动切换模型重试' });
        return;
       }
-      const qKey = questionsCacheKeyOf(hashHex);
-      await writePromptCache(
-       qKey,
-       'jd-questions',
-       modelLabel,
-       {
-        questions: mergedQs,
-        rawText: rawJsonText,
-        thoughts: cleanThoughts,
-        model: modelLabel,
-        usage: slice.usage,
-       } satisfies CachedQuestionsPayload,
-       7 * 24 * 3600_000,
-      );
-      const updatedPartial: JdResearchReport = {
-       ...s1Rep,
-       questions: mergedQs,
-      };
-      await saveAiInterviewRecord({
-       id: recordId,
-       userId: user.id,
-       kind: 'jd-research',
-       title: freshRec.title,
-       subtitle: freshRec.subtitle,
-       status: 'running',
-       interactionId,
-       payload: {
-        ...freshRec.payload,
-        hashHex,
-        partialReport: updatedPartial,
-       },
-       createdAt: freshRec.createdAt,
-      });
-      send({
-       type: 'questions_done',
-       cached: false,
-       questionCount: mergedQs.length,
-       qTitles: mergedQs.map(q => q.title),
-       model: modelLabel,
-       thoughts: cleanThoughts,
-       usage: slice.usage,
-      });
+      send(doneEv);
      } catch (e) {
       if (!req.signal?.aborted) {
        send({
@@ -968,6 +1205,7 @@ export async function POST(req: Request) {
         step,
         phaseIndex: step === 'phase' ? phaseIndex : undefined,
         reason: e instanceof Error ? e.message : '网络波动，自动重试',
+        rateLimited: isAntigravityRateLimitError(e),
        });
       }
      } finally {
@@ -995,7 +1233,253 @@ export async function POST(req: Request) {
    });
   }
 
-  // ---- Action 4: finalize (aggregates all saved D1 checkpoints into final completed report) ----
+  // ---- Action 4: deepseek_step (NDJSON stream — ONLY triggered when Antigravity Agent hits 429/quota) ----
+  if (action === 'deepseek_step') {
+   await rateLimit('jd-research-ds:' + user.id, 90);
+   const recordId = typeof body.recordId === 'string' ? body.recordId.trim().slice(0, 80) : '';
+   const step = body.step === 'phase' ? 'phase' : body.step === 'questions' ? 'questions' : 'stage1';
+   const phaseIndex = Number.isInteger(Number(body.phaseIndex)) ? Number(body.phaseIndex) : 0;
+   const markAgentRateLimitedFlag = body.markAgentRateLimited === true;
+
+   if (!recordId) throw new AuthError('缺少任务标识。', 400);
+   if (markAgentRateLimitedFlag) {
+    await markAntigravityAgentRateLimited('watch_all_models_429');
+   }
+   const rec = await getAiInterviewRecord<StoredJdRecordPayload>(user.id, recordId);
+   if (!rec) throw new AuthError('未找到调研记录。', 404);
+
+   const kind: JdInputKind = rec.payload.kind || 'jd';
+   const source = rec.payload.source || '';
+   const hashHex = rec.payload.hashHex || (await sha256Hex([kind, normalizeJdSourceForCache(source)]));
+   const modelLabel = DEEPSEEK_FALLBACK_LABEL;
+
+   if (step !== 'stage1' && !rec.payload?.partialReport) {
+    throw new AuthError('阶段一数据未就绪，请重试。', 404);
+   }
+   if (step === 'phase' && (phaseIndex < 0 || phaseIndex >= rec.payload.partialReport!.roadmap.length)) {
+    throw new AuthError('路径索引超出范围。', 400);
+   }
+
+   const enc = new TextEncoder();
+   let closed = false;
+   const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+     let lastSendAt = Date.now();
+     const send = (ev: Record<string, unknown>) => {
+      if (closed) return;
+      lastSendAt = Date.now();
+      try {
+       controller.enqueue(enc.encode(JSON.stringify(ev) + '\n'));
+      } catch {
+       closed = true;
+      }
+     };
+
+     let activeStep = 'thinking';
+     const pingTimer = setInterval(() => {
+      if (closed) return;
+      if (Date.now() - lastSendAt >= 2400) {
+       send({ type: 'ping', step: activeStep });
+      }
+     }, 2500);
+
+     try {
+      send({
+       type: 'connected',
+       recordId,
+       step,
+       phaseIndex: step === 'phase' ? phaseIndex : undefined,
+       model: modelLabel,
+      });
+
+      if (!bypassCache) {
+       if (step === 'stage1') {
+        const s1Hit = await readPromptCache<CachedStage1Payload>(stage1CacheKeyOf(hashHex));
+        if (s1Hit?.payload?.report && s1Hit.payload.report.roadmap.length > 0) {
+         send({
+          type: 'stage1',
+          recordId,
+          stage1Cached: true,
+          model: s1Hit.payload.model || s1Hit.model || modelLabel,
+          partialReport: s1Hit.payload.report,
+          thoughts: s1Hit.payload.thoughts || '',
+          usage: s1Hit.payload.usage,
+          progress: inspectJdStreamProgress(2, '', s1Hit.payload.report, true),
+         });
+         return;
+        }
+       } else if (step === 'phase') {
+        const pHit = await readPromptCache<CachedPhasePayload>(phaseCacheKeyOf(hashHex, phaseIndex));
+        if (pHit?.payload?.quizzes && pHit.payload.quizzes.length >= 4) {
+         send({
+          type: 'phase_done',
+          phaseIndex,
+          cached: true,
+          quizCount: pHit.payload.quizzes.length,
+          model: pHit.payload.model || pHit.model || modelLabel,
+          thoughts: pHit.payload.thoughts || '',
+          usage: pHit.payload.usage,
+         });
+         return;
+        }
+       } else {
+        const qHit = await readPromptCache<CachedQuestionsPayload>(questionsCacheKeyOf(hashHex));
+        if (qHit?.payload?.questions && qHit.payload.questions.length > 0) {
+         send({
+          type: 'questions_done',
+          cached: true,
+          questionCount: qHit.payload.questions.length,
+          qTitles: qHit.payload.questions.map(q => q.title),
+          model: qHit.payload.model || qHit.model || modelLabel,
+          thoughts: qHit.payload.thoughts || '',
+          usage: qHit.payload.usage,
+         });
+         return;
+        }
+       }
+      }
+
+      const freshRec = (await getAiInterviewRecord<StoredJdRecordPayload>(user.id, recordId)) || rec;
+      const s1Rep = freshRec.payload?.partialReport;
+      const bridge = createJdStepNdjsonBridge({
+       step,
+       phaseIndex,
+       send,
+       onActiveStep: st => {
+        activeStep = st;
+       },
+      });
+
+      let systemPrompt: string;
+      let userInput: string;
+      let validate: (text: string) => boolean;
+      if (step === 'stage1') {
+       systemPrompt = getJdResearchStage1SystemPrompt();
+       userInput = buildJdStage1Input({ kind, source });
+       validate = text => {
+        const rep = parseAndEnrichJdReport(text);
+        return Boolean(rep && (rep.roadmap.length > 0 || rep.dimensions.length > 0));
+       };
+      } else if (step === 'phase') {
+       systemPrompt = getJdResearchPhaseQuizzesSystemPrompt();
+       userInput = buildJdPhaseQuizzesInput({
+        kind,
+        source,
+        stage1: s1Rep!,
+        phaseIndex,
+        reusedQuizzes: getReusedQuizzesForPhase(s1Rep!, phaseIndex),
+       });
+       validate = text => parsePhaseQuizzes(text, phaseIndex).length >= 4;
+      } else {
+       systemPrompt = getJdResearchStage2QuestionsSystemPrompt();
+       userInput = buildJdStage2QuestionsInput({ kind, source, stage1: s1Rep! });
+       validate = text => mergeStage1AndStage2Report(s1Rep!, text).questions.length > 0;
+      }
+
+      const dsOut = await runDeepSeekJdFallbackStream({
+       systemPrompt,
+       userInput,
+       maxTokens: step === 'stage1' ? 10240 : 12288,
+       thinkingLevel: 'low',
+       signal: req.signal,
+       validate,
+       onModel: m => send({ type: 'step', stepType: 'thinking', model: m }),
+       onThoughtDelta: td => {
+        activeStep = 'thinking';
+        send({ type: 'thought', stage: step === 'stage1' ? 1 : 2, text: td });
+       },
+       onTextDelta: td => bridge.pushText(td),
+       onReset: () => bridge.reset(),
+      });
+      bridge.flush();
+
+      if (req.signal?.aborted) return;
+
+      const latestRec = (await getAiInterviewRecord<StoredJdRecordPayload>(user.id, recordId)) || freshRec;
+      let doneEv: Record<string, unknown> | null = null;
+      if (step === 'stage1') {
+       doneEv = await persistCompletedStage1({
+        userId: user.id,
+        recordId,
+        freshRec: latestRec,
+        hashHex,
+        modelLabel: dsOut.model,
+        rawText: dsOut.text,
+        thoughts: dsOut.thoughts,
+        usage: dsOut.usage,
+       });
+      } else if (step === 'phase') {
+       doneEv = await persistCompletedPhase({
+        userId: user.id,
+        recordId,
+        freshRec: latestRec,
+        s1Rep: latestRec.payload?.partialReport || s1Rep!,
+        hashHex,
+        phaseIndex,
+        modelLabel: dsOut.model,
+        rawText: dsOut.text,
+        thoughts: dsOut.thoughts,
+        usage: dsOut.usage,
+       });
+      } else {
+       doneEv = await persistCompletedQuestions({
+        userId: user.id,
+        recordId,
+        freshRec: latestRec,
+        s1Rep: latestRec.payload?.partialReport || s1Rep!,
+        hashHex,
+        modelLabel: dsOut.model,
+        rawText: dsOut.text,
+        thoughts: dsOut.thoughts,
+        usage: dsOut.usage,
+       });
+      }
+
+      if (!doneEv) {
+       send({
+        type: 'retry_step',
+        step,
+        phaseIndex: step === 'phase' ? phaseIndex : undefined,
+        reason: 'DeepSeek 兜底输出解析不完整，重试中',
+       });
+       return;
+      }
+      send(doneEv);
+     } catch (e) {
+      if (!req.signal?.aborted) {
+       send({
+        type: 'retry_step',
+        step,
+        phaseIndex: step === 'phase' ? phaseIndex : undefined,
+        reason: e instanceof Error ? e.message : 'DeepSeek 兜底网络波动，自动重试',
+       });
+      }
+     } finally {
+      clearInterval(pingTimer);
+      if (!closed) {
+       closed = true;
+       try {
+        controller.close();
+       } catch {}
+      }
+     }
+    },
+    cancel() {
+     closed = true;
+    },
+   });
+
+   return new Response(stream, {
+    headers: {
+     'Content-Type': 'application/x-ndjson; charset=utf-8',
+     'Cache-Control': 'no-store, no-transform',
+     'X-Accel-Buffering': 'no',
+     'X-Content-Type-Options': 'nosniff',
+    },
+   });
+  }
+
+  // ---- Action 5: finalize (aggregates all saved D1 checkpoints into final completed report) ----
   if (action === 'finalize') {
    const recordId = typeof body.recordId === 'string' ? body.recordId.trim().slice(0, 80) : '';
    if (!recordId) throw new AuthError('缺少任务标识。', 400);
@@ -1078,7 +1562,7 @@ export async function POST(req: Request) {
    const s2Thoughts = s2ThoughtParts.join('\n\n');
    const combinedThoughts = [
     s1Thoughts,
-    s2Thoughts ? (s1Thoughts ? `── 阶段二：Antigravity Agent 分步出题 ──\n${s2Thoughts}` : s2Thoughts) : '',
+    s2Thoughts ? (s1Thoughts ? `── 阶段二：分步出题 ──\n${s2Thoughts}` : s2Thoughts) : '',
    ]
     .filter(Boolean)
     .join('\n\n')
