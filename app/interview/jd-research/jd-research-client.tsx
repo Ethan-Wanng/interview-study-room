@@ -506,7 +506,7 @@ export default function JdResearchClient({
   setReport(null);
   setRawText('');
   setThoughts('');
-  setStreamModel('Gemini 4 Hydrogen（高）');
+  setStreamModel('');
   setStreamThoughts('');
   setStreamText('');
   setImportResult(null);
@@ -526,7 +526,9 @@ export default function JdResearchClient({
     body: JSON.stringify({ kind, source: clean, geminiProxy }),
     signal: ctl.signal,
    });
-   if (!r.ok || !r.body) {
+   const ct = r.headers.get('content-type') || '';
+
+   if (!r.ok) {
     let msg = L('发起调研失败', 'Request failed');
     try {
      const j = (await r.json()) as { error?: string };
@@ -535,6 +537,46 @@ export default function JdResearchClient({
     throw new Error(msg);
    }
 
+   // Primary mode (JSON): instant cache hit OR background task polling
+   if (!ct.includes('ndjson')) {
+    const d = (await r.json()) as {
+     recordId?: string;
+     id?: string;
+     sig?: string;
+     status?: string;
+     report?: JdResearchReport | null;
+     rawText?: string;
+     thoughts?: string;
+     model?: string;
+     cacheKey?: string;
+     ckSig?: string;
+     error?: string;
+    };
+    if (d.status === 'completed') {
+     applyReportView(d.recordId || '', d.report ?? null, d.rawText || '', d.thoughts || '', d.model || '', null, clean);
+     void refreshRecords();
+     stopActive();
+     return;
+    }
+    if (!d.id || !d.sig) throw new Error(d.error || L('未返回任务 ID', 'Missing task ID'));
+    void refreshRecords();
+    await pollLegacyTask({
+     id: d.recordId || '',
+     title: '',
+     subtitle: '',
+     status: 'running',
+     interactionId: d.id,
+     sig: d.sig,
+     ckSig: d.ckSig,
+     payload: { cacheKey: d.cacheKey, source: clean },
+     createdAt: t0,
+     updatedAt: t0,
+    });
+    return;
+   }
+
+   // Streaming fallback (NDJSON)
+   if (!r.body) throw new Error(L('未收到流式响应', 'Empty stream'));
    const reader = r.body.getReader();
    const dec = new TextDecoder();
    let buf = '';
@@ -825,7 +867,7 @@ export default function JdResearchClient({
            ? L(`生成中 · ${elapsed}s`, `Generating · ${elapsed}s`)
            : streamThoughts
              ? L(`深度思考中 · ${elapsed}s`, `Thinking · ${elapsed}s`)
-             : L(`连接中 · ${elapsed}s`, `Connecting · ${elapsed}s`)}
+             : L(`深度调研中 · ${elapsed}s`, `Researching · ${elapsed}s`)}
          </span>
         </span>
         {streamModel && <span className="jdr-model-pill">{streamModel}</span>}

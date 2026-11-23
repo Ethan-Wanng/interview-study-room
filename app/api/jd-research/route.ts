@@ -4,9 +4,9 @@ import {
  ANTIGRAVITY_AGENT_ID,
  AntigravityError,
  pollAntigravityInteraction,
+ startAntigravityInteraction,
  type AntigravityUsage,
 } from '@/lib/antigravity-agent';
-import { jdResearchStream } from '@/lib/gemini';
 import { readPromptCache, sha256Hex, writePromptCache } from '@/lib/prompt-cache';
 import { getAiInterviewRecord, saveAiInterviewRecord } from '@/lib/ai-interview-records';
 import {
@@ -32,14 +32,12 @@ type CachedJdPayload = {
  report: JdResearchReport;
  rawText: string;
  thoughts: string;
- model?: string;
  usage?: AntigravityUsage;
 };
 
 type StoredJdRecordPayload = {
  kind: JdInputKind;
  source: string;
- model?: string;
  cacheKey?: string;
  report: JdResearchReport | null;
  rawText: string;
@@ -63,7 +61,8 @@ function makeSubtitle(rep: JdResearchReport | null): string {
  return [rep.inferredLevel, rep.prepDays, rep.companyStyle].filter(Boolean).join(' · ').slice(0, 80);
 }
 
-// Streaming NDJSON endpoint powered by Gemini 4 Hydrogen (high thinking, auto-fallback to Gemini 3.8 Flash / DeepSeek).
+// Exclusively uses the managed agent backend (`background: true` + HMAC polling + D1 persistence).
+// Strictly isolated from text-output model APIs so it never consumes text-output RPD quota.
 export async function POST(req: Request) {
  try {
   assertSameOrigin(req);
@@ -87,135 +86,88 @@ export async function POST(req: Request) {
   if (source.length < 20) throw new AuthError('请粘贴至少 20 字的岗位 JD 或面经内容。');
 
   const recordId = 'jdr-' + crypto.randomUUID();
-  const cacheKey = 'jd4:' + (await sha256Hex([kind, source]));
+  const cacheKey = 'jd-auto:' + (await sha256Hex([kind, source]));
 
-  const enc = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-   async start(controller) {
-    const send = (ev: Record<string, unknown>) => {
-     try {
-      controller.enqueue(enc.encode(JSON.stringify(ev) + '\n'));
-     } catch {}
-    };
+  // 1. Check D1 deterministic cache first
+  const hit = await readPromptCache<CachedJdPayload>(cacheKey);
+  if (hit?.payload?.report) {
+   const rep = hit.payload.report;
+   const stored: StoredJdRecordPayload = {
+    kind,
+    source,
+    cacheKey,
+    report: rep,
+    rawText: hit.payload.rawText || '',
+    thoughts: hit.payload.thoughts || '',
+   };
+   await saveAiInterviewRecord({
+    id: recordId,
+    userId: user.id,
+    kind: 'jd-research',
+    title: rep.roleTitle || draftTitle(source, kind),
+    subtitle: makeSubtitle(rep),
+    status: 'completed',
+    payload: stored,
+   });
+   return Response.json(
+    {
+     recordId,
+     status: 'completed',
+     report: rep,
+     rawText: hit.payload.rawText || '',
+     thoughts: hit.payload.thoughts || '',
+    },
+    { headers: noCache },
+   );
+  }
 
-    try {
-     // 1. Check D1 deterministic cache first (silent fast return)
-     const hit = await readPromptCache<CachedJdPayload>(cacheKey);
-     if (hit?.payload?.report) {
-      const rep = hit.payload.report;
-      const model = hit.payload.model || hit.model || 'Gemini 4 Hydrogen（高）';
-      const stored: StoredJdRecordPayload = {
-       kind,
-       source,
-       model,
-       cacheKey,
-       report: rep,
-       rawText: hit.payload.rawText || '',
-       thoughts: hit.payload.thoughts || '',
-      };
-      await saveAiInterviewRecord({
-       id: recordId,
-       userId: user.id,
-       kind: 'jd-research',
-       title: rep.roleTitle || draftTitle(source, kind),
-       subtitle: makeSubtitle(rep),
-       status: 'completed',
-       payload: stored,
-      });
-      send({
-       type: 'done',
-       recordId,
-       model,
-       report: rep,
-       rawText: hit.payload.rawText || '',
-       thoughts: hit.payload.thoughts || '',
-      });
-      controller.close();
-      return;
-     }
-
-     send({ type: 'start', recordId });
-
-     const res = await jdResearchStream(
-      getJdResearchSystemPrompt(),
-      buildJdResearchInput({ kind, source }),
-      delta => send({ type: 'delta', text: delta }),
-      () => send({ type: 'reset' }),
-      {
-       onThink: delta => send({ type: 'thought', text: delta }),
-       onModel: model => send({ type: 'model', model }),
-       geminiProxy,
-       signal: req.signal,
-      },
-     );
-
-     const report = parseAndEnrichJdReport(res.text);
-     if (report) {
-      await writePromptCache(
-       cacheKey,
-       'jd-research',
-       res.model,
-       { report, rawText: res.text, thoughts: res.thoughts, model: res.model } satisfies CachedJdPayload,
-       7 * 24 * 3600_000,
-      );
-     }
-
-     const stored: StoredJdRecordPayload = {
-      kind,
-      source,
-      model: res.model,
-      cacheKey,
-      report,
-      rawText: res.text,
-      thoughts: res.thoughts,
-     };
-     await saveAiInterviewRecord({
-      id: recordId,
-      userId: user.id,
-      kind: 'jd-research',
-      title: report?.roleTitle || draftTitle(source, kind),
-      subtitle: makeSubtitle(report),
-      status: 'completed',
-      payload: stored,
-     });
-
-     send({
-      type: 'done',
-      recordId,
-      model: res.model,
-      report,
-      rawText: res.text,
-      thoughts: res.thoughts,
-     });
-    } catch (e) {
-     if (!req.signal.aborted) {
-      const msg = e instanceof Error && e.message && !/^gemini:|^deepseek:/.test(e.message)
-       ? e.message
-       : '深度调研服务暂时不可用，请稍后重试。';
-      send({ type: 'error', error: msg });
-     }
-    } finally {
-     try {
-      controller.close();
-     } catch {}
-    }
-   },
+  // 2. Start managed background interaction & immediately persist running state to D1
+  const started = await startAntigravityInteraction({
+   systemInstruction: getJdResearchSystemPrompt(),
+   input: buildJdResearchInput({ kind, source }),
+   geminiProxy,
   });
 
-  return new Response(stream, {
-   headers: {
-    'Content-Type': 'application/x-ndjson; charset=utf-8',
-    'Cache-Control': 'no-store',
-    'X-Content-Type-Options': 'nosniff',
-   },
+  const sig = await signToken(user.id, started.id);
+  const ckSig = await signToken(user.id, cacheKey);
+
+  const pendingPayload: StoredJdRecordPayload = {
+   kind,
+   source,
+   cacheKey,
+   report: null,
+   rawText: '',
+   thoughts: '',
+  };
+  await saveAiInterviewRecord({
+   id: recordId,
+   userId: user.id,
+   kind: 'jd-research',
+   title: draftTitle(source, kind),
+   subtitle: '',
+   status: 'running',
+   interactionId: started.id,
+   payload: pendingPayload,
   });
+
+  return Response.json(
+   {
+    recordId,
+    id: started.id,
+    sig,
+    status: started.status,
+    cacheKey,
+    ckSig,
+   },
+   { headers: noCache },
+  );
  } catch (e) {
   if (e instanceof AuthError) return Response.json({ error: e.message }, { status: e.status, headers: noCache });
+  if (e instanceof AntigravityError) return Response.json({ error: e.message, code: e.code }, { status: e.status, headers: noCache });
   return Response.json({ error: '深度调研服务暂时不可用，请重试。' }, { status: 503, headers: noCache });
  }
 }
 
-// Keep GET polling handler for backward compatibility with any pre-existing running records.
 export async function GET(req: Request) {
  try {
   const user = await sessionUser(req.headers);
@@ -284,6 +236,23 @@ export async function GET(req: Request) {
     },
     { headers: noCache },
    );
+  }
+
+  if ((polled.status === 'failed' || polled.status === 'cancelled') && rid) {
+   const prev = await getAiInterviewRecord<StoredJdRecordPayload>(user.id, rid);
+   if (prev) {
+    await saveAiInterviewRecord({
+     id: rid,
+     userId: user.id,
+     kind: 'jd-research',
+     title: prev.title,
+     subtitle: prev.subtitle,
+     status: 'error',
+     interactionId: id,
+     payload: { ...prev.payload, error: polled.error || '调研任务中断' },
+     createdAt: prev.createdAt,
+    });
+   }
   }
 
   return Response.json(polled, { headers: noCache });

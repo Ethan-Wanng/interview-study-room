@@ -12,7 +12,7 @@ export function groupReleasesByDay(releases:Release[]):ReleaseDay[]{
 export const RELEASES:Release[]=[
  {version:'2026.11.23',date:'2026-11-23',title:'新增高阶模拟面试 / 系统设计深度点评、JD / 面经一键深度调研及全站提示缓存',changes:[
   '新增「高阶模拟面试 · 系统设计深度点评」（/interview/architect，面试首页「AI 专项实战」直达）：支持「系统设计评审」与「高阶模拟面试」双模式、6 大高频架构预设题、思考过程按需展开、一键记笔记、多轮连环追问以及云端历史保存与断点续评。',
-  '新增「JD / 面经一键深度调研」（/interview/jd-research）：支持 Gemini 4 Hydrogen（高思考）实时流式输出与思考过程直播，依据 JD / 面经真实难度自主判定职级、建议备考周期与专题题数，一键生成「考点画像」「直连站内学习关卡的复习路径」与「专属专题题库」，支持顶部一键批量导入「我的题库」（修复参考答案 Markdown 换行、加粗与行内代码排版）、单题直跳高阶模拟面试及云端历史自动保存。',
+  '新增「JD / 面经一键深度调研」（/interview/jd-research）：依据 JD / 面经真实难度自主判定职级、建议备考周期与专题题数，一键生成「考点画像」「直连站内学习关卡的复习路径」与「专属专题题库」，支持顶部一键批量导入「我的题库」（修复参考答案 Markdown 换行、加粗与行内代码排版）、单题直跳高阶模拟面试及云端历史断点恢复。',
   '「学习」首页新增「专题」分类（/learn/jd-special）：自动收录你通过 JD / 面经深度调研生成的全部专题，支持逐题刷题、默写自测与 AI 评分批注、标记已掌握并同步进度、查看复习路径与考点画像。',
   '全站 AI 接入多层提示缓存（Prompt Caching）：固定多轮对话系统提示与历史前缀（提升 DeepSeek / Gemini / OpenAI / 通义千问隐式前缀缓存命中率），启用 Anthropic cache_control、OpenAI prompt_cache_key 与 Gemini 2.5 显式 cachedContents，并新增 D1 确定性结果缓存（覆盖 AI 评分、规范回答、代码操场补全、系统设计评审与 JD 调研，重复命中零 token 消耗、毫秒直出）。',
  ]},
