@@ -1,13 +1,13 @@
 // Cloudflare Workers native proxy tunnel for Gemini API via `cloudflare:sockets` + WebCrypto TLS 1.3.
 // Monthly schedule (China time UTC+8):
-//   - Days 1..15:  original AnyTLS node (5tw.quandao.com:4430)
-//   - Days 16..31: new HTTPS CONNECT node (t4cache.71edgeiqiyi.com:22443)
+//   - Days 1..15:  AnyTLS node (19sdy.quandao.com:4430)
+//   - Days 16..31: HTTPS CONNECT node (t4cache.71edgeiqiyi.com:22443)
 
 import { connect } from 'cloudflare:sockets';
 import { Tls13Stream, type ByteStream } from './tls13-client';
 
 export const DEFAULT_DAY1_15_NODE =
- 'anytls://cc051d14-6a12-41fc-8d4c-4037153143ce@5tw.quandao.com:4430?skip_cert_verify=true&sni=psstatic.cdn.bcebos.com#5%E5%8F%B0%E6%B9%BE-%E8%81%94%E9%80%9A/%E7%A7%BB%E5%8A%A8(AnyTLS)';
+ 'anytls://cc051d14-6a12-41fc-8d4c-4037153143ce@19sdy.quandao.com:4430?skip_cert_verify=true&sni=psstatic.cdn.bcebos.com#%F0%9F%87%A6%F0%9F%87%BA19%E6%BE%B3%E6%B4%B2-%E7%A7%BB%E5%8A%A8%E4%BC%98%E5%8C%96(AnyTLS)';
 
 export const DEFAULT_DAY16_END_NODE =
  'https://b98bc3e4-afc5-4d29-a934-161f6dc80654:b98bc3e4-afc5-4d29-a934-161f6dc80654@t4cache.71edgeiqiyi.com:22443#TW%20-%20%E5%8F%B0%E6%B9%BE%2004';

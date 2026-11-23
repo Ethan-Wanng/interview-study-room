@@ -13,6 +13,19 @@ import {
 
 export const ANTIGRAVITY_AGENT_ID = 'antigravity-preview-09-2026';
 
+// Supported underlying models for Antigravity Managed Agent (`undefined` = default `gemini-4-hydrogen`).
+// Strictly excludes `gemini-2.5-flash`.
+export const ANTIGRAVITY_MODEL_CHAIN: (string | undefined)[] = [
+ undefined,
+ 'gemini-3.5-flash-lite',
+ 'gemini-3.8-flash',
+ 'gemini-3.6-flash',
+];
+
+export function antigravityModelLabel(agentModel?: string): string {
+ return agentModel ? `Antigravity Agent (${agentModel})` : 'Antigravity Agent';
+}
+
 export class AntigravityError extends Error {
  constructor(
   message: string,
@@ -200,7 +213,7 @@ export async function startAntigravityInteraction(opts: {
   if (res.status === 429) {
    const errTxt = (await res.text()).slice(0, 1024);
    await refundSiteGeminiLimit(ANTIGRAVITY_AGENT_ID, quota.reservedTokens);
-   await markSiteGemini429(ANTIGRAVITY_AGENT_ID, errTxt);
+   await markSiteGemini429(opts.agentModel || ANTIGRAVITY_AGENT_ID, errTxt);
    throw new AntigravityError('深度评审服务触发限流，请稍后再试。', 429, 'rate_limited');
   }
   if (!res.ok) {
@@ -209,7 +222,7 @@ export async function startAntigravityInteraction(opts: {
    if (errTxt.toLowerCase().includes('location is not supported')) {
     throw new AntigravityError('当前代理节点地区受限，请在设置中检查代理网络。', 502, 'geo_blocked');
    }
-   throw new AntigravityError(`启动架构评审失败（HTTP ${res.status}），请重试。`, 502, 'upstream_error');
+   throw new AntigravityError(`启动架构评审失败（HTTP ${res.status}），请重试。`, res.status === 503 ? 503 : 502, res.status === 503 ? 'service_unavailable' : 'upstream_error');
   }
 
   const data = (await res.json()) as { id?: string; status?: string; environment_id?: string };
@@ -285,25 +298,29 @@ export async function pollAntigravityInteraction(opts: {
  };
 
  const thoughtParts: string[] = [];
- const outputParts: string[] = [];
+ const outputSteps: string[] = [];
  for (const step of j.steps ?? []) {
   if (step.type === 'thought' && Array.isArray(step.summary)) {
    for (const s of step.summary) {
     if (typeof s.text === 'string' && s.text.trim()) thoughtParts.push(s.text.trim());
    }
   } else if (step.type === 'model_output' && Array.isArray(step.content)) {
-   for (const c of step.content) {
-    if (typeof c.text === 'string' && c.text.trim()) outputParts.push(c.text.trim());
-   }
+   const stepText = step.content
+    .map(c => (typeof c.text === 'string' ? c.text : ''))
+    .join('')
+    .trim();
+   if (stepText) outputSteps.push(stepText);
   }
  }
- if (!outputParts.length && typeof j.output_text === 'string' && j.output_text.trim()) {
-  outputParts.push(j.output_text.trim());
+ let finalOutputText = outputSteps.length ? outputSteps[outputSteps.length - 1] : '';
+ if (!finalOutputText && typeof j.output_text === 'string' && j.output_text.trim()) {
+  finalOutputText = j.output_text.trim();
  }
- if (!outputParts.length && Array.isArray(j.outputs)) {
-  for (const o of j.outputs) {
-   if (typeof o.text === 'string' && o.text.trim()) outputParts.push(o.text.trim());
-  }
+ if (!finalOutputText && Array.isArray(j.outputs)) {
+  const outs = j.outputs
+   .map(o => (typeof o.text === 'string' ? o.text.trim() : ''))
+   .filter(Boolean);
+  if (outs.length) finalOutputText = outs[outs.length - 1];
  }
 
  const rawStatus = j.status || 'in_progress';
@@ -333,11 +350,424 @@ export async function pollAntigravityInteraction(opts: {
  return {
   id: j.id || opts.interactionId,
   status,
-  text: outputParts.join('\n\n'),
+  text: finalOutputText,
   thoughts: thoughtParts.join('\n\n'),
   usage,
   error: j.error?.message,
  };
+}
+
+export type AntigravitySliceResult = {
+ id: string;
+ status: 'in_progress' | 'completed' | 'failed' | 'cancelled';
+ lastEventId: string;
+ text: string;
+ thoughts: string;
+ deltaText: string;
+ deltaThoughts: string;
+ usage?: AntigravityUsage;
+ error?: string;
+};
+
+// Watches a background Antigravity interaction (`background: true`) for up to `maxSliceMs`
+// via `GET /v1beta/interactions/{id}?stream=true&last_event_id=...`, automatically falling back
+// to polling (`GET /v1beta/interactions/{id}`) if SSE resume is rejected or times out.
+export async function streamAntigravitySlice(opts: {
+ interactionId: string;
+ lastEventId?: string;
+ maxSliceMs?: number;
+ geminiProxy?: boolean;
+ signal?: AbortSignal;
+ onEventId?: (eventId: string) => void;
+ onStep?: (stepType: string) => void;
+ onKeepAlive?: () => void;
+ onThoughtDelta?: (delta: string) => void;
+ onTextDelta?: (delta: string) => void;
+ onTextReset?: () => void;
+}): Promise<AntigravitySliceResult> {
+ const sliceMs = Math.max(8_000, Math.min(50_000, opts.maxSliceMs ?? 40_000));
+ const deadlineAt = Date.now() + sliceMs;
+ const geminiProxy = opts.geminiProxy !== false;
+
+ const { key, envMap, gatewayBase, useWorkerTunnel } = resolveKeyAndGateway(geminiProxy);
+ const headers: Record<string, string> = {
+  'x-goog-api-key': key,
+  accept: 'text/event-stream',
+ };
+
+ const ctl = new AbortController();
+ const onAbort = () => ctl.abort();
+ if (opts.signal) {
+  if (opts.signal.aborted) ctl.abort();
+  else opts.signal.addEventListener('abort', onAbort, { once: true });
+ }
+ let sliceTimedOut = false;
+ const sliceTimer = setTimeout(() => {
+  sliceTimedOut = true;
+  ctl.abort();
+ }, sliceMs);
+
+ let lastEventId = opts.lastEventId || '';
+ let deltaText = '';
+ let deltaThoughts = '';
+ let fullText = '';
+ let fullThoughts = '';
+ let usage: AntigravityUsage | undefined;
+ let finalStatus: AntigravitySliceResult['status'] = 'in_progress';
+ let finalError = '';
+ let needPollFallback = false;
+
+ const parseUsageObj = (u: Record<string, unknown> | undefined): AntigravityUsage | undefined => {
+  if (!u) return undefined;
+  return {
+   totalTokens: Number(u.total_tokens || 0),
+   inputTokens: Number(u.total_input_tokens || 0),
+   cachedTokens: Number(u.total_cached_tokens || 0),
+   outputTokens: Number(u.total_output_tokens || 0),
+   thoughtTokens: Number(u.total_thought_tokens || 0),
+  };
+ };
+
+ const extractStepsFromInteraction = (inter: Record<string, unknown>) => {
+  if (!Array.isArray(inter.steps)) return;
+  const fallbackModelSteps: string[] = [];
+  const fallbackThoughts: string[] = [];
+  for (const st of inter.steps as RawStep[]) {
+   if (st.type === 'thought' && Array.isArray(st.summary)) {
+    for (const s of st.summary) {
+     if (typeof s.text === 'string' && s.text.trim()) fallbackThoughts.push(s.text.trim());
+    }
+   } else if (st.type === 'model_output' && Array.isArray(st.content)) {
+    const stepTxt = st.content
+     .map(c => (typeof c.text === 'string' ? c.text : ''))
+     .join('')
+     .trim();
+    if (stepTxt) fallbackModelSteps.push(stepTxt);
+   }
+  }
+  if (fallbackModelSteps.length) {
+   fullText = fallbackModelSteps[fallbackModelSteps.length - 1];
+  } else if (typeof inter.output_text === 'string' && inter.output_text.trim()) {
+   fullText = inter.output_text.trim();
+  }
+  if (fallbackThoughts.length) {
+   fullThoughts = fallbackThoughts.join('\n\n');
+  }
+ };
+
+ try {
+  const qs = lastEventId
+   ? `?stream=true&last_event_id=${encodeURIComponent(lastEventId)}`
+   : '?stream=true';
+  const pathWithQuery = `/v1beta/interactions/${encodeURIComponent(opts.interactionId)}${qs}`;
+
+  let res: Response | null = null;
+  if (useWorkerTunnel) {
+   try {
+    const out = await fetchGeminiViaScheduledProxy(
+     pathWithQuery,
+     { method: 'GET', headers, signal: ctl.signal, connectTimeoutMs: 7500 },
+     envMap,
+    );
+    res = out.res;
+   } catch {
+    if (opts.signal?.aborted) throw new AntigravityError('已取消调研。', 499, 'aborted');
+    if (!sliceTimedOut) needPollFallback = true;
+   }
+  }
+  if (!res && !sliceTimedOut && !needPollFallback) {
+   const base = (gatewayBase || 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
+   res = await fetch(`${base}${pathWithQuery}`, { method: 'GET', headers, signal: ctl.signal });
+  }
+
+  if (res && res.ok && res.body && (res.headers.get('content-type') || '').toLowerCase().includes('text/event-stream')) {
+   const reader = res.body.getReader();
+   const dec = new TextDecoder();
+   let buf = '';
+   let currentEvent = '';
+   let modelOutputStepCount = 0;
+
+   try {
+    for (;;) {
+     const { done, value } = await reader.read();
+     if (done) break;
+     buf += dec.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+     let nl: number;
+     while ((nl = buf.indexOf('\n')) >= 0) {
+      const rawLine = buf.slice(0, nl);
+      buf = buf.slice(nl + 1);
+      const line = rawLine.trim();
+      if (!line) {
+       currentEvent = '';
+       continue;
+      }
+      if (line.startsWith(':')) {
+       opts.onKeepAlive?.();
+       continue;
+      }
+      if (line.startsWith('id:')) {
+       const eid = line.slice(3).trim();
+       if (eid && eid !== lastEventId) {
+        lastEventId = eid;
+        opts.onEventId?.(eid);
+       }
+       continue;
+      }
+      if (line.startsWith('event:')) {
+       currentEvent = line.slice(6).trim();
+       continue;
+      }
+      if (!line.startsWith('data:')) continue;
+      const dataStr = line.slice(5).trim();
+      if (!dataStr || dataStr === '[DONE]') continue;
+
+      let ev: Record<string, unknown>;
+      try {
+       ev = JSON.parse(dataStr) as Record<string, unknown>;
+      } catch {
+       continue;
+      }
+
+      if (typeof ev.event_id === 'string' && ev.event_id && ev.event_id !== lastEventId) {
+       lastEventId = ev.event_id;
+       opts.onEventId?.(lastEventId);
+      }
+
+      const evType = (typeof ev.event_type === 'string' ? ev.event_type : currentEvent) || '';
+
+      if (evType === 'error' || (ev.error && !ev.interaction)) {
+       const errObj = ev.error as { message?: string; code?: string } | undefined;
+       finalError = errObj?.message || errObj?.code || 'stream_error';
+       needPollFallback = true;
+       break;
+      }
+
+      if (evType === 'interaction.created' || evType === 'interaction.completed' || evType === 'interaction.failed' || ev.interaction) {
+       const inter = (ev.interaction || {}) as Record<string, unknown>;
+       if (inter.usage) {
+        usage = parseUsageObj(inter.usage as Record<string, unknown>) || usage;
+       }
+       if (evType === 'interaction.completed' || inter.status === 'completed') {
+        finalStatus = 'completed';
+        extractStepsFromInteraction(inter);
+        break;
+       }
+       if (evType === 'interaction.failed' || inter.status === 'failed' || inter.status === 'cancelled') {
+        finalStatus = inter.status === 'cancelled' ? 'cancelled' : 'failed';
+        const errObj = (inter.error || ev.error) as { message?: string; code?: string } | undefined;
+        finalError = errObj?.message || errObj?.code || finalStatus;
+        break;
+       }
+       continue;
+      }
+
+      if (evType === 'step.start') {
+       const step = (ev.step || {}) as { type?: string };
+       if (step.type === 'model_output') {
+        modelOutputStepCount++;
+        if (modelOutputStepCount > 1 && deltaText) {
+         deltaText = '';
+         opts.onTextReset?.();
+        }
+       }
+       if (step.type) opts.onStep?.(step.type);
+       continue;
+      }
+
+      if (evType === 'step.delta') {
+       const delta = (ev.delta || {}) as {
+        type?: string;
+        text?: string;
+        thought?: string;
+        content?: { text?: string; type?: string } | { text?: string; type?: string }[];
+        summary?: { text?: string }[];
+       };
+       if (delta.type === 'text' && typeof delta.text === 'string' && delta.text) {
+        deltaText += delta.text;
+        opts.onTextDelta?.(delta.text);
+       } else if (delta.type === 'thought' || delta.type === 'thought_summary' || Array.isArray(delta.summary)) {
+        const td = extractDeltaThoughtText(delta);
+        if (td) {
+         deltaThoughts += td;
+         opts.onThoughtDelta?.(td);
+        }
+       } else if (delta.type === 'thought_signature') {
+        opts.onStep?.('thought_signature');
+       }
+       continue;
+      }
+
+      if (evType === 'step.stop' && ev.usage) {
+       usage = parseUsageObj(ev.usage as Record<string, unknown>) || usage;
+      }
+     }
+     if (finalStatus !== 'in_progress' || needPollFallback) break;
+    }
+   } catch {
+    if (opts.signal?.aborted) throw new AntigravityError('已取消调研。', 499, 'aborted');
+    if (!sliceTimedOut && finalStatus === 'in_progress') needPollFallback = true;
+   } finally {
+    try {
+     await reader.cancel();
+    } catch {}
+   }
+  } else if (res && !sliceTimedOut) {
+   // GET ?stream=true not SSE or non-200 -> fall back to JSON polling
+   try {
+    await res.body?.cancel();
+   } catch {}
+   needPollFallback = true;
+  }
+ } catch (e) {
+  if (e instanceof AntigravityError && e.code === 'aborted') throw e;
+  if (opts.signal?.aborted) throw new AntigravityError('已取消调研。', 499, 'aborted');
+  if (!sliceTimedOut) needPollFallback = true;
+ } finally {
+  clearTimeout(sliceTimer);
+  opts.signal?.removeEventListener('abort', onAbort);
+ }
+
+ // If we didn't get `interaction.completed` yet (either SSE slice ended cleanly, hit 40s limit,
+ // or GET ?stream=true fell back to polling), check `pollAntigravityInteraction` so we know exact state!
+ if (finalStatus === 'in_progress' && !opts.signal?.aborted) {
+  if (needPollFallback) {
+   // Poll cleanly until completed/failed or slice budget expires (leaving 5s margin)
+   while (!opts.signal?.aborted && Date.now() + 2500 < deadlineAt) {
+    try {
+     const polled = await pollAntigravityInteraction({
+      interactionId: opts.interactionId,
+      geminiProxy,
+      signal: opts.signal,
+     });
+     if (polled.status !== 'in_progress') {
+      finalStatus = polled.status;
+      if (polled.text) fullText = polled.text;
+      if (polled.thoughts) fullThoughts = polled.thoughts;
+      if (polled.usage) usage = polled.usage;
+      if (polled.error) finalError = polled.error;
+      break;
+     }
+    } catch {
+     if (opts.signal?.aborted) break;
+    }
+    opts.onKeepAlive?.();
+    const waitMs = Math.min(2800, Math.max(400, deadlineAt - Date.now() - 500));
+    await new Promise<void>(resolve => {
+     const t = setTimeout(resolve, waitMs);
+     const stopWait = () => {
+      clearTimeout(t);
+      resolve();
+     };
+     opts.signal?.addEventListener('abort', stopWait, { once: true });
+    });
+   }
+  } else {
+   // Single confirmation poll after SSE EOF or 40s slice boundary
+   try {
+    const polled = await pollAntigravityInteraction({
+     interactionId: opts.interactionId,
+     geminiProxy,
+     signal: opts.signal,
+    });
+    finalStatus = polled.status;
+    if (polled.text) fullText = polled.text;
+    if (polled.thoughts) fullThoughts = polled.thoughts;
+    if (polled.usage) usage = polled.usage;
+    if (polled.error) finalError = polled.error;
+   } catch {
+    // Still treat as in_progress if transient poll failed so caller resumes cleanly
+   }
+  }
+ }
+
+ const resolvedText = fullText || deltaText;
+ const resolvedThoughts = fullThoughts || deltaThoughts;
+
+ if (finalStatus === 'completed' && !fullText && !deltaText) {
+  // Completed event didn't carry steps; fetch full steps via poll once
+  try {
+   const polled = await pollAntigravityInteraction({
+    interactionId: opts.interactionId,
+    geminiProxy,
+    signal: opts.signal,
+   });
+   if (polled.text) fullText = polled.text;
+   if (polled.thoughts) fullThoughts = polled.thoughts;
+   if (polled.usage) usage = polled.usage;
+  } catch {}
+ }
+
+ if (finalStatus === 'completed' && usage && usage.totalTokens > 2500) {
+  void recordExtraGeminiTokens(ANTIGRAVITY_AGENT_ID, Math.min(40_000, usage.totalTokens - 2500));
+ }
+
+ return {
+  id: opts.interactionId,
+  status: finalStatus,
+  lastEventId,
+  text: fullText || resolvedText,
+  thoughts: fullThoughts || resolvedThoughts,
+  deltaText,
+  deltaThoughts,
+  usage,
+  error: finalError || undefined,
+ };
+}
+
+// Runs a background Antigravity Agent interaction to completion within a single request
+// (with model-chain fallback across supported Antigravity underlying models; never uses DeepSeek).
+export async function runAntigravityBackgroundToCompletion(opts: {
+ systemInstruction: string;
+ input: string;
+ maxTotalTokens?: number;
+ geminiProxy?: boolean;
+ signal?: AbortSignal;
+ validate?: (text: string) => boolean;
+}): Promise<{ text: string; thoughts: string; modelLabel: string; usage?: AntigravityUsage }> {
+ let lastErr: unknown;
+ for (const agentModel of ANTIGRAVITY_MODEL_CHAIN) {
+  if (opts.signal?.aborted) throw new AntigravityError('已取消。', 499, 'aborted');
+  const label = antigravityModelLabel(agentModel);
+  try {
+   const started = await startAntigravityInteraction({
+    systemInstruction: opts.systemInstruction,
+    input: opts.input,
+    agentModel,
+    maxTotalTokens: opts.maxTotalTokens ?? 16_000,
+    geminiProxy: opts.geminiProxy,
+    signal: opts.signal,
+   });
+   const deadline = Date.now() + 95_000;
+   let polled = await pollAntigravityInteraction({
+    interactionId: started.id,
+    geminiProxy: opts.geminiProxy,
+    signal: opts.signal,
+   });
+   while (polled.status === 'in_progress' && Date.now() < deadline && !opts.signal?.aborted) {
+    await new Promise<void>(resolve => {
+     const t = setTimeout(resolve, 2500);
+     opts.signal?.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true });
+    });
+    if (opts.signal?.aborted) break;
+    polled = await pollAntigravityInteraction({
+     interactionId: started.id,
+     geminiProxy: opts.geminiProxy,
+     signal: opts.signal,
+    });
+   }
+   if (polled.status === 'completed' && polled.text.trim()) {
+    if (!opts.validate || opts.validate(polled.text)) {
+     return { text: polled.text, thoughts: polled.thoughts, modelLabel: label, usage: polled.usage };
+    }
+    throw new AntigravityError(`${label} 输出格式校验失败`, 502, 'parse_error');
+   }
+   throw new AntigravityError(polled.error || `${label} ${polled.status}`, 502, 'agent_failed');
+  } catch (e) {
+   lastErr = e;
+   if (opts.signal?.aborted) throw e;
+  }
+ }
+ throw lastErr instanceof Error ? lastErr : new AntigravityError('Antigravity Agent 重出失败，请重试。', 502, 'agent_failed');
 }
 
 export type AntigravityStreamResult = {
@@ -472,7 +902,7 @@ export async function streamAntigravityInteraction(opts: {
   if (res.status === 429) {
    const errTxt = (await res.text()).slice(0, 1024);
    await refundOnce();
-   await markSiteGemini429(ANTIGRAVITY_AGENT_ID, errTxt);
+   await markSiteGemini429(opts.agentModel || ANTIGRAVITY_AGENT_ID, errTxt);
    throw new AntigravityError('深度调研服务触发限流，请稍后再试。', 429, 'rate_limited');
   }
   if (!res.ok || !res.body) {

@@ -1,8 +1,7 @@
 import { AuthError, assertSameOrigin, rateLimit, sessionUser } from '@/lib/site-auth';
 import { getAiInterviewRecord, saveAiInterviewRecord } from '@/lib/ai-interview-records';
-import { jdResearchModelStream } from '@/lib/gemini';
 import { parseSingleStudyQuiz } from '@/lib/jd-research-server';
-import type { AntigravityUsage } from '@/lib/antigravity-agent';
+import { runAntigravityBackgroundToCompletion, type AntigravityUsage } from '@/lib/antigravity-agent';
 import type { JdInputKind, JdResearchReport } from '@/lib/jd-research-types';
 
 export const dynamic = 'force-dynamic';
@@ -107,12 +106,10 @@ export async function POST(req: Request) {
    .filter(Boolean)
    .join('\n\n');
 
-  const out = await jdResearchModelStream({
-   strategy: 'deepseek-first',
-   thinkingLevel: 'low',
-   systemPrompt: REGEN_SYSTEM,
-   userInput,
-   maxTokens: 4096,
+  const out = await runAntigravityBackgroundToCompletion({
+   systemInstruction: REGEN_SYSTEM,
+   input: userInput,
+   maxTotalTokens: 12_000,
    geminiProxy,
    signal: req.signal,
    validate: txt => {
@@ -158,7 +155,7 @@ export async function POST(req: Request) {
     quiz: nextQuiz,
     report: nextReport,
     usage: nextUsage,
-    model: out.model,
+    model: out.modelLabel,
    },
    { headers: noCache },
   );

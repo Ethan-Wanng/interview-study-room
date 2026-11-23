@@ -916,7 +916,7 @@ export default function JdResearchClient({
   });
   setRawText('');
   setThoughts('');
-  setStreamModel('DeepSeek V4.1 Flash（思考）');
+  setStreamModel('Antigravity Agent');
   setStreamThoughts('');
   setImportResult(null);
 
@@ -932,44 +932,111 @@ export default function JdResearchClient({
   let curStageKey: JdStageKey = 'profile';
   let curStage1Cached = false;
   let resolvedSrc = clean;
+  let resolvedUrl = cleanUrl;
+  let resolvedImages = [...images];
+  const geminiProxy = getGeminiAutoProxy();
 
-  try {
-   const geminiProxy = getGeminiAutoProxy();
+  let accThoughts = '';
+  let accTail = '';
+  let completedCharsBase = 0;
+  const stage1Ref: { value: JdResearchReport | null } = { value: null };
+  let phaseQuizCounts: number[] = [];
+  let liveQTitles: string[] = [];
+
+  const sleep = (ms: number) =>
+   new Promise<void>(resolve => {
+    const t = window.setTimeout(resolve, ms);
+    ctl.signal.addEventListener(
+     'abort',
+     () => {
+      window.clearTimeout(t);
+      resolve();
+     },
+     { once: true },
+    );
+   });
+
+  const appendThought = (chunk: string) => {
+   if (!chunk) return;
+   accThoughts += chunk;
+   setStreamThoughts(accThoughts);
+   setConnState(prev => (prev === 'streaming' ? prev : 'thinking'));
+  };
+
+  const postJsonStep = async <T extends Record<string, unknown>>(payload: Record<string, unknown>): Promise<T> => {
    const r = await fetch('/api/jd-research', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-     kind,
-     source: clean,
-     ...(cleanUrl ? { url: cleanUrl } : {}),
-     ...(images.length ? { images } : {}),
-     ...(opts?.bypassCache ? { bypassCache: true } : {}),
-     ...(opts?.reuseRecordId ? { recordId: opts.reuseRecordId } : {}),
-     geminiProxy,
-    }),
+    body: JSON.stringify({ ...payload, geminiProxy }),
     signal: ctl.signal,
    });
+   let data: Record<string, unknown> = {};
+   try {
+    data = (await r.json()) as Record<string, unknown>;
+   } catch {}
+   if (!r.ok) {
+    const err = new Error((typeof data.error === 'string' && data.error) || L('请求失败，请重试', 'Request failed')) as Error & {
+     status?: number;
+    };
+    err.status = r.status;
+    throw err;
+   }
+   return data as T;
+  };
 
+  type WatchEv = {
+   type?: string;
+   recordId?: string;
+   interactionId?: string;
+   lastEventId?: string;
+   stage?: 1 | 2;
+   step?: string;
+   stepType?: string;
+   phaseIndex?: number;
+   phaseQuizCount?: number;
+   qTitles?: string[];
+   text?: string;
+   chars?: number;
+   cached?: boolean;
+   stage1Cached?: boolean;
+   keepThoughts?: boolean;
+   partialReport?: JdResearchReport | null;
+   progress?: JdLiveProgress;
+   quizCount?: number;
+   questionCount?: number;
+   thoughts?: string;
+   usage?: AntigravityUsage;
+   model?: string;
+   reason?: string;
+   error?: string;
+  };
+
+  const watchNdjsonSlice = async (
+   payload: Record<string, unknown>,
+   onEv: (ev: WatchEv) => void,
+  ): Promise<{ terminal?: WatchEv; cont?: { interactionId: string; lastEventId: string }; retryReason?: string }> => {
+   const r = await fetch('/api/jd-research', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'watch', ...payload, geminiProxy }),
+    signal: ctl.signal,
+   });
    if (!r.ok || !r.body) {
-    let msg = L('发起调研失败', 'Request failed');
+    let msg = L('监听进度失败', 'Watch failed');
     try {
      const j = (await r.json()) as { error?: string };
      if (j.error) msg = j.error;
     } catch {}
-    throw new Error(msg);
+    const err = new Error(msg) as Error & { status?: number };
+    err.status = r.status;
+    throw err;
    }
-
-   setConnState('connected');
-   setJdUrl('');
-   setImages([]);
-
    const reader = r.body.getReader();
    const dec = new TextDecoder();
    let buf = '';
-   let accThoughts = '';
-   let stage1ThoughtsSnap = '';
-   let accTail = '';
-   let receivedTerminal = false;
+   let cont: { interactionId: string; lastEventId: string } | undefined;
+   let terminal: WatchEv | undefined;
+   let retryReason: string | undefined;
 
    for (;;) {
     const { done, value } = await reader.read();
@@ -980,150 +1047,262 @@ export default function JdResearchClient({
      const line = buf.slice(0, nl).trim();
      buf = buf.slice(nl + 1);
      if (!line) continue;
-
-     let ev: {
-      type?: string;
-      recordId?: string;
-      title?: string;
-      extractedSource?: string;
-      stage?: 1 | 2;
-      stepType?: string;
-      step?: string;
-      interactionId?: string;
-      environmentId?: string;
-      text?: string;
-      chars?: number;
-      cached?: boolean;
-      stage1Cached?: boolean;
-      keepThoughts?: boolean;
-      partialReport?: JdResearchReport | null;
-      progress?: JdLiveProgress;
-      report?: JdResearchReport | null;
-      rawText?: string;
-      thoughts?: string;
-      usage?: AntigravityUsage;
-      model?: string;
-      error?: string;
-     };
+     let ev: WatchEv;
      try {
-      ev = JSON.parse(line);
+      ev = JSON.parse(line) as WatchEv;
      } catch {
       continue;
      }
-
-     if (ev.recordId && !curRecordId) {
-      curRecordId = ev.recordId;
-     }
-     if (curRecordId) {
-      streamingRecordIdRef.current = curRecordId;
-      if (!bgModeRef.current) setActiveId(curRecordId);
-     }
-     if (ev.extractedSource) {
-      resolvedSrc = ev.extractedSource;
-      if (!clean) setSource(ev.extractedSource);
-     }
-     if (ev.title) curTitle = ev.title;
      if (ev.model) setStreamModel(ev.model);
-
-     if (ev.type === 'model') {
-      setPingBeats(b => b + 1);
+     if (ev.type === 'continue') {
+      cont = {
+       interactionId: ev.interactionId || String(payload.interactionId || ''),
+       lastEventId: ev.lastEventId || '',
+      };
       continue;
      }
-
-     if (ev.type === 'reset') {
-      accTail = '';
-      setStreamTail('');
-      setStreamChars(0);
-      if (!ev.keepThoughts) {
-       accThoughts = ev.stage === 2 ? stage1ThoughtsSnap : '';
-       setStreamThoughts(accThoughts);
-      }
-      setConnState('connected');
+     if (ev.type === 'retry_step') {
+      retryReason = ev.reason || L('步骤输出异常，自动重试', 'Step retry requested');
       continue;
      }
-
-     if (ev.type === 'connected') {
-      setConnState('connected');
-      if (ev.progress) {
-       setLiveProgress(ev.progress);
-       curStageKey = ev.progress.activeKey;
-      }
-      if (curRecordId) {
-       upsertJdBgTask({
-        recordId: curRecordId,
-        interactionId: 'stream',
-        sig: 'stream',
-        title: curTitle,
-        createdAt: t0,
-        stageKey: curStageKey,
-        stage1Cached: curStage1Cached,
-       });
-       void refreshRecords();
-      }
-      continue;
+     if (ev.type === 'stage1' || ev.type === 'phase_done' || ev.type === 'questions_done') {
+      terminal = ev;
      }
+     onEv(ev);
+    }
+   }
+   return { terminal, cont, retryReason };
+  };
 
-     if (ev.type === 'agent_ready') {
+  const runAntigravityStep = async (optsStep: {
+   label: string;
+   startStep: () => Promise<Record<string, unknown>>;
+   startNewAttempt: (attempt: number) => Promise<Record<string, unknown>>;
+   watchMeta: (res: Record<string, unknown>) => Record<string, unknown>;
+   onTerminal: (ev: WatchEv) => void;
+   onCached: (res: Record<string, unknown>) => void;
+   onDelta?: (ev: WatchEv, sliceChars: number) => void;
+  }): Promise<boolean> => {
+   let attempt = 0;
+   const maxAttempts = 4;
+
+   while (attempt < maxAttempts && !ctl.signal.aborted) {
+    let startRes: Record<string, unknown>;
+    try {
+     startRes = attempt === 0 ? await optsStep.startStep() : await optsStep.startNewAttempt(attempt);
+    } catch (e) {
+     const st = (e as Error & { status?: number }).status;
+     if (ctl.signal.aborted || st === 400 || st === 401 || st === 403 || st === 429) throw e;
+     attempt++;
+     if (attempt >= maxAttempts) throw e;
+     appendThought(`\n[↺ ${optsStep.label} 第 ${attempt} 次重试连接…]\n`);
+     await sleep(1600 * attempt);
+     continue;
+    }
+
+    if (typeof startRes.model === 'string' && startRes.model) setStreamModel(startRes.model);
+    if (startRes.status === 'done' || startRes.status === 'stage1_ready' || startRes.status === 'step_cached') {
+     optsStep.onCached(startRes);
+     return true;
+    }
+
+    let interactionId = String(startRes.interactionId || '');
+    let lastEventId = '';
+    const baseWatch = optsStep.watchMeta(startRes);
+    let stepStartedSliceChars = 0;
+    let sliceIdx = 0;
+    let netErrors = 0;
+    let shouldRestartNewAttempt = false;
+    let lastFailureReason = '';
+
+    while (sliceIdx < 16 && !ctl.signal.aborted) {
+     sliceIdx++;
+     try {
       setConnState(prev => (prev === 'streaming' || prev === 'thinking' ? prev : 'agent_ready'));
+      const out = await watchNdjsonSlice(
+       {
+        ...baseWatch,
+        recordId: curRecordId,
+        interactionId,
+        lastEventId,
+        model: typeof startRes.model === 'string' ? startRes.model : undefined,
+       },
+       ev => {
+        if (ev.type === 'connected' || ev.type === 'step' || ev.type === 'ping') {
+         setPingBeats(b => b + 1);
+         if (ev.stepType === 'thought' || ev.stepType === 'thought_signature' || ev.step === 'thinking') {
+          setConnState(prev => (prev === 'streaming' ? prev : 'thinking'));
+         }
+         return;
+        }
+        if (ev.type === 'reset') {
+         accTail = '';
+         setStreamTail('');
+         stepStartedSliceChars = 0;
+         setStreamChars(completedCharsBase);
+         return;
+        }
+        if (ev.type === 'thought' && typeof ev.text === 'string') {
+         appendThought(ev.text);
+         return;
+        }
+        if (ev.type === 'delta') {
+         setConnState('streaming');
+         if (typeof ev.chars === 'number') {
+          stepStartedSliceChars = ev.chars;
+          setStreamChars(completedCharsBase + ev.chars);
+         }
+         if (typeof ev.text === 'string' && ev.text) {
+          accTail = (accTail + ev.text).replace(/\s+/g, ' ').slice(-180);
+          setStreamTail(accTail);
+         }
+         optsStep.onDelta?.(ev, stepStartedSliceChars);
+        }
+       },
+      );
+
+      netErrors = 0;
+      if (out.terminal) {
+       completedCharsBase += stepStartedSliceChars;
+       optsStep.onTerminal(out.terminal);
+       return true;
+      }
+      if (out.cont) {
+       interactionId = out.cont.interactionId || interactionId;
+       lastEventId = out.cont.lastEventId || lastEventId;
+       setPingBeats(b => b + 1);
+       await sleep(600);
+       continue;
+      }
+      if (out.retryReason) {
+       shouldRestartNewAttempt = true;
+       lastFailureReason = out.retryReason;
+       break;
+      }
+      // Stream EOF without terminal frame: resume the same interactionId + lastEventId
       setPingBeats(b => b + 1);
-      continue;
-     }
-
-     if (ev.type === 'step' || ev.type === 'ping') {
+      await sleep(1000);
+     } catch (e) {
+      if (ctl.signal.aborted) throw e;
+      const st = (e as Error & { status?: number }).status;
+      if (st === 401 || st === 403 || st === 429) throw e;
+      netErrors++;
       setPingBeats(b => b + 1);
-      if (ev.stepType === 'thought' || ev.stepType === 'thought_signature' || ev.step === 'thinking') {
-       setConnState(prev => (prev === 'streaming' ? prev : 'thinking'));
+      if (netErrors <= 3) {
+       // Transient HTTP/Worker drop: resume the exact same background interaction & event_id
+       await sleep(1400 * netErrors);
+       continue;
       }
-      continue;
+      shouldRestartNewAttempt = true;
+      lastFailureReason = (e as Error).message || L('连接波动', 'Connection unstable');
+      break;
      }
+    }
 
-     if (ev.type === 'thought' && typeof ev.text === 'string') {
-      accThoughts += ev.text;
-      setStreamThoughts(accThoughts);
-      setConnState(prev => (prev === 'streaming' ? prev : 'thinking'));
-      continue;
+    if (ctl.signal.aborted) return false;
+    attempt++;
+    if (attempt < maxAttempts) {
+     appendThought(
+      `\n[↺ ${optsStep.label} 切换 Antigravity 模型重试（${lastFailureReason || '超时重试'}）…]\n`,
+     );
+     await sleep(1800);
+     continue;
+    }
+   }
+   return false;
+  };
+
+  try {
+   // ---- Step 1: Stage 1 (Competency Profile + Roadmap) ----
+   let immediateDoneData: Record<string, unknown> | null = null;
+   const s1Ok = await runAntigravityStep({
+    label: L('阶段一 · 画像与路径', 'Stage 1'),
+    startStep: () =>
+     postJsonStep({
+      action: 'start',
+      kind,
+      source: clean,
+      ...(cleanUrl ? { url: cleanUrl } : {}),
+      ...(resolvedImages.length ? { images: resolvedImages } : {}),
+      ...(opts?.bypassCache ? { bypassCache: true } : {}),
+      ...(curRecordId ? { recordId: curRecordId } : {}),
+      attempt: 0,
+     }).then(res => {
+      if (typeof res.recordId === 'string' && res.recordId) {
+       curRecordId = res.recordId;
+       streamingRecordIdRef.current = res.recordId;
+       if (!bgModeRef.current) setActiveId(res.recordId);
+      }
+      if (typeof res.extractedSource === 'string' && res.extractedSource) {
+       resolvedSrc = res.extractedSource;
+       if (!clean) setSource(res.extractedSource);
+      }
+      if (typeof res.title === 'string' && res.title) curTitle = res.title;
+      setConnState('connected');
+      setJdUrl('');
+      setImages([]);
+      resolvedUrl = '';
+      resolvedImages = [];
+      if (curRecordId) {
+       upsertJdBgTask({
+        recordId: curRecordId,
+        interactionId: 'stream',
+        sig: 'stream',
+        title: curTitle,
+        createdAt: t0,
+        stageKey: 'profile',
+        stage1Cached: false,
+       });
+       void refreshRecords();
+      }
+      return res;
+     }),
+    startNewAttempt: att =>
+     postJsonStep({
+      action: 'start',
+      kind,
+      source: resolvedSrc,
+      ...(resolvedUrl && resolvedSrc.length < 20 ? { url: resolvedUrl } : {}),
+      bypassCache: false,
+      ...(curRecordId ? { recordId: curRecordId } : {}),
+      attempt: att,
+     }),
+    watchMeta: () => ({ step: 'stage1' }),
+    onCached: res => {
+     if (res.status === 'done') {
+      immediateDoneData = res;
+      return;
      }
-
-     if (ev.type === 'delta') {
-      setConnState('streaming');
-      if (typeof ev.chars === 'number') setStreamChars(ev.chars);
-      if (typeof ev.text === 'string' && ev.text) {
-       accTail = (accTail + ev.text).replace(/\s+/g, ' ').slice(-180);
-       setStreamTail(accTail);
-      }
-      if (ev.progress) {
-       setLiveProgress(ev.progress);
-       curStageKey = ev.progress.activeKey;
-       if (ev.progress.roleTitle) curTitle = ev.progress.roleTitle;
-       if (curRecordId) {
-        upsertJdBgTask({
-         recordId: curRecordId,
-         interactionId: 'stream',
-         sig: 'stream',
-         title: curTitle,
-         createdAt: t0,
-         stageKey: curStageKey,
-         stage1Cached: curStage1Cached,
-        });
-       }
-      }
-      continue;
+     const s1 = res.partialReport as JdResearchReport | undefined;
+     if (s1) {
+      stage1Ref.value = s1;
+      curStage1Cached = true;
+      setPartialReport(s1);
+      if (s1.roleTitle) curTitle = s1.roleTitle;
+      if (typeof res.thoughts === 'string' && res.thoughts) appendThought(res.thoughts);
+      const nextProg: JdLiveProgress = {
+       stage: 2,
+       activeKey: 'quizzes',
+       roleTitle: s1.roleTitle,
+       inferredLevel: s1.inferredLevel,
+       prepDays: s1.prepDays,
+       companyStyle: s1.companyStyle,
+       dimCount: s1.dimensions.length,
+       stageCount: s1.roadmap.length,
+       quizCount: s1.roadmap.reduce((n, r) => n + (r.quizzes?.length ?? 0), 0),
+       questionCount: s1.questions.length,
+       qTitles: s1.questions.map(q => q.title),
+       stage1Cached: true,
+      };
+      setLiveProgress(nextProg);
+      curStageKey = nextProg.activeKey;
      }
-
-     if (ev.type === 'stage1') {
-      if (typeof ev.stage1Cached === 'boolean') curStage1Cached = ev.stage1Cached;
-      if (ev.partialReport) {
-       setPartialReport(ev.partialReport);
-       if (ev.partialReport.roleTitle) curTitle = ev.partialReport.roleTitle;
-      }
-      if (ev.thoughts && !accThoughts) {
-       accThoughts = ev.thoughts;
-       setStreamThoughts(accThoughts);
-      }
-      if (ev.progress) {
-       setLiveProgress(ev.progress);
-       curStageKey = ev.progress.activeKey;
-      }
+    },
+    onDelta: ev => {
+     if (ev.progress) {
+      setLiveProgress(ev.progress);
+      curStageKey = ev.progress.activeKey;
+      if (ev.progress.roleTitle) curTitle = ev.progress.roleTitle;
       if (curRecordId) {
        upsertJdBgTask({
         recordId: curRecordId,
@@ -1134,115 +1313,293 @@ export default function JdResearchClient({
         stageKey: curStageKey,
         stage1Cached: curStage1Cached,
        });
-       void refreshRecords();
       }
-      continue;
      }
+    },
+    onTerminal: ev => {
+     if (ev.partialReport) {
+      stage1Ref.value = ev.partialReport;
+      curStage1Cached = Boolean(ev.stage1Cached);
+      setPartialReport(ev.partialReport);
+      if (ev.partialReport.roleTitle) curTitle = ev.partialReport.roleTitle;
+     }
+     if (ev.thoughts && !accThoughts) appendThought(ev.thoughts);
+     if (ev.progress) {
+      setLiveProgress(ev.progress);
+      curStageKey = ev.progress.activeKey;
+     }
+     void refreshRecords();
+    },
+   });
 
-     if (ev.type === 'stage2_start') {
-      accTail = '';
-      setStreamTail('');
-      setStreamChars(0);
-      stage1ThoughtsSnap = accThoughts ? `${accThoughts}\n\n── 阶段二：按复习路径设计五题型学习题与面试题库 ──\n` : '';
-      setConnState('agent_ready');
-      if (ev.progress) {
-       setLiveProgress(ev.progress);
-       curStageKey = ev.progress.activeKey;
-      }
-      continue;
-     }
+   if (ctl.signal.aborted) return;
 
-     if (ev.type === 'done') {
-      receivedTerminal = true;
-      const doneId = ev.recordId || curRecordId;
-      streamingRecordIdRef.current = '';
-      if (doneId) removeJdBgTask(doneId);
-      const finalThoughts = ev.thoughts || accThoughts;
-      if (!bgModeRef.current) {
-       applyReportView(
-        doneId,
-        ev.report ?? null,
-        ev.rawText || '',
-        finalThoughts,
-        ev.model || '',
-        null,
-        resolvedSrc,
-        {
-         cached: ev.cached,
-         stage1Cached: ev.stage1Cached ?? curStage1Cached,
-         usage: ev.usage,
-         kind,
-        },
-       );
-      } else if (doneId) {
-       notifyJdTaskDone({
-        recordId: doneId,
-        title: ev.report?.roleTitle || curTitle,
-        status: 'completed',
-       });
-      }
-      void refreshRecords();
-      stopActive();
-      return;
-     }
-
-     if (ev.type === 'error') {
-      receivedTerminal = true;
-      const errId = ev.recordId || curRecordId;
-      streamingRecordIdRef.current = '';
-      if (errId) removeJdBgTask(errId);
-      throw new Error(ev.error || L('调研流式生成中断，请点击一键重试', 'Stream interrupted'));
-     }
+   if (immediateDoneData) {
+    const d = immediateDoneData as {
+     recordId?: string;
+     report?: JdResearchReport | null;
+     rawText?: string;
+     thoughts?: string;
+     model?: string;
+     cached?: boolean;
+     stage1Cached?: boolean;
+     usage?: AntigravityUsage;
+    };
+    const doneId = d.recordId || curRecordId;
+    streamingRecordIdRef.current = '';
+    if (doneId) removeJdBgTask(doneId);
+    if (!bgModeRef.current) {
+     applyReportView(doneId, d.report ?? null, d.rawText || '', d.thoughts || accThoughts, d.model || '', null, resolvedSrc, {
+      cached: d.cached,
+      stage1Cached: d.stage1Cached,
+      usage: d.usage,
+      kind,
+     });
+    } else if (doneId) {
+     notifyJdTaskDone({ recordId: doneId, title: d.report?.roleTitle || curTitle, status: 'completed' });
     }
+    void refreshRecords();
+    stopActive();
+    return;
    }
 
-   if (!receivedTerminal && !ctl.signal.aborted) {
-    // Check D1 in case the server completed right as the HTTP stream closed
+   const s1Ready = stage1Ref.value;
+   if (!s1Ok || !s1Ready) {
+    throw new Error(L('考点画像与复习路径生成失败，请点击「一键重试」。', 'Stage 1 failed — click Retry'));
+   }
+
+   // ---- Step 2: Sequential Checkpointed Roadmap Phases + Interview Question Bank ----
+   const totalPhases = s1Ready.roadmap.length;
+   phaseQuizCounts = s1Ready.roadmap.map(s => s.quizzes?.length ?? 0);
+   liveQTitles = s1Ready.questions.map(q => q.title);
+
+   const syncStage2Progress = (activeKey: JdStageKey) => {
+    curStageKey = activeKey;
+    const quizCount = phaseQuizCounts.reduce((a, b) => a + b, 0);
+    setLiveProgress({
+     stage: 2,
+     activeKey,
+     roleTitle: s1Ready.roleTitle,
+     inferredLevel: s1Ready.inferredLevel,
+     prepDays: s1Ready.prepDays,
+     companyStyle: s1Ready.companyStyle,
+     dimCount: s1Ready.dimensions.length,
+     stageCount: s1Ready.roadmap.length,
+     quizCount,
+     questionCount: liveQTitles.length,
+     qTitles: liveQTitles,
+     stage1Cached: curStage1Cached,
+    });
     if (curRecordId) {
-     const latest = await refreshRecords();
-     const hit = latest.find(x => x.id === curRecordId);
-     if (hit?.status === 'completed' && hit.payload?.report) {
-      streamingRecordIdRef.current = '';
-      removeJdBgTask(curRecordId);
-      if (!bgModeRef.current) {
-       applyReportView(
-        hit.id,
-        hit.payload.report,
-        hit.payload.rawText || '',
-        hit.payload.thoughts || accThoughts,
-        hit.payload.model || '',
-        hit.payload.imported ?? null,
-        hit.payload.source || resolvedSrc,
-        {
-         cached: hit.payload.cached,
-         stage1Cached: hit.payload.stage1Cached ?? curStage1Cached,
-         usage: hit.payload.usage,
-         kind: hit.payload.kind || kind,
-        },
-       );
-      }
-      stopActive();
-      return;
-     }
+     upsertJdBgTask({
+      recordId: curRecordId,
+      interactionId: 'stream',
+      sig: 'stream',
+      title: curTitle,
+      createdAt: t0,
+      stageKey: activeKey,
+      stage1Cached: curStage1Cached,
+     });
     }
-    throw new Error(
-     L(
-      '流式连接意外断开，请点击「一键重试」（已完成的阶段会自动命中缓存）',
-      'Stream closed unexpectedly — click Retry to resume',
-     ),
-    );
+   };
+
+   syncStage2Progress('quizzes');
+   accTail = '';
+   setStreamTail('');
+
+   let anyStage2Succeeded = false;
+
+   for (let pi = 0; pi < totalPhases; pi++) {
+    if (ctl.signal.aborted) return;
+    const step = s1Ready.roadmap[pi];
+    appendThought(`\n\n── 路径 ${pi + 1}/${totalPhases}：${step.phase} · ${step.title} ──\n`);
+    try {
+     const okPhase = await runAntigravityStep({
+      label: L(`路径 ${pi + 1}/${totalPhases}`, `Phase ${pi + 1}`),
+      startStep: () =>
+       postJsonStep({
+        action: 'start_step',
+        recordId: curRecordId,
+        step: 'phase',
+        phaseIndex: pi,
+        ...(opts?.bypassCache ? { bypassCache: true } : {}),
+        attempt: 0,
+       }),
+      startNewAttempt: att =>
+       postJsonStep({
+        action: 'start_step',
+        recordId: curRecordId,
+        step: 'phase',
+        phaseIndex: pi,
+        bypassCache: false,
+        attempt: att,
+       }),
+      watchMeta: () => ({ step: 'phase', phaseIndex: pi }),
+      onCached: res => {
+       const cnt = Number(res.quizCount || 0);
+       phaseQuizCounts[pi] = Math.max(phaseQuizCounts[pi], cnt);
+       if (cnt > 0) anyStage2Succeeded = true;
+       appendThought(L(`✓ 已命中断点缓存（${cnt} 题，0 Token）\n`, `✓ Checkpoint hit (${cnt} quizzes, 0 tokens)\n`));
+       syncStage2Progress('quizzes');
+      },
+      onDelta: ev => {
+       if (typeof ev.phaseQuizCount === 'number') {
+        const beforeOthers = phaseQuizCounts.reduce((a, b, idx) => (idx === pi ? a : a + b), 0);
+        setLiveProgress(prev =>
+         prev ? { ...prev, activeKey: 'quizzes', quizCount: beforeOthers + Math.max(phaseQuizCounts[pi], ev.phaseQuizCount!) } : prev,
+        );
+       }
+      },
+      onTerminal: ev => {
+       const cnt = Number(ev.quizCount || 0);
+       phaseQuizCounts[pi] = Math.max(phaseQuizCounts[pi], cnt);
+       if (cnt > 0) anyStage2Succeeded = true;
+       appendThought(L(`✓ 本路径完成并保存（${cnt} 题）\n`, `✓ Saved (${cnt} quizzes)\n`));
+       syncStage2Progress('quizzes');
+      },
+     });
+     if (!okPhase) {
+      appendThought(L(`! 路径 ${pi + 1} 暂未完整生成，先继续后续步骤\n`, `! Phase ${pi + 1} skipped\n`));
+     }
+    } catch (phaseErr) {
+     if (ctl.signal.aborted) throw phaseErr;
+     const st = (phaseErr as Error & { status?: number }).status;
+     if (st === 401 || st === 403 || st === 429) throw phaseErr;
+     appendThought(L(`! 路径 ${pi + 1} 出现异常（已完成部分已保留），继续下一步…\n`, `! Phase ${pi + 1} failed, continuing…\n`));
+    }
    }
+
+   if (ctl.signal.aborted) return;
+
+   // ---- Step 2B: Interview Question Bank ----
+   syncStage2Progress('questions');
+   appendThought(`\n\n── 面试专题题库 ──\n`);
+   try {
+    const okQs = await runAntigravityStep({
+     label: L('面试专题题库', 'Interview Questions'),
+     startStep: () =>
+      postJsonStep({
+       action: 'start_step',
+       recordId: curRecordId,
+       step: 'questions',
+       ...(opts?.bypassCache ? { bypassCache: true } : {}),
+       attempt: 0,
+      }),
+     startNewAttempt: att =>
+      postJsonStep({
+       action: 'start_step',
+       recordId: curRecordId,
+       step: 'questions',
+       bypassCache: false,
+       attempt: att,
+      }),
+     watchMeta: () => ({ step: 'questions' }),
+     onCached: res => {
+      const titles = Array.isArray(res.qTitles) ? (res.qTitles as string[]) : [];
+      if (titles.length) liveQTitles = titles;
+      if (Number(res.questionCount || titles.length) > 0) anyStage2Succeeded = true;
+      appendThought(L(`✓ 已命中断点缓存（${titles.length || res.questionCount || 0} 题，0 Token）\n`, `✓ Checkpoint hit (0 tokens)\n`));
+      syncStage2Progress('questions');
+     },
+     onDelta: ev => {
+      if (Array.isArray(ev.qTitles) && ev.qTitles.length) {
+       liveQTitles = ev.qTitles;
+       syncStage2Progress('questions');
+      }
+     },
+     onTerminal: ev => {
+      const titles = Array.isArray(ev.qTitles) ? ev.qTitles : [];
+      if (titles.length) liveQTitles = titles;
+      if (Number(ev.questionCount || titles.length) > 0) anyStage2Succeeded = true;
+      appendThought(L(`✓ 面试题库完成并保存（${titles.length || ev.questionCount || 0} 题）\n`, `✓ Saved\n`));
+      syncStage2Progress('questions');
+     },
+    });
+    if (!okQs && !anyStage2Succeeded) {
+     throw new Error(L('阶段二题库生成失败，请点击「一键重试」（阶段一已保存，不会重复耗 Token）。', 'Stage 2 failed — click Retry'));
+    }
+   } catch (qErr) {
+    if (ctl.signal.aborted) throw qErr;
+    if (!anyStage2Succeeded) throw qErr;
+   }
+
+   if (ctl.signal.aborted) return;
+
+   // ---- Step 3: Finalize & Merge Saved Checkpoints ----
+   let finalRes: {
+    recordId?: string;
+    report?: JdResearchReport | null;
+    rawText?: string;
+    thoughts?: string;
+    model?: string;
+    cached?: boolean;
+    stage1Cached?: boolean;
+    usage?: AntigravityUsage;
+   } | null = null;
+   let finErr: unknown;
+   for (let fa = 0; fa < 3 && !ctl.signal.aborted; fa++) {
+    try {
+     finalRes = await postJsonStep({ action: 'finalize', recordId: curRecordId });
+     break;
+    } catch (e) {
+     finErr = e;
+     const st = (e as Error & { status?: number }).status;
+     if (st === 400 || st === 401 || st === 403 || st === 404 || st === 502) throw e;
+     await sleep(1200 * (fa + 1));
+    }
+   }
+   if (!finalRes) throw finErr instanceof Error ? finErr : new Error(L('汇总报告失败，请点击一键重试', 'Finalize failed'));
+
+   const doneId = finalRes.recordId || curRecordId;
+   streamingRecordIdRef.current = '';
+   if (doneId) removeJdBgTask(doneId);
+   const finalThoughts = finalRes.thoughts || accThoughts;
+   if (!bgModeRef.current) {
+    applyReportView(
+     doneId,
+     finalRes.report ?? null,
+     finalRes.rawText || '',
+     finalThoughts,
+     finalRes.model || 'Antigravity Agent',
+     null,
+     resolvedSrc,
+     {
+      cached: finalRes.cached,
+      stage1Cached: finalRes.stage1Cached ?? curStage1Cached,
+      usage: finalRes.usage,
+      kind,
+     },
+    );
+   } else if (doneId) {
+    notifyJdTaskDone({
+     recordId: doneId,
+     title: finalRes.report?.roleTitle || curTitle,
+     status: 'completed',
+    });
+   }
+   void refreshRecords();
+   stopActive();
   } catch (e) {
    streamingRecordIdRef.current = '';
    if (curRecordId) removeJdBgTask(curRecordId);
    if (!ctl.signal.aborted) {
-    setError((e as Error).message || L('调研失败', 'Research failed'));
+    const msg = (e as Error).message || L('调研失败，已完成步骤已保存，点击「一键重试」继续', 'Research failed — click Retry');
+    if (curRecordId) {
+     void fetch('/api/jd-research', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'fail', recordId: curRecordId, error: msg }),
+     })
+      .then(() => void refreshRecords())
+      .catch(() => {});
+    }
+    setError(msg);
     if (bgModeRef.current && curRecordId) {
      notifyJdTaskDone({
       recordId: curRecordId,
       title: curTitle,
       status: 'error',
-      error: (e as Error).message || L('调研失败', 'Research failed'),
+      error: msg,
      });
     }
    }
@@ -1614,7 +1971,7 @@ export default function JdResearchClient({
           <button
            type="button"
            className="button secondary arch-new-btn"
-           onClick={() => void runResearch({ bypassCache: true, reuseRecordId: activeId || undefined })}
+           onClick={() => void runResearch({ reuseRecordId: activeId || undefined })}
           >
            <RotateCcw size={14} />
            <span>{L('一键重试', 'Retry')}</span>

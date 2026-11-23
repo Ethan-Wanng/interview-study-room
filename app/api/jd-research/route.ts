@@ -1,13 +1,15 @@
 import { env } from 'cloudflare:workers';
 import { AuthError, assertSameOrigin, rateLimit, sessionUser } from '@/lib/site-auth';
 import { currentAdmin } from '@/lib/admin-auth';
-import { refundDailyJdQuota, tryConsumeDailyJdQuota } from '@/lib/jd-daily-limit';
+import { beijingDayWindow, refundDailyJdQuota, tryConsumeDailyJdQuota } from '@/lib/jd-daily-limit';
 import {
  ANTIGRAVITY_AGENT_ID,
+ ANTIGRAVITY_MODEL_CHAIN,
  AntigravityError,
+ antigravityModelLabel,
  pollAntigravityInteraction,
  startAntigravityInteraction,
- streamAntigravityInteraction,
+ streamAntigravitySlice,
  type AntigravityUsage,
 } from '@/lib/antigravity-agent';
 import { readPromptCache, sha256Hex, writePromptCache } from '@/lib/prompt-cache';
@@ -26,17 +28,18 @@ import {
  getJdResearchStage2SystemPrompt,
  inspectJdStreamProgress,
  mergeStage1AndStage2Report,
- mergeStage2Parts,
  normalizeJdSourceForCache,
  parseAndEnrichJdReport,
  parsePhaseQuizzes,
  pickInSiteQuizzesForStage,
 } from '@/lib/jd-research-server';
-import { extractJdFromImages, jdResearchModelStream } from '@/lib/gemini';
+import { extractJdFromImages } from '@/lib/gemini';
 import { fetchJdTextFromUrl } from '@/lib/jd-extract';
+import type { AiQuiz } from '@/content/journey';
 import {
  hasStructuredStudyQuizzes,
  type JdInputKind,
+ type JdQuestionItem,
  type JdResearchReport,
 } from '@/lib/jd-research-types';
 
@@ -70,9 +73,28 @@ type CachedStage1Payload = {
  usage?: AntigravityUsage;
 };
 
+type CachedPhasePayload = {
+ quizzes: AiQuiz[];
+ rawText: string;
+ thoughts: string;
+ model: string;
+ usage?: AntigravityUsage;
+};
+
+type CachedQuestionsPayload = {
+ questions: JdQuestionItem[];
+ rawText: string;
+ thoughts: string;
+ model: string;
+ usage?: AntigravityUsage;
+};
+
 type StoredJdRecordPayload = {
  kind: JdInputKind;
  source: string;
+ hashHex?: string;
+ dailyDayKey?: string;
+ dailyRefunded?: boolean;
  model?: string;
  cacheKey?: string;
  stage1CacheKey?: string;
@@ -117,9 +139,82 @@ function combineUsage(a?: AntigravityUsage, b?: AntigravityUsage): AntigravityUs
  };
 }
 
-// Exclusively uses the managed agent backend (`background: true` + HMAC polling + D1 persistence).
-// Uses Two-Stage Generation (Stage 1: Profile + Roadmap -> Stage 2: Path Study Quizzes + Interview Questions)
-// and multi-layer caching (Full D1 cache + Stage 1 D1 cache + byte-identical prefix prompt cache).
+function fullCacheKeyOf(hashHex: string): string {
+ return 'jd-auto-v3:' + hashHex;
+}
+
+function stage1CacheKeyOf(hashHex: string): string {
+ return 'jd-s1-v2:' + hashHex;
+}
+
+function phaseCacheKeyOf(hashHex: string, phaseIndex: number): string {
+ return `jd-p-v3:${hashHex}:${phaseIndex}`;
+}
+
+function questionsCacheKeyOf(hashHex: string): string {
+ return 'jd-q-v3:' + hashHex;
+}
+
+function getReusedQuizzesForPhase(stage1: JdResearchReport, phaseIndex: number): AiQuiz[] {
+ const usedIds = new Set<string>();
+ for (let i = 0; i < phaseIndex; i++) {
+  pickInSiteQuizzesForStage(stage1, i, usedIds);
+ }
+ return pickInSiteQuizzesForStage(stage1, phaseIndex, usedIds);
+}
+
+function extractStreamQuestionTitles(buf: string): string[] {
+ const qTitles: string[] = [];
+ const re = /"title"\s*:\s*"((?:\\.|[^"\\])*)"/g;
+ let m: RegExpExecArray | null;
+ while ((m = re.exec(buf)) !== null) {
+  const t = m[1].replace(/\\"/g, '"').replace(/\\n/g, ' ').replace(/\\\\/g, '\\').trim();
+  if (t) qTitles.push(t);
+ }
+ return qTitles;
+}
+
+async function startAntigravityWithModelFallback(opts: {
+ systemInstruction: string;
+ input: string;
+ maxTotalTokens: number;
+ attemptOffset?: number;
+ geminiProxy: boolean;
+ signal?: AbortSignal;
+}) {
+ const len = ANTIGRAVITY_MODEL_CHAIN.length;
+ const startAt = Math.max(0, opts.attemptOffset || 0) % len;
+ let lastErr: unknown;
+ for (let step = 0; step < len; step++) {
+  const attemptIdx = (startAt + step) % len;
+  const agentModel = ANTIGRAVITY_MODEL_CHAIN[attemptIdx];
+  try {
+   const started = await startAntigravityInteraction({
+    systemInstruction: opts.systemInstruction,
+    input: opts.input,
+    agentModel,
+    maxTotalTokens: opts.maxTotalTokens,
+    geminiProxy: opts.geminiProxy,
+    signal: opts.signal,
+   });
+   return {
+    started,
+    modelLabel: antigravityModelLabel(agentModel),
+    attemptIdx,
+   };
+  } catch (e) {
+   lastErr = e;
+   if (opts.signal?.aborted) throw e;
+   if (e instanceof AntigravityError && (e.code === 'geo_blocked' || e.code === 'missing_key')) {
+    throw e;
+   }
+  }
+ }
+ throw lastErr instanceof Error ? lastErr : new AntigravityError('启动 Antigravity Agent 失败，请重试。', 502, 'agent_error');
+}
+
+// Exclusively uses the Antigravity Managed Agent (`background: true` + resumable `last_event_id` SSE slices
+// with polling fallback + per-step D1 checkpointing so completed steps never re-run or waste tokens).
 export async function POST(req: Request) {
  try {
   assertSameOrigin(req);
@@ -128,7 +223,6 @@ export async function POST(req: Request) {
   if (user.is_guest) throw new AuthError('游客不支持 JD / 面经深度调研功能，请登录正式账号后使用。', 403);
   const admin = await currentAdmin(req.headers);
   const isAdmin = Boolean(admin);
-  await rateLimit('jd-research:' + user.id, 30);
 
   const raw = await req.text();
   if (raw.length > 8_000_000) throw new AuthError('输入内容或图片过大，请精简后再提交。');
@@ -139,731 +233,960 @@ export async function POST(req: Request) {
    throw new AuthError('请求格式无效。');
   }
 
-  const kind: JdInputKind = body.kind === 'experience' ? 'experience' : 'jd';
-  const rawSource = typeof body.source === 'string' ? body.source.replace(/\r\n/g, '\n').trim().slice(0, 14_000) : '';
-  const jdUrl = typeof body.url === 'string' ? body.url.trim().slice(0, 2000) : '';
-  const rawImages = Array.isArray(body.images) ? body.images : [];
-  const images = rawImages
-   .filter((x): x is string => typeof x === 'string' && x.length <= 2_000_000 && IMG_RE.test(x))
-   .slice(0, 4);
+  const rawAction = typeof body.action === 'string' ? body.action.trim() : 'start';
+  const action =
+   rawAction === 'start_step' || rawAction === 'watch' || rawAction === 'finalize' || rawAction === 'fail'
+    ? rawAction
+    : 'start';
   const geminiProxy = body.geminiProxy !== false;
   const bypassCache = body.bypassCache === true;
-  const existingRecordId = typeof body.recordId === 'string' && body.recordId.startsWith('jdr-') ? body.recordId.trim().slice(0, 80) : '';
 
-  const parts: string[] = [];
-  if (rawSource) parts.push(rawSource);
-  if (jdUrl) {
-   const fromUrl = await fetchJdTextFromUrl(jdUrl);
-   if (fromUrl) parts.push(fromUrl);
-  }
-  if (images.length) {
-   const fromImg = await extractJdFromImages(images, geminiProxy, true);
-   if (fromImg) parts.push(fromImg);
-  }
-  const source = parts.join('\n\n').slice(0, 14_000).trim();
+  // ---- Action 1: start (returns full/stage1 cache hit immediately, or starts background Stage 1 Agent) ----
+  if (action === 'start') {
+   await rateLimit('jd-research:' + user.id, 30);
 
-  if (source.length < 20) throw new AuthError('请粘贴至少 20 字的岗位 JD / 面经内容，或提供岗位链接 / 图片。');
+   const kind: JdInputKind = body.kind === 'experience' ? 'experience' : 'jd';
+   const rawSource = typeof body.source === 'string' ? body.source.replace(/\r\n/g, '\n').trim().slice(0, 14_000) : '';
+   const jdUrl = typeof body.url === 'string' ? body.url.trim().slice(0, 2000) : '';
+   const rawImages = Array.isArray(body.images) ? body.images : [];
+   const images = rawImages
+    .filter((x): x is string => typeof x === 'string' && x.length <= 2_000_000 && IMG_RE.test(x))
+    .slice(0, 4);
+   const existingRecordId =
+    typeof body.recordId === 'string' && body.recordId.startsWith('jdr-') ? body.recordId.trim().slice(0, 80) : '';
+   const attemptOffset = Number.isFinite(Number(body.attempt)) ? Math.max(0, Math.floor(Number(body.attempt))) : 0;
 
-  // Enforce daily quota: 1 generation per Beijing day for regular users, unlimited for admins.
-  let reservedDailyDay = '';
-  let refundedDaily = false;
-  const refundDailyOnce = async () => {
-   if (!reservedDailyDay || refundedDaily) return;
-   refundedDaily = true;
-   await refundDailyJdQuota(user.id, reservedDailyDay);
-  };
-  if (!isAdmin) {
-   const daily = await tryConsumeDailyJdQuota(user.id);
-   if (!daily.allowed) {
-    throw new AuthError('每位用户每天限生成 1 份 JD / 面经深度调研，今日额度已用完，请明天再来。', 429);
+   const parts: string[] = [];
+   if (rawSource) parts.push(rawSource);
+   if (jdUrl) {
+    const fromUrl = await fetchJdTextFromUrl(jdUrl);
+    if (fromUrl) parts.push(fromUrl);
    }
-   reservedDailyDay = daily.dayKey;
-  }
+   if (images.length) {
+    const fromImg = await extractJdFromImages(images, geminiProxy, true);
+    if (fromImg) parts.push(fromImg);
+   }
+   const source = parts.join('\n\n').slice(0, 14_000).trim();
+   if (source.length < 20) throw new AuthError('请粘贴至少 20 字的岗位 JD / 面经内容，或提供岗位链接 / 图片。');
 
-  const recordId = existingRecordId || 'jdr-' + crypto.randomUUID();
-  const normSource = normalizeJdSourceForCache(source);
-  const hashHex = await sha256Hex([kind, normSource]);
-  const cacheKey = 'jd-auto-v3:' + hashHex;
-  const stage1CacheKey = 'jd-s1-v2:' + hashHex;
-  const initialTitle = draftTitle(source, kind);
+   const normSource = normalizeJdSourceForCache(source);
+   const hashHex = await sha256Hex([kind, normSource]);
+   const cacheKey = fullCacheKeyOf(hashHex);
+   const stage1CacheKey = stage1CacheKeyOf(hashHex);
+   const recordId = existingRecordId || 'jdr-' + crypto.randomUUID();
+   const initialTitle = draftTitle(source, kind);
 
-  const enc = new TextEncoder();
-  let closed = false;
-  const stream = new ReadableStream<Uint8Array>({
-   async start(controller) {
-    let lastSendAt = Date.now();
-    const send = (ev: Record<string, unknown>) => {
-     if (closed) return;
-     lastSendAt = Date.now();
-     try {
-      controller.enqueue(enc.encode(JSON.stringify(ev) + '\n'));
-     } catch {
-      closed = true;
-     }
-    };
+   const existingRec = existingRecordId
+    ? await getAiInterviewRecord<StoredJdRecordPayload>(user.id, existingRecordId)
+    : null;
+   const todayKey = beijingDayWindow().dayKey;
+   const resumingToday = Boolean(
+    existingRec &&
+     existingRec.status !== 'completed' &&
+     existingRec.payload?.dailyDayKey === todayKey &&
+     !existingRec.payload?.dailyRefunded,
+   );
 
-    let activeStage: 1 | 2 = 1;
-    let activeStep = 'connecting';
-    const pingTimer = setInterval(() => {
-     if (closed) return;
-     if (Date.now() - lastSendAt >= 2400) {
-      send({ type: 'ping', stage: activeStage, step: activeStep });
-     }
-    }, 2500);
+   let reservedDailyDay = resumingToday ? existingRec!.payload.dailyDayKey || todayKey : '';
+   if (!isAdmin && !resumingToday) {
+    const daily = await tryConsumeDailyJdQuota(user.id);
+    if (!daily.allowed) {
+     throw new AuthError('每位用户每天限生成 1 份 JD / 面经深度调研，今日额度已用完，请明天再来。', 429);
+    }
+    reservedDailyDay = daily.dayKey;
+   }
 
-    try {
-     // Immediately confirm stream connection so client UI transitions out of waiting state in <100ms
-     send({
-      type: 'connected',
-      recordId,
-      title: initialTitle,
-      extractedSource: source,
-      stage: 1,
-      progress: inspectJdStreamProgress(1, '', null, false),
-     });
-
-     // 1. Check Full-Report D1 deterministic cache first (0 token cost, instant response)
-     if (!bypassCache) {
-      const hit = await readPromptCache<CachedJdPayload>(cacheKey);
-      if (
-       hit?.payload?.report &&
-       hit.payload.report.roadmap.length > 0 &&
-       (hit.payload.report.questions.length > 0 || hasStructuredStudyQuizzes(hit.payload.report))
-      ) {
-       const rep = hit.payload.report;
-       const hitModel = hit.payload.model || hit.model || '';
-       const stored: StoredJdRecordPayload = {
-        kind,
-        source,
-        model: hitModel || undefined,
-        cacheKey,
-        stage1CacheKey,
-        cached: true,
-        report: rep,
-        rawText: hit.payload.rawText || '',
-        thoughts: hit.payload.thoughts || '',
-        usage: hit.payload.usage,
-       };
-       await saveAiInterviewRecord({
-        id: recordId,
-        userId: user.id,
-        kind: 'jd-research',
-        title: rep.roleTitle || initialTitle,
-        subtitle: makeSubtitle(rep),
-        status: 'completed',
-        payload: stored,
-       });
-       if (hit.payload.thoughts) {
-        send({ type: 'thought', stage: 1, text: hit.payload.thoughts });
-       }
-       send({
-        type: 'done',
-        recordId,
-        cached: true,
-        stage1Cached: true,
-        model: hitModel,
-        report: rep,
-        rawText: hit.payload.rawText || '',
-        thoughts: hit.payload.thoughts || '',
-        usage: hit.payload.usage,
-        extractedSource: source,
-       });
-       return;
-      }
-     }
-
-     let s1Rep: JdResearchReport | null = null;
-     let s1RawText = '';
-     let s1Thoughts = '';
-     let s1Model = '';
-     let s1Usage: AntigravityUsage | undefined;
-     let stage1Cached = false;
-     let lastInteractionId = '';
-
-     // 2. Check Stage 1 (Profile + Roadmap) D1 cache: if hit, push Stage 1 preview immediately & jump to Stage 2
-     if (!bypassCache) {
-      const s1Hit = await readPromptCache<CachedStage1Payload>(stage1CacheKey);
-      if (s1Hit?.payload?.report && s1Hit.payload.report.roadmap.length > 0) {
-       s1Rep = s1Hit.payload.report;
-       s1RawText = s1Hit.payload.rawText || '';
-       s1Thoughts = s1Hit.payload.thoughts || '';
-       s1Model = s1Hit.payload.model || s1Hit.model || '';
-       s1Usage = s1Hit.payload.usage;
-       stage1Cached = true;
-       if (s1Thoughts) {
-        send({ type: 'thought', stage: 1, text: s1Thoughts });
-       }
-       send({
-        type: 'stage1',
-        recordId,
-        stage1Cached: true,
-        model: s1Model,
-        partialReport: s1Rep,
-        thoughts: s1Thoughts,
-        usage: s1Usage,
-        progress: inspectJdStreamProgress(2, '', s1Rep, true),
-       });
-      }
-     }
-
-     // Save initial running record in D1
+   // 1a. Check full-report D1 cache (0 tokens, instant response)
+   if (!bypassCache) {
+    const hit = await readPromptCache<CachedJdPayload>(cacheKey);
+    if (
+     hit?.payload?.report &&
+     hit.payload.report.roadmap.length > 0 &&
+     (hit.payload.report.questions.length > 0 || hasStructuredStudyQuizzes(hit.payload.report))
+    ) {
+     const rep = hit.payload.report;
+     const hitModel = hit.payload.model || hit.model || ANTIGRAVITY_AGENT_ID;
+     const stored: StoredJdRecordPayload = {
+      kind,
+      source,
+      hashHex,
+      dailyDayKey: reservedDailyDay || undefined,
+      model: hitModel,
+      cacheKey,
+      stage1CacheKey,
+      cached: true,
+      stage1Cached: true,
+      report: rep,
+      rawText: hit.payload.rawText || '',
+      thoughts: hit.payload.thoughts || '',
+      usage: hit.payload.usage,
+     };
      await saveAiInterviewRecord({
       id: recordId,
       userId: user.id,
       kind: 'jd-research',
-      title: s1Rep?.roleTitle || initialTitle,
-      subtitle: makeSubtitle(s1Rep),
-      status: 'running',
-      payload: {
-       kind,
-       source,
-       model: s1Model || undefined,
-       cacheKey,
-       stage1CacheKey,
-       stage: s1Rep ? 2 : 1,
-       stage1Cached,
-       partialReport: s1Rep,
-       stage1RawText: s1RawText,
-       stage1Thoughts: s1Thoughts,
-       stage1Usage: s1Usage,
-       report: null,
-       rawText: '',
-       thoughts: s1Thoughts,
-      },
+      title: rep.roleTitle || initialTitle,
+      subtitle: makeSubtitle(rep),
+      status: 'completed',
+      payload: stored,
+      createdAt: existingRec?.createdAt,
      });
-
-     // 3. Stream Stage 1 (Profile + Roadmap):
-     // DeepSeek V4.1 Flash（思考）优先负责考点画像与复习路径（秒连、稳定、零 503），失败自动降级 Gemini 4 / 3.8 / 3.6
-     if (!s1Rep) {
-      activeStage = 1;
-      activeStep = 'thinking';
-      let s1ThoughtBuf = '';
-      const makeSplitter1 = () =>
-       createThinkJsonStreamSplitter({
-        onThoughtDelta: td => {
-         activeStep = 'thinking';
-         s1ThoughtBuf += td;
-         send({ type: 'thought', stage: 1, text: td });
-        },
-        onJsonDelta: (jd, fullJsonBuf) => {
-         activeStep = 'output';
-         send({
-          type: 'delta',
-          stage: 1,
-          text: jd,
-          chars: fullJsonBuf.length,
-          progress: inspectJdStreamProgress(1, fullJsonBuf, null, false),
-         });
-        },
-       });
-      let splitter1 = makeSplitter1();
-
-      const s1Res = await jdResearchModelStream({
-       strategy: 'deepseek-first',
-       systemPrompt: getJdResearchStage1SystemPrompt(),
-       userInput: buildJdStage1Input({ kind, source }),
-       maxTokens: 8192,
-       geminiProxy,
-       signal: req.signal,
-       validate: txt => {
-        const rep = parseAndEnrichJdReport(txt);
-        return Boolean(rep && (rep.roadmap.length > 0 || rep.dimensions.length > 0));
-       },
-       onModel: m => {
-        activeStep = 'thinking';
-        send({ type: 'model', stage: 1, model: m });
-       },
-       onThoughtDelta: td => {
-        activeStep = 'thinking';
-        s1ThoughtBuf += td;
-        send({ type: 'thought', stage: 1, text: td });
-       },
-       onTextDelta: td => {
-        splitter1.push(td);
-       },
-       onReset: () => {
-        s1ThoughtBuf = '';
-        splitter1 = makeSplitter1();
-        send({ type: 'reset', stage: 1 });
-       },
-      });
-
-      splitter1.flush();
-      const extracted1 = extractThoughtsAndJson(s1Res.text);
-      s1RawText = extracted1.jsonRaw || s1Res.text;
-      s1Thoughts = (s1ThoughtBuf.trim() || s1Res.thoughts || extracted1.thoughts || '').trim();
-      s1Model = s1Res.model;
-      s1Usage = s1Res.usage;
-      s1Rep = parseAndEnrichJdReport(s1Res.text);
-
-      if (!s1Rep || (!s1Rep.roadmap.length && !s1Rep.dimensions.length)) {
-       throw new AntigravityError('考点画像与复习路径解析失败，请点击「一键重试」重新生成。', 502, 'parse_error');
-      }
-
-      await writePromptCache(
-       stage1CacheKey,
-       'jd-stage1',
-       s1Model || 'deepseek-flash',
-       { report: s1Rep, rawText: s1RawText, thoughts: s1Thoughts, model: s1Model, usage: s1Usage } satisfies CachedStage1Payload,
-       7 * 24 * 3600_000,
-      );
-
-      await saveAiInterviewRecord({
-       id: recordId,
-       userId: user.id,
-       kind: 'jd-research',
-       title: s1Rep.roleTitle || initialTitle,
-       subtitle: makeSubtitle(s1Rep),
-       status: 'running',
-       interactionId: lastInteractionId || undefined,
-       payload: {
-        kind,
-        source,
-        model: s1Model || undefined,
-        cacheKey,
-        stage1CacheKey,
-        stage: 2,
-        stage1Cached: false,
-        partialReport: s1Rep,
-        stage1RawText: s1RawText,
-        stage1Thoughts: s1Thoughts,
-        stage1Usage: s1Usage,
-        report: null,
-        rawText: '',
-        thoughts: s1Thoughts,
-       },
-      });
-
-      send({
-       type: 'stage1',
+     return Response.json(
+      {
+       ok: true,
+       status: 'done',
+       cached: true,
+       stage1Cached: true,
        recordId,
-       stage1Cached: false,
-       model: s1Model,
-       partialReport: s1Rep,
-       thoughts: s1Thoughts,
-       usage: s1Usage,
-       progress: inspectJdStreamProgress(2, '', s1Rep, false),
-      });
-     }
-
-     // If Stage 1 already contains both study quizzes and interview questions, finish directly
-     if (s1Rep.questions.length > 0 && hasStructuredStudyQuizzes(s1Rep)) {
-      await writePromptCache(
-       cacheKey,
-       'jd-research',
-       s1Model || 'deepseek-flash',
-       { report: s1Rep, rawText: s1RawText, thoughts: s1Thoughts, model: s1Model, usage: s1Usage } satisfies CachedJdPayload,
-       7 * 24 * 3600_000,
-      );
-      await saveAiInterviewRecord({
-       id: recordId,
-       userId: user.id,
-       kind: 'jd-research',
-       title: s1Rep.roleTitle || initialTitle,
-       subtitle: makeSubtitle(s1Rep),
-       status: 'completed',
-       interactionId: lastInteractionId || undefined,
-       payload: {
-        kind,
-        source,
-        model: s1Model || undefined,
-        cacheKey,
-        stage1CacheKey,
-        stage: 2,
-        cached: false,
-        stage1Cached,
-        report: s1Rep,
-        rawText: s1RawText,
-        thoughts: s1Thoughts,
-        usage: s1Usage,
-       },
-      });
-      send({
-       type: 'done',
-       recordId,
-       cached: false,
-       stage1Cached,
-       model: s1Model,
-       report: s1Rep,
-       rawText: s1RawText,
-       thoughts: s1Thoughts,
-       usage: s1Usage,
+       hashHex,
+       title: rep.roleTitle || initialTitle,
+       model: hitModel,
+       report: rep,
+       rawText: hit.payload.rawText || '',
+       thoughts: hit.payload.thoughts || '',
+       usage: hit.payload.usage,
        extractedSource: source,
-      });
-      return;
-     }
+      },
+      { headers: noCache },
+     );
+    }
+   }
 
-     // 4. Parallel Stage 2: per-phase study quizzes (each phase: 8 single + 4 multi + 2 short + 0-1 optional code) + interview question bank
-     // 按复习路径每个阶段独立并发出题 + 面试专题题库并行生成：
-     // 均优先调用 Antigravity Agent（antigravity-preview-09-2026），若遇 503/429/首步超时/循环/解析不完整则自动无缝切换 DeepSeek V4.1 Flash（思考 · low）
-     activeStage = 2;
-     activeStep = 'agent_init';
-     send({
-      type: 'stage2_start',
+   // 1b. Check Stage 1 D1 checkpoint (`prompt_cache` or record's existing `partialReport`)
+   let s1Rep: JdResearchReport | null = null;
+   let s1RawText = '';
+   let s1Thoughts = '';
+   let s1Model = antigravityModelLabel();
+   let s1Usage: AntigravityUsage | undefined;
+
+   if (!bypassCache) {
+    const s1Hit = await readPromptCache<CachedStage1Payload>(stage1CacheKey);
+    if (s1Hit?.payload?.report && s1Hit.payload.report.roadmap.length > 0) {
+     s1Rep = s1Hit.payload.report;
+     s1RawText = s1Hit.payload.rawText || '';
+     s1Thoughts = s1Hit.payload.thoughts || '';
+     s1Model = s1Hit.payload.model || s1Hit.model || antigravityModelLabel();
+     s1Usage = s1Hit.payload.usage;
+    } else if (existingRec?.payload?.partialReport && existingRec.payload.partialReport.roadmap.length > 0) {
+     s1Rep = existingRec.payload.partialReport;
+     s1RawText = existingRec.payload.stage1RawText || '';
+     s1Thoughts = existingRec.payload.stage1Thoughts || '';
+     s1Model = existingRec.payload.model || antigravityModelLabel();
+     s1Usage = existingRec.payload.stage1Usage;
+    }
+   }
+
+   if (s1Rep) {
+    await saveAiInterviewRecord({
+     id: recordId,
+     userId: user.id,
+     kind: 'jd-research',
+     title: s1Rep.roleTitle || initialTitle,
+     subtitle: makeSubtitle(s1Rep),
+     status: 'running',
+     interactionId: existingRec?.interactionId || undefined,
+     payload: {
+      kind,
+      source,
+      hashHex,
+      dailyDayKey: reservedDailyDay || undefined,
+      dailyRefunded: false,
+      model: s1Model,
+      cacheKey,
+      stage1CacheKey,
       stage: 2,
-      stage1Cached,
-      model: 'Antigravity Agent',
-      progress: inspectJdStreamProgress(2, '', s1Rep, stage1Cached),
-     });
+      stage1Cached: true,
+      partialReport: s1Rep,
+      stage1RawText: s1RawText,
+      stage1Thoughts: s1Thoughts,
+      stage1Usage: s1Usage,
+      report: null,
+      rawText: '',
+      thoughts: s1Thoughts,
+      imported: existingRec?.payload?.imported ?? null,
+     },
+     createdAt: existingRec?.createdAt,
+    });
+    return Response.json(
+     {
+      ok: true,
+      status: 'stage1_ready',
+      stage1Cached: true,
+      recordId,
+      hashHex,
+      title: s1Rep.roleTitle || initialTitle,
+      model: s1Model,
+      partialReport: s1Rep,
+      thoughts: s1Thoughts,
+      usage: s1Usage,
+      extractedSource: source,
+     },
+     { headers: noCache },
+    );
+   }
 
-     const stage2Header = s1Thoughts ? '\n\n── 阶段二：Antigravity Agent 并行出题（单选8+多选4+简答2+可选代码）与面试专题题库 ──\n' : '';
-     if (stage2Header) {
-      send({ type: 'thought', stage: 2, text: stage2Header });
-     }
+   // 1c. Start a new background Antigravity Agent interaction for Stage 1
+   try {
+    const { started, modelLabel, attemptIdx } = await startAntigravityWithModelFallback({
+     systemInstruction: getJdResearchStage1SystemPrompt(),
+     input: buildJdStage1Input({ kind, source }),
+     maxTotalTokens: 24_000,
+     attemptOffset,
+     geminiProxy,
+     signal: req.signal,
+    });
 
-     const phaseCount = s1Rep.roadmap.length;
-     const phaseJsonBufs: string[] = Array.from({ length: phaseCount }, () => '');
-     const phaseThoughtBufs: string[] = Array.from({ length: phaseCount }, () => '');
-     let qsJsonBuf = '';
-     let qsThoughtBuf = '';
-     let lastReportedModel = 'Antigravity Agent';
+    await saveAiInterviewRecord({
+     id: recordId,
+     userId: user.id,
+     kind: 'jd-research',
+     title: initialTitle,
+     subtitle: '',
+     status: 'running',
+     interactionId: started.id,
+     payload: {
+      kind,
+      source,
+      hashHex,
+      dailyDayKey: reservedDailyDay || undefined,
+      dailyRefunded: false,
+      model: modelLabel,
+      cacheKey,
+      stage1CacheKey,
+      stage: 1,
+      stage1Cached: false,
+      partialReport: existingRec?.payload?.partialReport ?? null,
+      stage1RawText: '',
+      stage1Thoughts: '',
+      report: null,
+      rawText: '',
+      thoughts: '',
+      imported: existingRec?.payload?.imported ?? null,
+     },
+     createdAt: existingRec?.createdAt,
+    });
 
-     const emitStage2Progress = (deltaText: string) => {
-      activeStep = 'output';
-      const combinedBuf = `${phaseJsonBufs.join('\n')}\n${qsJsonBuf}`;
-      const totalChars = phaseJsonBufs.reduce((n, b) => n + b.length, 0) + qsJsonBuf.length;
-      send({
-       type: 'delta',
-       stage: 2,
-       text: deltaText,
-       chars: totalChars,
-       progress: inspectJdStreamProgress(2, combinedBuf, s1Rep, stage1Cached),
-      });
-     };
+    return Response.json(
+     {
+      ok: true,
+      status: 'started',
+      step: 'stage1',
+      recordId,
+      hashHex,
+      title: initialTitle,
+      interactionId: started.id,
+      model: modelLabel,
+      attemptUsed: attemptIdx,
+      extractedSource: source,
+     },
+     { headers: noCache },
+    );
+   } catch (startErr) {
+    if (!req.signal?.aborted && reservedDailyDay && !isAdmin) {
+     await refundDailyJdQuota(user.id, reservedDailyDay);
+    }
+    throw startErr;
+   }
+  }
 
-     const runAgentThenDeepSeek = async (cfg: {
-      systemPrompt: string;
-      userInput: string;
-      maxTokens: number;
-      validate: (txt: string) => boolean;
-      onThoughtDelta: (td: string) => void;
-      onTextDelta: (td: string) => void;
-      onReset: () => void;
-     }): Promise<{ text: string; thoughts: string; model: string; usage?: AntigravityUsage }> => {
-      let wrote = false;
-      try {
-       const agentRes = await streamAntigravityInteraction({
-        systemInstruction: cfg.systemPrompt,
-        input: cfg.userInput,
-        maxTotalTokens: 28_000,
-        firstStepTimeoutMs: 14_000,
-        maxThoughtSteps: 3,
-        geminiProxy,
-        signal: req.signal,
-        onCreated: ({ id, environmentId }) => {
-         if (!lastInteractionId) {
-          lastInteractionId = id;
-          activeStep = 'thinking';
-          send({ type: 'agent_ready', stage: 2, interactionId: id, environmentId });
-         }
-        },
-        onStep: st => {
-         activeStep = st;
-        },
-        onKeepAlive: () => {
-         send({ type: 'ping', stage: 2, step: activeStep });
-        },
-        onThoughtDelta: td => {
-         wrote = true;
-         cfg.onThoughtDelta(td);
-        },
-        onTextDelta: td => {
-         wrote = true;
-         cfg.onTextDelta(td);
-        },
-        onTextReset: () => {
-         cfg.onReset();
-        },
-       });
-       if (!cfg.validate(agentRes.text)) {
-        throw new AntigravityError('Agent 输出解析不完整，切换 DeepSeek 继续。', 502, 'parse_error');
-       }
-       return {
-        text: agentRes.text,
-        thoughts: agentRes.thoughts,
-        model: 'Antigravity Agent',
-        usage: agentRes.usage,
-       };
-      } catch (err) {
-       if (req.signal?.aborted) throw err;
-       if (wrote) cfg.onReset();
-      }
+  // ---- Action 2: start_step (Stage 2 per-phase quizzes or interview questions, checkpoint-aware) ----
+  if (action === 'start_step') {
+   await rateLimit('jd-research-step:' + user.id, 90);
+   const recordId = typeof body.recordId === 'string' ? body.recordId.trim().slice(0, 80) : '';
+   const step = body.step === 'questions' ? 'questions' : 'phase';
+   const phaseIndex = Number.isInteger(Number(body.phaseIndex)) ? Number(body.phaseIndex) : 0;
+   const attemptOffset = Number.isFinite(Number(body.attempt)) ? Math.max(0, Math.floor(Number(body.attempt))) : 0;
 
-      return jdResearchModelStream({
-       strategy: 'deepseek-first',
-       thinkingLevel: 'low',
-       systemPrompt: cfg.systemPrompt,
-       userInput: cfg.userInput,
-       maxTokens: cfg.maxTokens,
-       geminiProxy,
-       signal: req.signal,
-       validate: cfg.validate,
-       onModel: m => {
-        if (m !== lastReportedModel) {
-         lastReportedModel = m;
-         send({ type: 'model', stage: 2, model: m });
-        }
+   if (!recordId) throw new AuthError('缺少任务标识。', 400);
+   const rec = await getAiInterviewRecord<StoredJdRecordPayload>(user.id, recordId);
+   const s1Rep = rec?.payload?.partialReport;
+   if (!rec || !s1Rep) throw new AuthError('阶段一数据未就绪，请重试。', 404);
+
+   const kind: JdInputKind = rec.payload.kind || 'jd';
+   const source = rec.payload.source || '';
+   const hashHex = rec.payload.hashHex || (await sha256Hex([kind, normalizeJdSourceForCache(source)]));
+
+   if (step === 'phase') {
+    if (phaseIndex < 0 || phaseIndex >= s1Rep.roadmap.length) {
+     throw new AuthError('路径索引超出范围。', 400);
+    }
+    const phaseKey = phaseCacheKeyOf(hashHex, phaseIndex);
+    if (!bypassCache) {
+     const hit = await readPromptCache<CachedPhasePayload>(phaseKey);
+     if (hit?.payload?.quizzes && hit.payload.quizzes.length >= 4) {
+      return Response.json(
+       {
+        ok: true,
+        status: 'step_cached',
+        step: 'phase',
+        phaseIndex,
+        quizCount: hit.payload.quizzes.length,
+        model: hit.payload.model || hit.model || antigravityModelLabel(),
        },
-       onThoughtDelta: cfg.onThoughtDelta,
-       onTextDelta: cfg.onTextDelta,
-       onReset: cfg.onReset,
-      });
+       { headers: noCache },
+      );
+     }
+     const existingQuizzes = s1Rep.roadmap[phaseIndex]?.quizzes;
+     if (existingQuizzes && existingQuizzes.length >= 4) {
+      await writePromptCache(
+       phaseKey,
+       'jd-phase',
+       rec.payload.model || antigravityModelLabel(),
+       {
+        quizzes: existingQuizzes,
+        rawText: '',
+        thoughts: '',
+        model: rec.payload.model || antigravityModelLabel(),
+       } satisfies CachedPhasePayload,
+       7 * 24 * 3600_000,
+      );
+      return Response.json(
+       {
+        ok: true,
+        status: 'step_cached',
+        step: 'phase',
+        phaseIndex,
+        quizCount: existingQuizzes.length,
+        model: rec.payload.model || antigravityModelLabel(),
+       },
+       { headers: noCache },
+      );
+     }
+    }
+
+    const reusedQuizzes = getReusedQuizzesForPhase(s1Rep, phaseIndex);
+    const { started, modelLabel, attemptIdx } = await startAntigravityWithModelFallback({
+     systemInstruction: getJdResearchPhaseQuizzesSystemPrompt(),
+     input: buildJdPhaseQuizzesInput({ kind, source, stage1: s1Rep, phaseIndex, reusedQuizzes }),
+     maxTotalTokens: 32_000,
+     attemptOffset,
+     geminiProxy,
+     signal: req.signal,
+    });
+    return Response.json(
+     {
+      ok: true,
+      status: 'started',
+      step: 'phase',
+      phaseIndex,
+      interactionId: started.id,
+      model: modelLabel,
+      attemptUsed: attemptIdx,
+     },
+     { headers: noCache },
+    );
+   }
+
+   // step === 'questions'
+   const qKey = questionsCacheKeyOf(hashHex);
+   if (!bypassCache) {
+    const hit = await readPromptCache<CachedQuestionsPayload>(qKey);
+    if (hit?.payload?.questions && hit.payload.questions.length > 0) {
+     return Response.json(
+      {
+       ok: true,
+       status: 'step_cached',
+       step: 'questions',
+       questionCount: hit.payload.questions.length,
+       qTitles: hit.payload.questions.map(q => q.title),
+       model: hit.payload.model || hit.model || antigravityModelLabel(),
+      },
+      { headers: noCache },
+     );
+    }
+    if (s1Rep.questions && s1Rep.questions.length > 0) {
+     await writePromptCache(
+      qKey,
+      'jd-questions',
+      rec.payload.model || antigravityModelLabel(),
+      {
+       questions: s1Rep.questions,
+       rawText: '',
+       thoughts: '',
+       model: rec.payload.model || antigravityModelLabel(),
+      } satisfies CachedQuestionsPayload,
+      7 * 24 * 3600_000,
+     );
+     return Response.json(
+      {
+       ok: true,
+       status: 'step_cached',
+       step: 'questions',
+       questionCount: s1Rep.questions.length,
+       qTitles: s1Rep.questions.map(q => q.title),
+       model: rec.payload.model || antigravityModelLabel(),
+      },
+      { headers: noCache },
+     );
+    }
+   }
+
+   const { started, modelLabel, attemptIdx } = await startAntigravityWithModelFallback({
+    systemInstruction: getJdResearchStage2QuestionsSystemPrompt(),
+    input: buildJdStage2QuestionsInput({ kind, source, stage1: s1Rep }),
+    maxTotalTokens: 32_000,
+    attemptOffset,
+    geminiProxy,
+    signal: req.signal,
+   });
+   return Response.json(
+    {
+     ok: true,
+     status: 'started',
+     step: 'questions',
+     interactionId: started.id,
+     model: modelLabel,
+     attemptUsed: attemptIdx,
+    },
+    { headers: noCache },
+   );
+  }
+
+  // ---- Action 3: watch (NDJSON 40s resumable SSE slice using background interactionId + lastEventId) ----
+  if (action === 'watch') {
+   await rateLimit('jd-research-watch:' + user.id, 180);
+   const recordId = typeof body.recordId === 'string' ? body.recordId.trim().slice(0, 80) : '';
+   const interactionId = typeof body.interactionId === 'string' ? body.interactionId.trim().slice(0, 180) : '';
+   const lastEventIdIn = typeof body.lastEventId === 'string' ? body.lastEventId.trim().slice(0, 200) : '';
+   const step = body.step === 'phase' ? 'phase' : body.step === 'questions' ? 'questions' : 'stage1';
+   const phaseIndex = Number.isInteger(Number(body.phaseIndex)) ? Number(body.phaseIndex) : 0;
+   const modelLabel = typeof body.model === 'string' && body.model.trim() ? body.model.trim().slice(0, 60) : antigravityModelLabel();
+
+   if (!recordId || !interactionId) throw new AuthError('缺少监听参数。', 400);
+   const rec = await getAiInterviewRecord<StoredJdRecordPayload>(user.id, recordId);
+   if (!rec) throw new AuthError('未找到调研记录。', 404);
+
+   const kind: JdInputKind = rec.payload.kind || 'jd';
+   const source = rec.payload.source || '';
+   const hashHex = rec.payload.hashHex || (await sha256Hex([kind, normalizeJdSourceForCache(source)]));
+
+   const enc = new TextEncoder();
+   let closed = false;
+   const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+     let lastSendAt = Date.now();
+     const send = (ev: Record<string, unknown>) => {
+      if (closed) return;
+      lastSendAt = Date.now();
+      try {
+       controller.enqueue(enc.encode(JSON.stringify(ev) + '\n'));
+      } catch {
+       closed = true;
+      }
      };
 
-     const phasePrompt = getJdResearchPhaseQuizzesSystemPrompt();
-     const usedInSiteIds = new Set<string>();
-     const reusedByPhase = s1Rep.roadmap.map((_, idx) => pickInSiteQuizzesForStage(s1Rep!, idx, usedInSiteIds));
+     let activeStep = 'thinking';
+     const pingTimer = setInterval(() => {
+      if (closed) return;
+      if (Date.now() - lastSendAt >= 2400) {
+       send({ type: 'ping', step: activeStep });
+      }
+     }, 2500);
 
-     const phasePromises = s1Rep.roadmap.map((step, phaseIdx) => {
-      const reused = reusedByPhase[phaseIdx];
-      const makePhaseSplitter = () =>
+     try {
+      send({
+       type: 'connected',
+       recordId,
+       interactionId,
+       step,
+       phaseIndex: step === 'phase' ? phaseIndex : undefined,
+       model: modelLabel,
+      });
+
+      let deltaBuf = '';
+      let lastDeltaInspectAt = 0;
+      const emitDelta = (jd: string, fullBuf: string, force = false) => {
+       deltaBuf = fullBuf;
+       activeStep = 'output';
+       const now = Date.now();
+       if (!force && now - lastDeltaInspectAt < 400) return;
+       lastDeltaInspectAt = now;
+       if (step === 'stage1') {
+        send({
+         type: 'delta',
+         stage: 1,
+         text: jd,
+         chars: deltaBuf.length,
+         progress: inspectJdStreamProgress(1, deltaBuf, null, false),
+        });
+       } else if (step === 'phase') {
+        const phaseQuizCount = (deltaBuf.match(/"type"\s*:\s*"(?:single|multi|fill|short|code)"/g) || []).length;
+        send({
+         type: 'delta',
+         stage: 2,
+         phaseIndex,
+         text: jd,
+         chars: deltaBuf.length,
+         phaseQuizCount,
+        });
+       } else {
+        const qTitles = extractStreamQuestionTitles(deltaBuf);
+        send({
+         type: 'delta',
+         stage: 2,
+         text: jd,
+         chars: deltaBuf.length,
+         qTitles,
+        });
+       }
+      };
+
+      const makeSplitter = () =>
        createThinkJsonStreamSplitter({
         onThoughtDelta: td => {
          activeStep = 'thinking';
-         phaseThoughtBufs[phaseIdx] += td;
-         if (phaseIdx === 0) send({ type: 'thought', stage: 2, text: td });
+         send({ type: 'thought', stage: step === 'stage1' ? 1 : 2, text: td });
         },
         onJsonDelta: (jd, fullBuf) => {
-         phaseJsonBufs[phaseIdx] = fullBuf;
-         emitStage2Progress(jd);
+         emitDelta(jd, fullBuf, false);
         },
        });
-      let splitter = makePhaseSplitter();
-      return runAgentThenDeepSeek({
-       systemPrompt: phasePrompt,
-       userInput: buildJdPhaseQuizzesInput({ kind, source, stage1: s1Rep!, phaseIndex: phaseIdx, reusedQuizzes: reused }),
-       maxTokens: 10240,
-       validate: txt => parsePhaseQuizzes(txt, phaseIdx).length >= 4,
+      let splitter = makeSplitter();
+
+      const slice = await streamAntigravitySlice({
+       interactionId,
+       lastEventId: lastEventIdIn,
+       maxSliceMs: 40_000,
+       geminiProxy,
+       signal: req.signal,
+       onStep: st => {
+        activeStep = st;
+        send({ type: 'step', stepType: st });
+       },
+       onKeepAlive: () => {
+        send({ type: 'ping', step: activeStep });
+       },
        onThoughtDelta: td => {
         activeStep = 'thinking';
-        phaseThoughtBufs[phaseIdx] += td;
-        if (phaseIdx === 0) send({ type: 'thought', stage: 2, text: td });
+        send({ type: 'thought', stage: step === 'stage1' ? 1 : 2, text: td });
        },
        onTextDelta: td => {
         splitter.push(td);
        },
-       onReset: () => {
-        phaseJsonBufs[phaseIdx] = '';
-        phaseThoughtBufs[phaseIdx] = '';
-        splitter = makePhaseSplitter();
-       },
-      }).then(res => {
-       splitter.flush();
-       const generated = parsePhaseQuizzes(res.text, phaseIdx);
-       return {
-        phaseIdx,
-        phaseLabel: `${step.phase} · ${step.title}`,
-        res,
-        quizzes: combinePhaseQuizzes(reused, generated, phaseIdx),
-       };
-      });
-     });
-
-     const makeQsSplitter = () =>
-      createThinkJsonStreamSplitter({
-       onThoughtDelta: td => {
-        activeStep = 'thinking';
-        qsThoughtBuf += td;
-        send({ type: 'thought', stage: 2, text: td });
-       },
-       onJsonDelta: (jd, fullBuf) => {
-        qsJsonBuf = fullBuf;
-        emitStage2Progress(jd);
+       onTextReset: () => {
+        deltaBuf = '';
+        splitter = makeSplitter();
+        send({ type: 'reset', stage: step === 'stage1' ? 1 : 2, keepThoughts: true });
        },
       });
-     let qsSplitter = makeQsSplitter();
+      splitter.flush();
 
-     const qsPromise = runAgentThenDeepSeek({
-      systemPrompt: getJdResearchStage2QuestionsSystemPrompt(),
-      userInput: buildJdStage2QuestionsInput({ kind, source, stage1: s1Rep }),
-      maxTokens: 8192,
-      validate: txt => {
-       const m = mergeStage1AndStage2Report(s1Rep!, txt);
-       return m.questions.length > 0;
-      },
-      onThoughtDelta: td => {
-       activeStep = 'thinking';
-       qsThoughtBuf += td;
-       send({ type: 'thought', stage: 2, text: td });
-      },
-      onTextDelta: td => {
-       qsSplitter.push(td);
-      },
-      onReset: () => {
-       qsJsonBuf = '';
-       qsThoughtBuf = '';
-       qsSplitter = makeQsSplitter();
-      },
-     }).then(res => {
-      qsSplitter.flush();
-      return res;
-     });
+      if (req.signal?.aborted) return;
 
-     const [phaseOutcomes, qsOutcome] = await Promise.all([
-      Promise.allSettled(phasePromises),
-      qsPromise.then(
-       value => ({ status: 'fulfilled' as const, value }),
-       reason => ({ status: 'rejected' as const, reason }),
-      ),
-     ]);
-
-     const phaseQuizLists = phaseOutcomes.map((o, idx) =>
-      o.status === 'fulfilled' ? o.value.quizzes : reusedByPhase[idx].length ? combinePhaseQuizzes(reusedByPhase[idx], [], idx) : null,
-     );
-     const anyPhaseOk = phaseQuizLists.some(q => q && q.length > 0);
-     const qsRes = qsOutcome.status === 'fulfilled' ? qsOutcome.value : null;
-     if (!anyPhaseOk && !qsRes) {
-      const firstErr =
-       phaseOutcomes.find(o => o.status === 'rejected') || (qsOutcome.status === 'rejected' ? qsOutcome : null);
-      throw firstErr && firstErr.status === 'rejected' ? firstErr.reason : new Error('阶段二出题失败');
-     }
-
-     const qsTextOut = qsRes?.text || '';
-     const finalReport = mergeStage2Parts(s1Rep, phaseQuizLists, qsTextOut);
-
-     const s2ModelSet = new Set<string>();
-     for (const o of phaseOutcomes) {
-      if (o.status === 'fulfilled' && o.value.res.model) s2ModelSet.add(o.value.res.model);
-     }
-     if (qsRes?.model) s2ModelSet.add(qsRes.model);
-     const s2Model = [...s2ModelSet].join(' / ');
-     const combinedModel =
-      s1Model && s2Model && s1Model !== s2Model ? `${s1Model} + ${s2Model}` : s2Model || s1Model || 'DeepSeek V4.1 Flash（思考）';
-
-     const phaseRawParts = phaseOutcomes
-      .map(o => (o.status === 'fulfilled' ? extractThoughtsAndJson(o.value.res.text).jsonRaw || o.value.res.text : ''))
-      .filter(Boolean);
-     const extractedQs = extractThoughtsAndJson(qsTextOut);
-     const s2RawText = [...phaseRawParts, extractedQs.jsonRaw || qsTextOut].filter(Boolean).join('\n\n');
-     const phaseThoughtsJoined = phaseOutcomes
-      .map((o, idx) => {
-       if (o.status !== 'fulfilled') return '';
-       const t = (phaseThoughtBufs[idx].trim() || o.value.res.thoughts || extractThoughtsAndJson(o.value.res.text).thoughts || '').trim();
-       return t ? `[${o.value.phaseLabel}]\n${t}` : '';
-      })
-      .filter(Boolean)
-      .join('\n\n');
-     const qsThoughtsClean = (qsThoughtBuf.trim() || qsRes?.thoughts || extractedQs.thoughts || '').trim();
-     const s2Thoughts = [phaseThoughtsJoined, qsThoughtsClean ? `[面试专题题库]\n${qsThoughtsClean}` : ''].filter(Boolean).join('\n\n');
-     const combinedThoughts = [s1Thoughts, s2Thoughts ? (s1Thoughts ? `── 阶段二：按各路径并行出题与面试专题题库 ──\n${s2Thoughts}` : s2Thoughts) : '']
-      .filter(Boolean)
-      .join('\n\n')
-      .trim();
-     const combinedRaw = [s1RawText, s2RawText].filter(Boolean).join('\n\n');
-     let s2Usage: AntigravityUsage | undefined;
-     for (const o of phaseOutcomes) {
-      if (o.status === 'fulfilled' && o.value.res.usage) {
-       s2Usage = combineUsage(s2Usage, o.value.res.usage);
+      if (slice.status === 'in_progress') {
+       send({
+        type: 'continue',
+        interactionId,
+        lastEventId: slice.lastEventId,
+       });
+       return;
       }
-     }
-     if (qsRes?.usage) {
-      s2Usage = combineUsage(s2Usage, qsRes.usage);
-     }
-     const combinedUsage = combineUsage(s1Usage, s2Usage);
 
-     if (finalReport && (finalReport.questions.length > 0 || hasStructuredStudyQuizzes(finalReport))) {
-      await writePromptCache(
-       cacheKey,
-       'jd-research',
-       combinedModel,
-       {
-        report: finalReport,
-        rawText: combinedRaw,
-        thoughts: combinedThoughts,
-        model: combinedModel,
-        usage: combinedUsage,
-       } satisfies CachedJdPayload,
-       7 * 24 * 3600_000,
-      );
-     }
+      if (slice.status === 'failed' || slice.status === 'cancelled') {
+       send({
+        type: 'retry_step',
+        step,
+        phaseIndex: step === 'phase' ? phaseIndex : undefined,
+        reason: slice.error || `Antigravity Agent 状态异常（${slice.status}）`,
+       });
+       return;
+      }
 
-     const stored: StoredJdRecordPayload = {
-      kind,
-      source,
-      model: combinedModel,
-      cacheKey,
-      stage1CacheKey,
-      stage: 2,
-      cached: false,
-      stage1Cached,
-      partialReport: null,
-      report: finalReport,
-      rawText: combinedRaw,
-      thoughts: combinedThoughts,
-      usage: combinedUsage,
-     };
-     await saveAiInterviewRecord({
-      id: recordId,
-      userId: user.id,
-      kind: 'jd-research',
-      title: finalReport?.roleTitle || s1Rep.roleTitle || initialTitle,
-      subtitle: makeSubtitle(finalReport || s1Rep),
-      status: finalReport ? 'completed' : 'error',
-      interactionId: lastInteractionId || undefined,
-      payload: finalReport ? stored : { ...stored, error: '题库解析不完整，请点击「一键重试」继续生成。' },
-     });
+      // Completed! Parse, validate, and IMMEDIATELY persist checkpoint to D1 prompt_cache + record!
+      const freshRec = (await getAiInterviewRecord<StoredJdRecordPayload>(user.id, recordId)) || rec;
+      const extracted = extractThoughtsAndJson(slice.text);
+      const rawJsonText = extracted.jsonRaw || slice.text;
+      const cleanThoughts = (slice.thoughts || extracted.thoughts || '').trim();
 
-     send({
-      type: 'done',
-      recordId,
-      cached: false,
-      stage1Cached,
-      model: combinedModel,
-      report: finalReport,
-      rawText: combinedRaw,
-      thoughts: combinedThoughts,
-      usage: combinedUsage,
-      extractedSource: source,
-     });
-    } catch (e) {
-     // Only refund daily quota on system/upstream errors; user cancellations still consume today's quota.
-     if (!req.signal?.aborted) {
-      await refundDailyOnce();
-      const msg =
-       e instanceof AuthError || e instanceof AntigravityError
-        ? e.message
-        : '深度调研流式生成中断，请点击「一键重试」（若阶段一已完成将直接从阶段二继续）。';
-      try {
-       const prev = await getAiInterviewRecord<StoredJdRecordPayload>(user.id, recordId);
+      if (step === 'stage1') {
+       const s1Rep = parseAndEnrichJdReport(slice.text);
+       if (!s1Rep || (!s1Rep.roadmap.length && !s1Rep.dimensions.length)) {
+        send({ type: 'retry_step', step: 'stage1', reason: '阶段一 JSON 解析不完整，自动重试' });
+        return;
+       }
+       const s1CacheKey = stage1CacheKeyOf(hashHex);
+       await writePromptCache(
+        s1CacheKey,
+        'jd-stage1',
+        modelLabel,
+        {
+         report: s1Rep,
+         rawText: rawJsonText,
+         thoughts: cleanThoughts,
+         model: modelLabel,
+         usage: slice.usage,
+        } satisfies CachedStage1Payload,
+        7 * 24 * 3600_000,
+       );
        await saveAiInterviewRecord({
         id: recordId,
         userId: user.id,
         kind: 'jd-research',
-        title: prev?.title || initialTitle,
-        subtitle: prev?.subtitle || '',
-        status: 'error',
+        title: s1Rep.roleTitle || freshRec.title,
+        subtitle: makeSubtitle(s1Rep),
+        status: 'running',
+        interactionId,
         payload: {
-         ...(prev?.payload || { kind, source, report: null, rawText: '', thoughts: '' }),
-         error: msg,
+         ...freshRec.payload,
+         hashHex,
+         model: modelLabel,
+         stage1CacheKey: s1CacheKey,
+         stage: 2,
+         stage1Cached: false,
+         partialReport: s1Rep,
+         stage1RawText: rawJsonText,
+         stage1Thoughts: cleanThoughts,
+         stage1Usage: slice.usage,
+         thoughts: cleanThoughts,
         },
-        createdAt: prev?.createdAt,
+        createdAt: freshRec.createdAt,
        });
-      } catch {}
-      send({ type: 'error', recordId, error: msg });
-     }
-    } finally {
-     clearInterval(pingTimer);
-     if (!closed) {
-      closed = true;
-      try {
-       controller.close();
-      } catch {}
-     }
-    }
-   },
-   cancel() {
-    closed = true;
-   },
-  });
+       send({
+        type: 'stage1',
+        recordId,
+        stage1Cached: false,
+        model: modelLabel,
+        partialReport: s1Rep,
+        thoughts: cleanThoughts,
+        usage: slice.usage,
+        progress: inspectJdStreamProgress(2, '', s1Rep, false),
+       });
+       return;
+      }
 
-  return new Response(stream, {
-   headers: {
-    'Content-Type': 'application/x-ndjson; charset=utf-8',
-    'Cache-Control': 'no-store, no-transform',
-    'X-Accel-Buffering': 'no',
-    'X-Content-Type-Options': 'nosniff',
-   },
-  });
+      const s1Rep = freshRec.payload?.partialReport;
+      if (!s1Rep) {
+       send({ type: 'retry_step', step, reason: '缺少阶段一结果，请重试' });
+       return;
+      }
+
+      if (step === 'phase') {
+       const generated = parsePhaseQuizzes(slice.text, phaseIndex);
+       if (generated.length < 4) {
+        send({ type: 'retry_step', step: 'phase', phaseIndex, reason: '路径题库解析不完整，自动切换模型重试' });
+        return;
+       }
+       const reused = getReusedQuizzesForPhase(s1Rep, phaseIndex);
+       const quizzes = combinePhaseQuizzes(reused, generated, phaseIndex);
+       const phaseKey = phaseCacheKeyOf(hashHex, phaseIndex);
+       await writePromptCache(
+        phaseKey,
+        'jd-phase',
+        modelLabel,
+        {
+         quizzes,
+         rawText: rawJsonText,
+         thoughts: cleanThoughts,
+         model: modelLabel,
+         usage: slice.usage,
+        } satisfies CachedPhasePayload,
+        7 * 24 * 3600_000,
+       );
+       const updatedPartial: JdResearchReport = {
+        ...s1Rep,
+        roadmap: s1Rep.roadmap.map((st, idx) => (idx === phaseIndex ? { ...st, quizzes } : st)),
+       };
+       await saveAiInterviewRecord({
+        id: recordId,
+        userId: user.id,
+        kind: 'jd-research',
+        title: freshRec.title,
+        subtitle: freshRec.subtitle,
+        status: 'running',
+        interactionId,
+        payload: {
+         ...freshRec.payload,
+         hashHex,
+         partialReport: updatedPartial,
+        },
+        createdAt: freshRec.createdAt,
+       });
+       send({
+        type: 'phase_done',
+        phaseIndex,
+        cached: false,
+        quizCount: quizzes.length,
+        model: modelLabel,
+        thoughts: cleanThoughts,
+        usage: slice.usage,
+       });
+       return;
+      }
+
+      // step === 'questions'
+      const mergedQs = mergeStage1AndStage2Report(s1Rep, slice.text).questions;
+      if (!mergedQs.length) {
+       send({ type: 'retry_step', step: 'questions', reason: '面试题库解析不完整，自动切换模型重试' });
+       return;
+      }
+      const qKey = questionsCacheKeyOf(hashHex);
+      await writePromptCache(
+       qKey,
+       'jd-questions',
+       modelLabel,
+       {
+        questions: mergedQs,
+        rawText: rawJsonText,
+        thoughts: cleanThoughts,
+        model: modelLabel,
+        usage: slice.usage,
+       } satisfies CachedQuestionsPayload,
+       7 * 24 * 3600_000,
+      );
+      const updatedPartial: JdResearchReport = {
+       ...s1Rep,
+       questions: mergedQs,
+      };
+      await saveAiInterviewRecord({
+       id: recordId,
+       userId: user.id,
+       kind: 'jd-research',
+       title: freshRec.title,
+       subtitle: freshRec.subtitle,
+       status: 'running',
+       interactionId,
+       payload: {
+        ...freshRec.payload,
+        hashHex,
+        partialReport: updatedPartial,
+       },
+       createdAt: freshRec.createdAt,
+      });
+      send({
+       type: 'questions_done',
+       cached: false,
+       questionCount: mergedQs.length,
+       qTitles: mergedQs.map(q => q.title),
+       model: modelLabel,
+       thoughts: cleanThoughts,
+       usage: slice.usage,
+      });
+     } catch (e) {
+      if (!req.signal?.aborted) {
+       send({
+        type: 'retry_step',
+        step,
+        phaseIndex: step === 'phase' ? phaseIndex : undefined,
+        reason: e instanceof Error ? e.message : '网络波动，自动重试',
+       });
+      }
+     } finally {
+      clearInterval(pingTimer);
+      if (!closed) {
+       closed = true;
+       try {
+        controller.close();
+       } catch {}
+      }
+     }
+    },
+    cancel() {
+     closed = true;
+    },
+   });
+
+   return new Response(stream, {
+    headers: {
+     'Content-Type': 'application/x-ndjson; charset=utf-8',
+     'Cache-Control': 'no-store, no-transform',
+     'X-Accel-Buffering': 'no',
+     'X-Content-Type-Options': 'nosniff',
+    },
+   });
+  }
+
+  // ---- Action 4: finalize (aggregates all saved D1 checkpoints into final completed report) ----
+  if (action === 'finalize') {
+   const recordId = typeof body.recordId === 'string' ? body.recordId.trim().slice(0, 80) : '';
+   if (!recordId) throw new AuthError('缺少任务标识。', 400);
+   const rec = await getAiInterviewRecord<StoredJdRecordPayload>(user.id, recordId);
+   const s1Rep = rec?.payload?.partialReport || rec?.payload?.report;
+   if (!rec || !s1Rep) throw new AuthError('未找到阶段一数据，请重试。', 404);
+
+   const kind: JdInputKind = rec.payload.kind || 'jd';
+   const source = rec.payload.source || '';
+   const hashHex = rec.payload.hashHex || (await sha256Hex([kind, normalizeJdSourceForCache(source)]));
+   const cacheKey = rec.payload.cacheKey || fullCacheKeyOf(hashHex);
+   const stage1CacheKey = rec.payload.stage1CacheKey || stage1CacheKeyOf(hashHex);
+
+   const phaseHits = await Promise.all(
+    s1Rep.roadmap.map((_, idx) => readPromptCache<CachedPhasePayload>(phaseCacheKeyOf(hashHex, idx))),
+   );
+   const qHit = await readPromptCache<CachedQuestionsPayload>(questionsCacheKeyOf(hashHex));
+
+   const mergedRoadmap = s1Rep.roadmap.map((step, idx) => {
+    const qz = phaseHits[idx]?.payload?.quizzes;
+    return qz && qz.length ? { ...step, quizzes: qz } : step;
+   });
+   const finalQuestions = qHit?.payload?.questions?.length ? qHit.payload.questions : s1Rep.questions;
+   const finalReport: JdResearchReport = {
+    ...s1Rep,
+    roadmap: mergedRoadmap,
+    questions: finalQuestions,
+   };
+
+   const anyPhaseHasQuizzes = mergedRoadmap.some(s => (s.quizzes?.length ?? 0) > 0);
+   if (!anyPhaseHasQuizzes && !finalQuestions.length) {
+    if (!isAdmin && rec.payload.dailyDayKey && !rec.payload.dailyRefunded) {
+     await refundDailyJdQuota(user.id, rec.payload.dailyDayKey);
+    }
+    await saveAiInterviewRecord({
+     id: recordId,
+     userId: user.id,
+     kind: 'jd-research',
+     title: rec.title,
+     subtitle: rec.subtitle,
+     status: 'error',
+     interactionId: rec.interactionId || undefined,
+     payload: {
+      ...rec.payload,
+      dailyRefunded: true,
+      error: '题库生成失败，请点击「一键重试」（阶段一已保存，不会重复消耗 Token）。',
+     },
+     createdAt: rec.createdAt,
+    });
+    return Response.json(
+     { error: '题库生成失败，请点击「一键重试」（阶段一已保存，不会重复消耗 Token）。' },
+     { status: 502, headers: noCache },
+    );
+   }
+
+   const modelSet = new Set<string>();
+   if (rec.payload.model) modelSet.add(rec.payload.model);
+   for (const h of phaseHits) {
+    const m = h?.payload?.model || h?.model;
+    if (m) modelSet.add(m);
+   }
+   if (qHit?.payload?.model || qHit?.model) modelSet.add(qHit?.payload?.model || qHit?.model || '');
+   const combinedModel = [...modelSet].filter(Boolean).join(' / ') || antigravityModelLabel();
+
+   let totalUsage: AntigravityUsage | undefined = rec.payload.stage1Usage;
+   for (const h of phaseHits) {
+    if (h?.payload?.usage) totalUsage = combineUsage(totalUsage, h.payload.usage);
+   }
+   if (qHit?.payload?.usage) totalUsage = combineUsage(totalUsage, qHit.payload.usage);
+
+   const s1Thoughts = rec.payload.stage1Thoughts || '';
+   const s2ThoughtParts: string[] = [];
+   phaseHits.forEach((h, idx) => {
+    const t = h?.payload?.thoughts?.trim();
+    if (t) s2ThoughtParts.push(`[${mergedRoadmap[idx].phase} · ${mergedRoadmap[idx].title}]\n${t}`);
+   });
+   if (qHit?.payload?.thoughts?.trim()) {
+    s2ThoughtParts.push(`[面试专题题库]\n${qHit.payload.thoughts.trim()}`);
+   }
+   const s2Thoughts = s2ThoughtParts.join('\n\n');
+   const combinedThoughts = [
+    s1Thoughts,
+    s2Thoughts ? (s1Thoughts ? `── 阶段二：Antigravity Agent 分步出题 ──\n${s2Thoughts}` : s2Thoughts) : '',
+   ]
+    .filter(Boolean)
+    .join('\n\n')
+    .trim();
+
+   const rawParts = [
+    rec.payload.stage1RawText || '',
+    ...phaseHits.map(h => h?.payload?.rawText || ''),
+    qHit?.payload?.rawText || '',
+   ].filter(Boolean);
+   const combinedRaw = rawParts.join('\n\n');
+
+   const allPhasesDone = mergedRoadmap.every(s => (s.quizzes?.length ?? 0) >= 4);
+   if (allPhasesDone && finalQuestions.length > 0) {
+    await writePromptCache(
+     cacheKey,
+     'jd-research',
+     combinedModel,
+     {
+      report: finalReport,
+      rawText: combinedRaw,
+      thoughts: combinedThoughts,
+      model: combinedModel,
+      usage: totalUsage,
+     } satisfies CachedJdPayload,
+     7 * 24 * 3600_000,
+    );
+   }
+
+   const stored: StoredJdRecordPayload = {
+    kind,
+    source,
+    hashHex,
+    dailyDayKey: rec.payload.dailyDayKey,
+    dailyRefunded: false,
+    model: combinedModel,
+    cacheKey,
+    stage1CacheKey,
+    stage: 2,
+    cached: false,
+    stage1Cached: Boolean(rec.payload.stage1Cached),
+    partialReport: null,
+    report: finalReport,
+    rawText: combinedRaw,
+    thoughts: combinedThoughts,
+    usage: totalUsage,
+    imported: rec.payload.imported ?? null,
+   };
+
+   await saveAiInterviewRecord({
+    id: recordId,
+    userId: user.id,
+    kind: 'jd-research',
+    title: finalReport.roleTitle || rec.title,
+    subtitle: makeSubtitle(finalReport) || rec.subtitle,
+    status: 'completed',
+    interactionId: rec.interactionId || undefined,
+    payload: stored,
+    createdAt: rec.createdAt,
+   });
+
+   return Response.json(
+    {
+     ok: true,
+     recordId,
+     cached: false,
+     stage1Cached: Boolean(rec.payload.stage1Cached),
+     model: combinedModel,
+     report: finalReport,
+     rawText: combinedRaw,
+     thoughts: combinedThoughts,
+     usage: totalUsage,
+     extractedSource: source,
+    },
+    { headers: noCache },
+   );
+  }
+
+  // ---- Action 5: fail (refunds daily quota on unrecoverable system error, preserves all saved checkpoints) ----
+  const recordId = typeof body.recordId === 'string' ? body.recordId.trim().slice(0, 80) : '';
+  const errMsg =
+   typeof body.error === 'string' && body.error.trim()
+    ? body.error.trim().slice(0, 300)
+    : '生成中断，请点击「一键重试」（已完成步骤已保存，不会重复耗费 Token）。';
+  if (recordId) {
+   const prev = await getAiInterviewRecord<StoredJdRecordPayload>(user.id, recordId);
+   if (prev && prev.status !== 'completed') {
+    if (!isAdmin && prev.payload?.dailyDayKey && !prev.payload?.dailyRefunded) {
+     await refundDailyJdQuota(user.id, prev.payload.dailyDayKey);
+    }
+    await saveAiInterviewRecord({
+     id: recordId,
+     userId: user.id,
+     kind: 'jd-research',
+     title: prev.title,
+     subtitle: prev.subtitle,
+     status: 'error',
+     interactionId: prev.interactionId || undefined,
+     payload: {
+      ...prev.payload,
+      dailyRefunded: true,
+      error: errMsg,
+     },
+     createdAt: prev.createdAt,
+    });
+   }
+  }
+  return Response.json({ ok: true }, { headers: noCache });
  } catch (e) {
   if (e instanceof AuthError) return Response.json({ error: e.message }, { status: e.status, headers: noCache });
   if (e instanceof AntigravityError) return Response.json({ error: e.message, code: e.code }, { status: e.status, headers: noCache });

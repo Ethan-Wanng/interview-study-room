@@ -10,6 +10,12 @@ export function groupReleasesByDay(releases:Release[]):ReleaseDay[]{
 }
 
 export const RELEASES:Release[]=[
+ {version:'2026.11.24-9',date:'2026-11-24',title:'JD 调研全面切换纯 Antigravity Agent 后台续传架构、全步骤断点持久化与新澳洲备用节点',changes:[
+  '彻底移除 JD / 面经深度调研及单题重出中的 DeepSeek 调用，全流程（画像路径、各路径学习题、面试题库、单题重出）统一由 Antigravity Agent 驱动。',
+  '采用 Google 官方 background: true 后台执行 + last_event_id 40 秒分片断线无感续传与轮询兜底架构，按「画像路径 -> 逐条路径学习题 -> 面试题库 -> 汇总落库」顺序稳定推进，彻底消除 60 秒断连与 Worker 超时报错。',
+  '每完成一步立即持久化至 D1 断点缓存（7 天有效）与云端记录，单步异常自动切换 Agent 底层模型并重试，断点续跑或重试绝不重跑已完成步骤、不浪费 Token。',
+  '备用代理节点更新为 🇦🇺19澳洲-移动优化(AnyTLS)（19sdy.quandao.com:4430）。',
+ ]},
  {version:'2026.11.24-8',date:'2026-11-24',title:'JD / 面经深度调研接入每日限额（普通用户每日 1 份，管理员不限）与游客访问拦截',changes:[
   '普通登录用户每日限生成 1 份 JD / 面经深度调研（按北京时间次日 0 点重置；完整生成与中途取消均计入当日额度，系统报错自动退还），管理员账号不限次数。',
   '游客模式不再开放 JD / 面经深度调研与专题学习入口及接口，访问页面将引导登录正式账号。',
