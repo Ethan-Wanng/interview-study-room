@@ -10,6 +10,13 @@ export function groupReleasesByDay(releases:Release[]):ReleaseDay[]{
 }
 
 export const RELEASES:Release[]=[
+ {version:'2026.11.24-8',date:'2026-11-24',title:'JD / 面经深度调研接入每日限额（普通用户每日 1 份，管理员不限）与游客访问拦截',changes:[
+  '普通登录用户每日限生成 1 份 JD / 面经深度调研（按北京时间次日 0 点重置；完整生成与中途取消均计入当日额度，系统报错自动退还），管理员账号不限次数。',
+  '游客模式不再开放 JD / 面经深度调研与专题学习入口及接口，访问页面将引导登录正式账号。',
+ ]},
+ {version:'2026.11.24-7',date:'2026-11-24',title:'JD 调研阶段二接入 Antigravity Agent + DeepSeek 并发协作与自动降级',changes:[
+  'JD / 面经深度调研正式切换为「DeepSeek 画像路径 + Antigravity Agent 并发出题」协作架构：第 1 步由 DeepSeek V4.1 Flash（思考）秒连生成考点画像与复习路径；第 2 步各路径学习题与面试题库均优先由 Antigravity Agent 并行流式出题，遇 503/429/首步超时自动无缝降级至 DeepSeek V4.1 Flash（思考）。',
+ ]},
  {version:'2026.11.24-6',date:'2026-11-24',title:'代码题支持 5 语言框架代码、行内代码格式修复与单题「AI 重出」',changes:[
   '修复题干中行内反引号代码与转义换行渲染异常，并将 JD 专题代码题全面升级为支持 Python / Go / Java / JS/TS / Rust 五种语言框架代码切换（含已生成的历史专题代码题）。',
   '专题刷题卡片顶部新增「AI 重出」按钮：遇到有问题的题目可一键让 AI 按原题型与考点维度重新生成并自动保存覆盖云端记录。',
@@ -23,9 +30,9 @@ export const RELEASES:Release[]=[
   '学习模块「专题」新增「画像刷题」模式：每道学习题自动标注对应考点画像模块，支持在「按路径刷题」与「按画像刷题」之间无缝切换且做题进度实时互通，考点画像卡片支持一键直达对应维度刷题。',
   '修复前端流式连接意外断开时页面计时器卡死的问题（断开自动核对云端完成态），并重排调研报告头部布局使标题、标签与操作按钮分行清晰展示。',
  ]},
- {version:'2026.11.24-3',date:'2026-11-24',title:'修复 JD / 面经深度调研卡在第一步问题，启用 DeepSeek + Gemini 分工协作与自动降级',changes:[
+ {version:'2026.11.24-3',date:'2026-11-24',title:'修复 JD / 面经深度调研卡在第一步问题，启用 Antigravity Agent + DeepSeek 分工协作与自动降级',changes:[
   '修复 Antigravity Agent（Google Interactions API）协议兼容与流式解析问题：移除 CreateAgentInteraction 不支持的顶层 system_instruction（消除上游 deadline_exceeded 超时）、修正 thought_summary 的 delta.content.text 原生思考流提取、补全 event: error 错误识别与多段 model_output 重置保护，并同步修复系统设计评审接口。',
-  'JD / 面经深度调研升级为「分工协作 + 多引擎无缝自动降级」：第 1 步（考点画像与分阶段复习路径）由 DeepSeek V4.1 Flash（思考模式）优先流式生成（秒连、稳定输出中文思考过程与画像路径预览，失败自动降级 Gemini）；第 2 步（各阶段 5 题型学习题 + 面试专题题库）由 Antigravity Agent / Gemini 优先出题，若遇 Gemini 503 算力繁忙、429 限流、首步超时或循环思考则自动无缝切换至 DeepSeek V4.1 Flash（思考模式）完成出题，全程实时更新当前引擎标识。',
+  'JD / 面经深度调研升级为「Antigravity Agent + DeepSeek 分工协作与自动降级」：第 1 步（考点画像与分阶段复习路径）由 DeepSeek V4.1 Flash（思考模式）优先流式生成；第 2 步（路径学习题 + 面试专题题库）优先由 Antigravity Agent 流式出题，若遇 503 算力繁忙、429 限流、首步超时或循环思考则自动无缝切换至 DeepSeek V4.1 Flash（思考模式）完成出题，全程实时更新当前引擎标识。',
  ]},
  {version:'2026.11.24-2',date:'2026-11-24',title:'JD / 面经深度调研实时流式输出与思考过程展示、两步生成、三层缓存及 Agent 网络检查',changes:[
   'JD / 面经深度调研全面升级为「NDJSON 实时流式输出」：发起即显示流式通道与 Agent 会话连接状态、心跳及实时输出字数，彻底告别盲等；全程实时流式展示「思考过程」（生成完成后默认展开）与实时输出流片段。',

@@ -37,6 +37,9 @@ export async function GET(req: Request) {
   if (!user) throw new AuthError('请先登录。', 401);
   const url = new URL(req.url);
   const kind: AiInterviewKind = url.searchParams.get('kind') === 'architect' ? 'architect' : 'jd-research';
+  if (user.is_guest && kind === 'jd-research') {
+   throw new AuthError('游客不支持 JD / 面经深度调研功能，请登录正式账号。', 403);
+  }
   const rows = await listAiInterviewRecords<Record<string, unknown>>(user.id, kind);
   // Attach fresh HMAC signatures so the client can seamlessly resume polling or follow-ups after reload!
   const items = await Promise.all(
@@ -70,6 +73,9 @@ export async function POST(req: Request) {
   }
 
   const kind: AiInterviewKind = body.kind === 'architect' ? 'architect' : 'jd-research';
+  if (user.is_guest && kind === 'jd-research') {
+   throw new AuthError('游客不支持 JD / 面经深度调研功能，请登录正式账号。', 403);
+  }
   const id = typeof body.id === 'string' ? body.id.trim().slice(0, 80) : '';
   const title = typeof body.title === 'string' ? body.title.trim().slice(0, 120) : '';
   const subtitle = typeof body.subtitle === 'string' ? body.subtitle.trim().slice(0, 80) : '';

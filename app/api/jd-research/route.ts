@@ -1,10 +1,13 @@
 import { env } from 'cloudflare:workers';
 import { AuthError, assertSameOrigin, rateLimit, sessionUser } from '@/lib/site-auth';
+import { currentAdmin } from '@/lib/admin-auth';
+import { refundDailyJdQuota, tryConsumeDailyJdQuota } from '@/lib/jd-daily-limit';
 import {
  ANTIGRAVITY_AGENT_ID,
  AntigravityError,
  pollAntigravityInteraction,
  startAntigravityInteraction,
+ streamAntigravityInteraction,
  type AntigravityUsage,
 } from '@/lib/antigravity-agent';
 import { readPromptCache, sha256Hex, writePromptCache } from '@/lib/prompt-cache';
@@ -122,7 +125,9 @@ export async function POST(req: Request) {
   assertSameOrigin(req);
   const user = await sessionUser(req.headers);
   if (!user) throw new AuthError('请先登录后再使用 JD / 面经调研。', 401);
-  if (user.is_guest) throw new AuthError('游客不支持调用 Gemini 模型，请登录后使用 JD / 面经调研。', 403);
+  if (user.is_guest) throw new AuthError('游客不支持 JD / 面经深度调研功能，请登录正式账号后使用。', 403);
+  const admin = await currentAdmin(req.headers);
+  const isAdmin = Boolean(admin);
   await rateLimit('jd-research:' + user.id, 30);
 
   const raw = await req.text();
@@ -158,6 +163,22 @@ export async function POST(req: Request) {
   const source = parts.join('\n\n').slice(0, 14_000).trim();
 
   if (source.length < 20) throw new AuthError('请粘贴至少 20 字的岗位 JD / 面经内容，或提供岗位链接 / 图片。');
+
+  // Enforce daily quota: 1 generation per Beijing day for regular users, unlimited for admins.
+  let reservedDailyDay = '';
+  let refundedDaily = false;
+  const refundDailyOnce = async () => {
+   if (!reservedDailyDay || refundedDaily) return;
+   refundedDaily = true;
+   await refundDailyJdQuota(user.id, reservedDailyDay);
+  };
+  if (!isAdmin) {
+   const daily = await tryConsumeDailyJdQuota(user.id);
+   if (!daily.allowed) {
+    throw new AuthError('每位用户每天限生成 1 份 JD / 面经深度调研，今日额度已用完，请明天再来。', 429);
+   }
+   reservedDailyDay = daily.dayKey;
+  }
 
   const recordId = existingRecordId || 'jdr-' + crypto.randomUUID();
   const normSource = normalizeJdSourceForCache(source);
@@ -473,19 +494,19 @@ export async function POST(req: Request) {
      }
 
      // 4. Parallel Stage 2: per-phase study quizzes (each phase: 8 single + 4 multi + 2 short + 0-1 optional code) + interview question bank
-     // 按复习路径每个阶段独立并发出题 + 面试专题题库并行生成，既严格满足每阶段 14-15 题量与考点画像标签，又避免单次超长输出超时；
-     // 均优先尝试 Gemini（Gemini 4 Hydrogen -> Gemini 3.8 Flash -> Gemini 3.6 Flash），若 Gemini 503/429/超时则自动无缝切换 DeepSeek V4.1 Flash（思考 · low）
+     // 按复习路径每个阶段独立并发出题 + 面试专题题库并行生成：
+     // 均优先调用 Antigravity Agent（antigravity-preview-09-2026），若遇 503/429/首步超时/循环/解析不完整则自动无缝切换 DeepSeek V4.1 Flash（思考 · low）
      activeStage = 2;
-     activeStep = 'thinking';
+     activeStep = 'agent_init';
      send({
       type: 'stage2_start',
       stage: 2,
       stage1Cached,
-      model: 'Gemini / DeepSeek 并行出题',
+      model: 'Antigravity Agent',
       progress: inspectJdStreamProgress(2, '', s1Rep, stage1Cached),
      });
 
-     const stage2Header = s1Thoughts ? '\n\n── 阶段二：按各路径并行出题（单选8+多选4+简答2+可选代码）与面试专题题库 ──\n' : '';
+     const stage2Header = s1Thoughts ? '\n\n── 阶段二：Antigravity Agent 并行出题（单选8+多选4+简答2+可选代码）与面试专题题库 ──\n' : '';
      if (stage2Header) {
       send({ type: 'thought', stage: 2, text: stage2Header });
      }
@@ -495,7 +516,7 @@ export async function POST(req: Request) {
      const phaseThoughtBufs: string[] = Array.from({ length: phaseCount }, () => '');
      let qsJsonBuf = '';
      let qsThoughtBuf = '';
-     let lastReportedModel = '';
+     let lastReportedModel = 'Antigravity Agent';
 
      const emitStage2Progress = (deltaText: string) => {
       activeStep = 'output';
@@ -510,6 +531,85 @@ export async function POST(req: Request) {
       });
      };
 
+     const runAgentThenDeepSeek = async (cfg: {
+      systemPrompt: string;
+      userInput: string;
+      maxTokens: number;
+      validate: (txt: string) => boolean;
+      onThoughtDelta: (td: string) => void;
+      onTextDelta: (td: string) => void;
+      onReset: () => void;
+     }): Promise<{ text: string; thoughts: string; model: string; usage?: AntigravityUsage }> => {
+      let wrote = false;
+      try {
+       const agentRes = await streamAntigravityInteraction({
+        systemInstruction: cfg.systemPrompt,
+        input: cfg.userInput,
+        maxTotalTokens: 28_000,
+        firstStepTimeoutMs: 14_000,
+        maxThoughtSteps: 3,
+        geminiProxy,
+        signal: req.signal,
+        onCreated: ({ id, environmentId }) => {
+         if (!lastInteractionId) {
+          lastInteractionId = id;
+          activeStep = 'thinking';
+          send({ type: 'agent_ready', stage: 2, interactionId: id, environmentId });
+         }
+        },
+        onStep: st => {
+         activeStep = st;
+        },
+        onKeepAlive: () => {
+         send({ type: 'ping', stage: 2, step: activeStep });
+        },
+        onThoughtDelta: td => {
+         wrote = true;
+         cfg.onThoughtDelta(td);
+        },
+        onTextDelta: td => {
+         wrote = true;
+         cfg.onTextDelta(td);
+        },
+        onTextReset: () => {
+         cfg.onReset();
+        },
+       });
+       if (!cfg.validate(agentRes.text)) {
+        throw new AntigravityError('Agent 输出解析不完整，切换 DeepSeek 继续。', 502, 'parse_error');
+       }
+       return {
+        text: agentRes.text,
+        thoughts: agentRes.thoughts,
+        model: 'Antigravity Agent',
+        usage: agentRes.usage,
+       };
+      } catch (err) {
+       if (req.signal?.aborted) throw err;
+       if (wrote) cfg.onReset();
+      }
+
+      return jdResearchModelStream({
+       strategy: 'deepseek-first',
+       thinkingLevel: 'low',
+       systemPrompt: cfg.systemPrompt,
+       userInput: cfg.userInput,
+       maxTokens: cfg.maxTokens,
+       geminiProxy,
+       signal: req.signal,
+       validate: cfg.validate,
+       onModel: m => {
+        if (m !== lastReportedModel) {
+         lastReportedModel = m;
+         send({ type: 'model', stage: 2, model: m });
+        }
+       },
+       onThoughtDelta: cfg.onThoughtDelta,
+       onTextDelta: cfg.onTextDelta,
+       onReset: cfg.onReset,
+      });
+     };
+
      const phasePrompt = getJdResearchPhaseQuizzesSystemPrompt();
      const usedInSiteIds = new Set<string>();
      const reusedByPhase = s1Rep.roadmap.map((_, idx) => pickInSiteQuizzesForStage(s1Rep!, idx, usedInSiteIds));
@@ -521,7 +621,7 @@ export async function POST(req: Request) {
         onThoughtDelta: td => {
          activeStep = 'thinking';
          phaseThoughtBufs[phaseIdx] += td;
-         send({ type: 'thought', stage: 2, text: td });
+         if (phaseIdx === 0) send({ type: 'thought', stage: 2, text: td });
         },
         onJsonDelta: (jd, fullBuf) => {
          phaseJsonBufs[phaseIdx] = fullBuf;
@@ -529,28 +629,15 @@ export async function POST(req: Request) {
         },
        });
       let splitter = makePhaseSplitter();
-      return jdResearchModelStream({
-       strategy: 'gemini-then-deepseek',
-       includeHydrogen: true,
-       thinkingLevel: 'low',
+      return runAgentThenDeepSeek({
        systemPrompt: phasePrompt,
        userInput: buildJdPhaseQuizzesInput({ kind, source, stage1: s1Rep!, phaseIndex: phaseIdx, reusedQuizzes: reused }),
        maxTokens: 10240,
-       geminiProxy,
-       signal: req.signal,
        validate: txt => parsePhaseQuizzes(txt, phaseIdx).length >= 4,
-       onModel: m => {
-        if (m !== lastReportedModel) {
-         lastReportedModel = m;
-         send({ type: 'model', stage: 2, model: m });
-        }
-       },
        onThoughtDelta: td => {
         activeStep = 'thinking';
         phaseThoughtBufs[phaseIdx] += td;
-        if (phaseIdx === 0) {
-         send({ type: 'thought', stage: 2, text: td });
-        }
+        if (phaseIdx === 0) send({ type: 'thought', stage: 2, text: td });
        },
        onTextDelta: td => {
         splitter.push(td);
@@ -586,24 +673,13 @@ export async function POST(req: Request) {
       });
      let qsSplitter = makeQsSplitter();
 
-     const qsPromise = jdResearchModelStream({
-      strategy: 'gemini-then-deepseek',
-      includeHydrogen: true,
-      thinkingLevel: 'low',
+     const qsPromise = runAgentThenDeepSeek({
       systemPrompt: getJdResearchStage2QuestionsSystemPrompt(),
       userInput: buildJdStage2QuestionsInput({ kind, source, stage1: s1Rep }),
       maxTokens: 8192,
-      geminiProxy,
-      signal: req.signal,
       validate: txt => {
        const m = mergeStage1AndStage2Report(s1Rep!, txt);
        return m.questions.length > 0;
-      },
-      onModel: m => {
-       if (m !== lastReportedModel) {
-        lastReportedModel = m;
-        send({ type: 'model', stage: 2, model: m });
-       }
       },
       onThoughtDelta: td => {
        activeStep = 'thinking';
@@ -740,7 +816,9 @@ export async function POST(req: Request) {
       extractedSource: source,
      });
     } catch (e) {
+     // Only refund daily quota on system/upstream errors; user cancellations still consume today's quota.
      if (!req.signal?.aborted) {
+      await refundDailyOnce();
       const msg =
        e instanceof AuthError || e instanceof AntigravityError
         ? e.message
@@ -797,6 +875,7 @@ export async function GET(req: Request) {
  try {
   const user = await sessionUser(req.headers);
   if (!user) throw new AuthError('请先登录。', 401);
+  if (user.is_guest) throw new AuthError('游客不支持 JD / 面经深度调研功能，请登录正式账号后使用。', 403);
 
   const url = new URL(req.url);
   const id = (url.searchParams.get('id') || '').trim();
