@@ -37,6 +37,23 @@ export type JdResumeSkillGroup = {
  items: string[];
 };
 
+export type JdProjectDrillLesson = {
+ angle: string;
+ difficulty: '基础' | '进阶' | '高阶';
+ question: string;
+ whyAsked: string;
+ teaching: string;
+ answerFramework: string[];
+ pitfalls: string[];
+};
+
+export type JdProjectDrill = {
+ lessons: JdProjectDrillLesson[];
+ quizzes: AiQuiz[];
+ generatedAt?: number;
+ model?: string;
+};
+
 export type JdResumeProject = {
  name: string;
  role: string;
@@ -46,6 +63,7 @@ export type JdResumeProject = {
  actions: string[];
  results: string[];
  interviewTips?: string[];
+ drill?: JdProjectDrill;
 };
 
 export type JdReferenceResume = {

@@ -32,6 +32,7 @@ import {
  Plus,
  RotateCcw,
  Search,
+ Sparkles,
  Square,
  Target,
  X,
@@ -3433,15 +3434,16 @@ export default function JdResearchClient({
                   </div>
                  </div>
                  <div className="jdr-proj-actions">
-                  <a
-                   href={`/interview/architect?mode=mock&topic=${encodeURIComponent(proj.name)}`}
-                   className="ai-note-pill"
-                   style={{ textDecoration: 'none' }}
-                  >
-                   <MessageSquare size={13} />
-                   <span>{L('模拟深挖', 'Mock')}</span>
-                   <ExternalLink size={11} />
-                  </a>
+                  {activeId && (
+                   <a
+                    href={`/interview/project-drill?id=${encodeURIComponent(activeId)}&proj=${pi}${proj.drill ? '' : '&autostart=1'}`}
+                    className="ai-note-pill"
+                    style={{ textDecoration: 'none' }}
+                   >
+                    <Sparkles size={13} />
+                    <span>{proj.drill ? L('继续深挖', 'Continue Drill') : L('预判深挖', 'Project Drill')}</span>
+                   </a>
+                  )}
                   <button
                    type="button"
                    className="ai-note-pill"
@@ -3492,7 +3494,18 @@ export default function JdResearchClient({
 
                 {proj.interviewTips && proj.interviewTips.length > 0 && (
                  <div className="jdr-followups">
-                  <strong>{L('面试深挖准备', 'Interview Defense')}</strong>
+                  <div className="jdr-followups-head">
+                   <strong>{L('面试深挖准备', 'Interview Defense')}</strong>
+                   {activeId && (
+                    <a
+                     href={`/interview/project-drill?id=${encodeURIComponent(activeId)}&proj=${pi}${proj.drill ? '' : '&autostart=1'}`}
+                     className="jdr-link-pill"
+                    >
+                     <span>{L('引导教学与作答', 'Guided Practice')}</span>
+                     <ArrowUpRight size={13} />
+                    </a>
+                   )}
+                  </div>
                   <ul>
                    {proj.interviewTips.map((tip, ti) => (
                     <li key={ti}>{tip}</li>

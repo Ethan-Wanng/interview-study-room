@@ -1,0 +1,35 @@
+.pdr-main{max-width:960px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+.pdr-top-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pdr-select{height:34px;max-width:240px;padding:0 10px;border-radius:9px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:inherit;font-size:13px;font-weight:600}
+
+.pdr-proj-summary{padding:16px 20px;display:flex;flex-direction:column;gap:12px}
+.pdr-proj-summary-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.pdr-proj-summary-head{display:flex;flex-direction:column;gap:7px;min-width:0;flex:1}
+.pdr-proj-summary-head h1{margin:0;font-size:clamp(1.15rem,2.4vw,1.45rem);line-height:1.35;color:var(--ink);overflow-wrap:anywhere}
+.pdr-proj-body{display:flex;flex-direction:column;gap:11px;padding-top:11px;border-top:1px solid var(--line)}
+
+.pdr-bar-row{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.pdr-empty-card{padding:28px 22px;display:flex;flex-direction:column;align-items:center;gap:14px;text-align:center}
+.pdr-empty-card h2{margin:0;font-size:18px;color:var(--ink)}
+
+.pdr-lesson-card{padding:22px 24px;display:flex;flex-direction:column;gap:16px;min-width:0}
+.pdr-lesson-q{margin:0;font-size:19px;line-height:1.5;color:var(--ink);overflow-wrap:anywhere}
+.pdr-sec{display:flex;flex-direction:column;gap:7px}
+.pdr-sec-label{font-size:12.5px;font-weight:750;color:var(--primary);letter-spacing:.02em}
+.pdr-why-box{padding:11px 14px;border-radius:10px;border-left:3px solid var(--primary);background:var(--surface-soft);display:flex;flex-direction:column;gap:5px}
+.pdr-why-box p{margin:0;font-size:14px;line-height:1.68;color:var(--body-ink);overflow-wrap:anywhere}
+.pdr-prose{display:flex;flex-direction:column;gap:8px;font-size:14.8px;line-height:1.78;color:var(--body-ink)}
+.pdr-prose p{margin:0;overflow-wrap:anywhere}
+
+.pdr-steps{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.pdr-steps li{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface-soft);font-size:14px;line-height:1.66;color:var(--body-ink)}
+.pdr-step-num{width:22px;height:22px;border-radius:999px;background:color-mix(in srgb,var(--primary) 16%,transparent);color:var(--primary);font-size:12px;font-weight:750;display:inline-flex;align-items:center;justify-content:center;flex:none;margin-top:2px;font-variant-numeric:tabular-nums}
+
+.pdr-pitfalls{margin:0;padding:11px 14px 11px 28px;border-radius:10px;border:1px solid rgba(239,68,68,.26);background:rgba(239,68,68,.06);display:flex;flex-direction:column;gap:5px;font-size:13.8px;line-height:1.62;color:var(--body-ink)}
+.pdr-lesson-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:12px;border-top:1px solid var(--line);flex-wrap:wrap}
+
+@media(max-width:767px){
+ .pdr-proj-summary,.pdr-lesson-card{padding:15px}
+ .pdr-lesson-q{font-size:17.5px}
+ .pdr-select{max-width:100%}
+}

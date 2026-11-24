@@ -80,6 +80,7 @@
 
 .jdr-qbody{padding-top:10px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:10px;min-width:0}
 .jdr-followups{padding:10px 12px;border-radius:10px;background:var(--surface-soft);border:1px solid var(--line);display:flex;flex-direction:column;gap:5px}
+.jdr-followups-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
 .jdr-followups strong{font-size:12.5px;color:var(--ink)}
 .jdr-followups ul{margin:0;padding-left:16px;font-size:13px;line-height:1.6;color:var(--body-ink)}
 .jdr-qfoot{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}

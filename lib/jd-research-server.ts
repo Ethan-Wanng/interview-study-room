@@ -25,6 +25,8 @@ import { MY_LIMITS } from './my-questions';
 import type {
  JdInputKind,
  JdLiveProgress,
+ JdProjectDrill,
+ JdProjectDrillLesson,
  JdQuestionItem,
  JdReferenceResume,
  JdResearchReport,
@@ -609,6 +611,157 @@ export function buildJdResumeInput(opts: {
   .join('\n\n');
 }
 
+let cachedProjectDrillPrompt: string | null = null;
+export function getJdProjectDrillSystemPrompt(): string {
+ if (cachedProjectDrillPrompt) return cachedProjectDrillPrompt;
+ cachedProjectDrillPrompt = `你是大厂资深技术面试官兼面试辅导教练。当前任务：【针对候选人参考简历中的单个实战项目，结合目标岗位 JD 生成「面试题预判 + 引导教学卡片 + 循序渐进引导作答闯关题」】。
+
+核心原则：
+1. 不要考泛泛的通用八股或与本项目无关的系统设计套题（如无关的秒杀/Feed流），所有预判问题、教学拆解与题目必须深度绑定给定项目的业务背景、技术栈、核心动作、量化结果与 \`interviewTips\`。
+2. 先教后练、引导作答：不要一上来就让候选人对着空白框硬写完整系统方案。\`lessons\` 负责“手把手拆原理、教作答结构、标踩坑点”；\`quizzes\` 先用选择/判断/填空帮学生理清本项目里的设计取舍与数字口径，再用带明确得分要点的简答/综合题引导开口作答。
+3. 严禁调用任何工具、执行命令或读写文件；直接输出**一个合法 JSON 对象**（用 \`\`\`json 和 \`\`\` 包裹，不要输出代码块外文字），使用简体中文。
+
+JSON 结构要求：
+- \`lessons\`（**4–5 条**预判深挖教学卡，尽量覆盖：核心链路与架构取舍、并发/幂等/一致性与故障兜底、状态边界与安全降级、量化成果数字口径与成本核算反问）：
+  - \`angle\`：考点短标签（≤ 14 字，如 \`多意图状态机\`、\`消息幂等兜底\`）
+  - \`difficulty\`：\`"基础" | "进阶" | "高阶"\`
+  - \`question\`：面试官针对本项目的真实追问原话（具体带上下文，≤ 120 字）
+  - \`whyAsked\`：面试官考察意图与常见挖坑点（30–90 字）
+  - \`teaching\`：围绕本项目的机制原理与工程权衡讲解（140–280 字，关键技术名词可用反引号如 \`SETNX\`）
+  - \`answerFramework\`：3–4 条递进式口述作答步骤（明确教候选人第 1 步怎么切入、第 2 步讲哪项机制、第 3 步如何说明兜底与数据）
+  - \`pitfalls\`：1–2 条最易被反问挂掉的踩雷话术
+- \`quizzes\`（**7 道**由浅入深的引导式练习题，\`dimension\` 填对应的 \`angle\`）：
+  - 第 1–5 题为客观引导辨析题：包含 2–3 道 \`single\`（4 选 1 + \`why\` 4 元素解释，正确项写 \`""\`）、1 道 \`multi\`（4 选 2~3 + \`why\` 4 元素解释）、1–2 道 \`judge\`（\`answer\` 为布尔值）或 \`fill\`（题干用 \`＿＿＿\` 标记空位，\`accepted\` 给 1–3 个简短精确答案变体，如 \`["SETNX", "Redis SETNX"]\`）。
+  - 第 6–7 题为引导口述实战题（\`type\` 为 \`"short"\` 或 \`"design"\`）：结合本项目追问关键权衡或异常排查，给 3–4 条清晰 \`points\` 得分点、第一人称自然高分口述 \`reference\`（150–260 字）与 \`explain\` 思路拆解。
+
+\`\`\`json
+{
+  "lessons": [
+    {
+      "angle": "考点短标签",
+      "difficulty": "进阶",
+      "question": "面试官针对该项目的具体预判提问？",
+      "whyAsked": "考察意图与挖坑点",
+      "teaching": "本项目该机制的底层原理、关键权衡与为什么这样做（140-280字）",
+      "answerFramework": ["第1步：...", "第2步：...", "第3步：..."],
+      "pitfalls": ["只说调API不讲边界的扣分话术"]
+    }
+  ],
+  "quizzes": [
+    {
+      "type": "single",
+      "dimension": "考点短标签",
+      "q": "结合本项目场景的引导式选择题干？",
+      "options": ["选项A", "选项B", "选项C", "选项D"],
+      "answer": 1,
+      "why": ["A错在哪里/适用场景", "", "C错在哪里", "D错在哪里"],
+      "explain": "一句话串讲核心判断逻辑"
+    },
+    {
+      "type": "judge",
+      "dimension": "考点短标签",
+      "q": "关于本项目某边界假设的对错判断题干。",
+      "answer": false,
+      "explain": "为什么错误以及本项目实际如何处理"
+    },
+    {
+      "type": "short",
+      "dimension": "考点短标签",
+      "q": "请站在第一人称回答：如果面试官针对本项目追问 ……，你会怎么分点说明？",
+      "points": ["得分点1", "得分点2", "得分点3"],
+      "reference": "高质量第一人称口述示范答案（150-260字）",
+      "explain": "答题结构复盘提示"
+    }
+  ]
+}
+\`\`\``;
+ return cachedProjectDrillPrompt;
+}
+
+export function buildJdProjectDrillInput(opts: {
+ kind: JdInputKind;
+ source: string;
+ report: JdResearchReport;
+ project: JdResumeProject;
+ projIdx: number;
+}): string {
+ const r = opts.report;
+ const p = opts.project;
+ const dims = r.dimensions.map(d => `- [${d.priority} · ${d.weight}%] ${d.name}：${d.focus}`).join('\n');
+ const traps = r.traps.map((t, i) => `${i + 1}. ${t}`).join('\n');
+ return [
+  `【目标岗位】${r.roleTitle}（${[r.inferredLevel, r.companyStyle].filter(Boolean).join(' · ')}）`,
+  dims ? `【岗位核心考点】\n${dims}` : '',
+  traps ? `【高频扣分点】\n${traps}` : '',
+  `【当前深挖项目 #${opts.projIdx + 1}】${p.name}`,
+  `担任角色：${p.role}${p.period ? ` · ${p.period}` : ''}`,
+  p.stack.length ? `技术栈：${p.stack.join(' / ')}` : '',
+  p.background ? `项目背景：${p.background}` : '',
+  p.actions.length ? `核心工作：\n${p.actions.map((a, i) => `${i + 1}. ${a}`).join('\n')}` : '',
+  p.results.length ? `量化成果：\n${p.results.map((res, i) => `${i + 1}. ${res}`).join('\n')}` : '',
+  p.interviewTips?.length ? `初步深挖方向：\n${p.interviewTips.map((t, i) => `${i + 1}. ${t}`).join('\n')}` : '',
+  opts.source ? `【原始${opts.kind === 'experience' ? '面经' : '岗位 JD'}摘要】\n${opts.source.slice(0, 2200)}` : '',
+  '【任务】请严格围绕上述「当前深挖项目」生成 4–5 条面试预判教学卡 `lessons` 与 7 道循序渐进的引导作答练习题 `quizzes`，直接输出 JSON。',
+ ]
+  .filter(Boolean)
+  .join('\n\n');
+}
+
+let cachedProjectDrillRegenPrompt: string | null = null;
+export function getJdProjectDrillRegenQuizSystemPrompt(): string {
+ if (cachedProjectDrillRegenPrompt) return cachedProjectDrillRegenPrompt;
+ cachedProjectDrillRegenPrompt = `你是大厂资深技术面试官兼辅导教练。当前任务：【围绕指定简历项目，重新出一道同题型但切入角度全新的引导式面试练习题】。
+
+严格规则：
+1. 必须严格紧扣给定项目的技术栈、真实链路、边界异常与数据指标，不要变成泛泛的八股题，也不要与已有题干重复。
+2. 保持原题的 \`type\`（\`single\` / \`multi\` / \`judge\` / \`fill\` / \`short\` / \`design\`）和相同结构字段（\`why\` 与 \`options\` 等长，\`judge\` 用布尔 \`answer\`，\`fill\` 用 \`＿＿＿\` 和 \`accepted\`，\`short\`/\`design\` 给 3–4 条 \`points\` 与高质量第一人称口述 \`reference\`）。
+3. 严禁调用任何工具，直接输出**一个合法 JSON 对象**（用 \`\`\`json 和 \`\`\` 包裹），使用简体中文。
+
+\`\`\`json
+{
+  "quiz": {
+    "type": "single",
+    "dimension": "考点短标签",
+    "q": "全新的题干？",
+    "options": ["选项A", "选项B", "选项C", "选项D"],
+    "answer": 0,
+    "why": ["", "B错在哪里", "C错在哪里", "D错在哪里"],
+    "explain": "核心判断思路"
+  }
+}
+\`\`\``;
+ return cachedProjectDrillRegenPrompt;
+}
+
+export function buildJdProjectDrillRegenQuizInput(opts: {
+ report: JdResearchReport;
+ project: JdResumeProject;
+ currentQuiz: AiQuiz;
+ existingStems: string[];
+}): string {
+ const q = opts.currentQuiz;
+ const type = q.type ?? 'single';
+ const p = opts.project;
+ const avoid = opts.existingStems
+  .filter(Boolean)
+  .slice(0, 8)
+  .map((s, i) => `${i + 1}. ${s.slice(0, 100)}`)
+  .join('\n');
+ return [
+  `【目标岗位】${opts.report.roleTitle}（${[opts.report.inferredLevel, opts.report.companyStyle].filter(Boolean).join(' · ')}）`,
+  `【简历项目】${p.name}（${p.role}）`,
+  p.stack.length ? `技术栈：${p.stack.join(' / ')}` : '',
+  p.actions.length ? `核心工作：${p.actions.join('；')}` : '',
+  p.results.length ? `量化成果：${p.results.join('；')}` : '',
+  `【必须保持的题型与考点】type="${type}"，dimension="${q.dimension || '项目深挖'}"`,
+  `【原题干（需换角度重新出题）】${q.q}`,
+  avoid ? `【已有题干（禁止雷同）】\n${avoid}` : '',
+  `【任务】请输出 \`{"quiz": ...}\` JSON 对象，保持 \`type="${type}"\`。`,
+ ]
+  .filter(Boolean)
+  .join('\n\n');
+}
+
 export function buildJdResearchInput(opts: {
  kind: JdInputKind;
  source: string;
@@ -623,11 +776,11 @@ export function extractThoughtsAndJson(raw: string): { thoughts: string; jsonRaw
   if (inner && inner.trim()) thoughtsParts.push(inner.trim());
   return '';
  });
- // Handle unclosed <think> before ```json or {"roleTitle" / {"studyQuizzes" / {"targetRole"
+ // Handle unclosed <think> before ```json or {"roleTitle" / {"studyQuizzes" / {"targetRole" / {"lessons" / {"quiz"
  const openIdx = s.toLowerCase().indexOf('<think>');
  if (openIdx >= 0) {
   const afterOpen = s.slice(openIdx + 7);
-  const fenceIdx = afterOpen.search(/```json|```|\{\s*"(?:roleTitle|studyQuizzes|questions|targetRole)"/);
+  const fenceIdx = afterOpen.search(/```json|```|\{\s*"(?:roleTitle|studyQuizzes|questions|targetRole|lessons|quiz)"/);
   if (fenceIdx >= 0) {
    const tPart = afterOpen.slice(0, fenceIdx).trim();
    if (tPart) thoughtsParts.push(tPart);
@@ -696,7 +849,7 @@ export function createThinkJsonStreamSplitter(callbacks: {
      return;
     }
     // Also detect if model forgot </think> and directly started ```json or {"roleTitle"
-    const jsonStartMatch = pending.match(/```json|\{\s*"(?:roleTitle|studyQuizzes|questions|targetRole)"/);
+    const jsonStartMatch = pending.match(/```json|\{\s*"(?:roleTitle|studyQuizzes|questions|targetRole|lessons|quiz)"/);
     if (jsonStartMatch && jsonStartMatch.index !== undefined) {
      const thoughtChunk = pending.slice(0, jsonStartMatch.index);
      if (thoughtChunk) callbacks.onThoughtDelta(thoughtChunk);
@@ -974,6 +1127,14 @@ function parseStudyQuiz(raw: unknown, stepIdx: number, qIdx: number): AiQuiz | n
   return { id, type: 'multi', q, ...extra, options, answers, ...(why ? { why } : {}), explain };
  }
 
+ if (rawType === 'judge') {
+  const answer =
+   typeof o.answer === 'boolean'
+    ? o.answer
+    : String(o.answer).toLowerCase() === 'true' || Number(o.answer) === 1;
+  return { id, type: 'judge', q, ...extra, answer, explain };
+ }
+
  if (rawType === 'fill') {
   const accepted = Array.isArray(o.accepted)
    ? o.accepted.slice(0, 8).map(x => str(x, 120)).filter(Boolean)
@@ -984,7 +1145,7 @@ function parseStudyQuiz(raw: unknown, stepIdx: number, qIdx: number): AiQuiz | n
   return { id, type: 'fill', q, ...extra, accepted, explain };
  }
 
- if (rawType === 'short' || rawType === 'code') {
+ if (rawType === 'short' || rawType === 'code' || rawType === 'design') {
   const reference = str(o.reference, 8000);
   if (!reference) return null;
   const rawPts = Array.isArray(o.points)
@@ -1059,6 +1220,82 @@ function parseQuestionsArray(rawQuestions: unknown): JdQuestionItem[] {
   .filter((x): x is JdQuestionItem => x !== null);
 }
 
+export function parseProjectDrillObject(rawObj: unknown, projIdx: number): JdProjectDrill | null {
+ if (!rawObj || typeof rawObj !== 'object') return null;
+ const obj = rawObj as Record<string, unknown>;
+
+ const lessons: JdProjectDrillLesson[] = Array.isArray(obj.lessons)
+  ? obj.lessons
+     .slice(0, 6)
+     .map((item): JdProjectDrillLesson | null => {
+      if (!item || typeof item !== 'object') return null;
+      const o = item as Record<string, unknown>;
+      const question = str(o.question, 240);
+      const teaching = str(o.teaching, 3000);
+      if (!question || !teaching) return null;
+      const angle = str(o.angle, 36) || '核心深挖';
+      const diffRaw = str(o.difficulty, 10);
+      const difficulty: '基础' | '进阶' | '高阶' =
+       diffRaw === '基础' || diffRaw === '高阶' ? diffRaw : '进阶';
+      const whyAsked = str(o.whyAsked, 240);
+      const answerFramework = Array.isArray(o.answerFramework)
+       ? o.answerFramework
+          .slice(0, 6)
+          .map(x => str(x, 320))
+          .filter(Boolean)
+       : [];
+      const pitfalls = Array.isArray(o.pitfalls)
+       ? o.pitfalls
+          .slice(0, 4)
+          .map(x => str(x, 240))
+          .filter(Boolean)
+       : [];
+      return {
+       angle,
+       difficulty,
+       question,
+       whyAsked,
+       teaching,
+       answerFramework,
+       pitfalls,
+      };
+     })
+     .filter((x): x is JdProjectDrillLesson => x !== null)
+  : [];
+
+ const rawQuizzes = Array.isArray(obj.quizzes) ? obj.quizzes : [];
+ const quizzes: AiQuiz[] = rawQuizzes
+  .slice(0, 12)
+  .map((qz, qi): AiQuiz | null => {
+   const parsed = parseStudyQuiz(qz, projIdx, qi);
+   if (!parsed) return null;
+   const origId = qz && typeof qz === 'object' ? str((qz as Record<string, unknown>).id, 60) : '';
+   const id = origId && origId.startsWith('jdpd-') ? origId : `jdpd-${projIdx + 1}-${qi + 1}`;
+   return { ...parsed, id };
+  })
+  .filter((x): x is AiQuiz => x !== null);
+
+ if (!lessons.length || !quizzes.length) return null;
+ const generatedAt = typeof obj.generatedAt === 'number' && Number.isFinite(obj.generatedAt) ? obj.generatedAt : undefined;
+ const model = str(obj.model, 80) || undefined;
+ return {
+  lessons,
+  quizzes,
+  ...(generatedAt ? { generatedAt } : {}),
+  ...(model ? { model } : {}),
+ };
+}
+
+export function parseJdProjectDrill(rawText: string, projIdx: number): JdProjectDrill | null {
+ const jsonText = extractJsonText(rawText);
+ if (!jsonText) return null;
+ const parsed = safeParseJson(jsonText);
+ if (!parsed || typeof parsed !== 'object') return null;
+ const obj = parsed as Record<string, unknown>;
+ const candidate = obj.drill && typeof obj.drill === 'object' ? obj.drill : obj;
+ return parseProjectDrillObject(candidate, projIdx);
+}
+
 export function parseResumeObject(rawObj: unknown, fallbackRoleTitle?: string): JdReferenceResume | null {
  if (!rawObj || typeof rawObj !== 'object') return null;
  const obj = rawObj as Record<string, unknown>;
@@ -1087,7 +1324,7 @@ export function parseResumeObject(rawObj: unknown, fallbackRoleTitle?: string): 
  const projects: JdResumeProject[] = Array.isArray(obj.projects)
   ? obj.projects
      .slice(0, 5)
-     .map((p): JdResumeProject | null => {
+     .map((p, pIdx): JdResumeProject | null => {
       if (!p || typeof p !== 'object') return null;
       const po = p as Record<string, unknown>;
       const name = str(po.name, 80);
@@ -1118,6 +1355,7 @@ export function parseResumeObject(rawObj: unknown, fallbackRoleTitle?: string): 
           .map(x => str(x, 240))
           .filter(Boolean)
        : [];
+      const drill = po.drill ? parseProjectDrillObject(po.drill, pIdx) : null;
       if (!name || !actions.length) return null;
       return {
        name,
@@ -1128,6 +1366,7 @@ export function parseResumeObject(rawObj: unknown, fallbackRoleTitle?: string): 
        actions,
        results,
        ...(interviewTips.length ? { interviewTips } : {}),
+       ...(drill ? { drill } : {}),
       };
      })
      .filter((x): x is JdResumeProject => x !== null)

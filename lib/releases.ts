@@ -10,6 +10,11 @@ export function groupReleasesByDay(releases:Release[]):ReleaseDay[]{
 }
 
 export const RELEASES:Release[]=[
+ {version:'2026.11.25-2',date:'2026-11-25',title:'参考简历项目深挖升级为面试题预判、引导教学与闯关作答',changes:[
+  '新增参考简历项目深挖预判页（/interview/project-drill）与流式生成接口（POST /api/jd-research/project-drill），展示当前简历项目摘要并移除无关系统设计预设题',
+  '针对单个简历项目结合目标岗位 JD 生成「预判教学」卡片（考察意图、核心拆解、递进式引导作答框架与避坑要点）并接入专属 AI 问答与笔记收藏',
+  '配套生成由浅入深的「引导作答」闯关练习题（单选/多选/判断/填空辨析 + 带得分要点与口述示范的简答/综合演练），支持答题提示、AI 批注评分与单题重出，结果自动持久化至云端记录与缓存',
+ ]},
  {version:'2026.11.25-1',date:'2026-11-25',title:'JD 调研一键生成岗位参考简历、全站代码题补齐作答骨架与《复刻面试自习室》升级 24 关',changes:[
   '新增基于 JD 深度调研报告生成参考简历（POST /api/jd-research/resume）：支持分组技术栈、STAR 项目经历与面试深挖追问角度，支持一键发起模拟深挖、复制/导出 Markdown 及独立打印 PDF',
   '为全站课程、模拟考与真题试卷此前缺失骨架的全部代码题补齐 TODO 作答框架（新增 sql、go、frontend、rust、python、ai/backend 真题卷与项目实战骨架，真题卷支持一键隐藏冗余代码框）',
