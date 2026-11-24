@@ -42,6 +42,7 @@ import {
  hasStructuredStudyQuizzes,
  type JdInputKind,
  type JdQuestionItem,
+ type JdReferenceResume,
  type JdResearchReport,
 } from '@/lib/jd-research-types';
 
@@ -159,6 +160,10 @@ function phaseCacheKeyOf(hashHex: string, phaseIndex: number): string {
 
 function questionsCacheKeyOf(hashHex: string): string {
  return 'jd-q-v3:' + hashHex;
+}
+
+function resumeCacheKeyOf(hashHex: string): string {
+ return 'jd-resume-v1:' + hashHex;
 }
 
 function extractStreamQuestionTitles(buf: string): string[] {
@@ -1513,6 +1518,8 @@ export async function POST(req: Request) {
     s1Rep.roadmap.map((_, idx) => readPromptCache<CachedPhasePayload>(phaseCacheKeyOf(hashHex, idx))),
    );
    const qHit = await readPromptCache<CachedQuestionsPayload>(questionsCacheKeyOf(hashHex));
+   const resumeHit = await readPromptCache<{ resume?: JdReferenceResume }>(resumeCacheKeyOf(hashHex));
+   const existingResume = rec.payload?.report?.resume || s1Rep.resume || resumeHit?.payload?.resume;
 
    const mergedRoadmap = s1Rep.roadmap.map((step, idx) => {
     const qz = phaseHits[idx]?.payload?.quizzes;
@@ -1523,6 +1530,7 @@ export async function POST(req: Request) {
     ...s1Rep,
     roadmap: mergedRoadmap,
     questions: finalQuestions,
+    ...(existingResume ? { resume: existingResume } : {}),
    };
 
    const anyPhaseHasQuizzes = mergedRoadmap.some(s => (s.quizzes?.length ?? 0) > 0);

@@ -56,8 +56,8 @@ export default function AboutClient({
    num:'04',
    title:L('免费开放：甚至教你亲手搭建这个网站','Free & Accessible — Learn to Build It Yourself'),
    body:L(
-    '这个项目从第一天起就没有做付费墙，支持游客直接体验、也支持邮箱与第三方账号跨设备同步进度。我们还专门写了一门 19 关的《复刻面试自习室》项目实战课，手把手拆解前后端与数据库设计，希望每一位学友都能既用它准备面试，也能看懂并做出属于自己的全栈项目。',
-    'Built without paywalls from day one, supporting guest mode and cloud sync across devices. We also wrote a 19-level hands-on course breaking down the full architecture so you can build your own study room from scratch.'
+    '这个项目从第一天起就没有做付费墙，支持游客直接体验、也支持邮箱与第三方账号跨设备同步进度。我们还专门写了一门 24 关的《复刻面试自习室》项目实战课，手把手拆解前后端与数据库设计，希望每一位学友都能既用它准备面试，也能看懂并做出属于自己的全栈项目。',
+    'Built without paywalls from day one, supporting guest mode and cloud sync across devices. We also wrote a 24-level hands-on course breaking down the full architecture so you can build your own study room from scratch.'
    ),
   },
  ];

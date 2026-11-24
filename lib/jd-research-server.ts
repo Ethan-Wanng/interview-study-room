@@ -26,7 +26,10 @@ import type {
  JdInputKind,
  JdLiveProgress,
  JdQuestionItem,
+ JdReferenceResume,
  JdResearchReport,
+ JdResumeProject,
+ JdResumeSkillGroup,
  JdRoadmapStep,
  JdSiteLink,
  JdSkillDimension,
@@ -536,6 +539,76 @@ export function buildJdStage2QuestionsInput(opts: {
  ].filter(Boolean).join('\n');
 }
 
+let cachedResumePrompt: string | null = null;
+export function getJdResumeSystemPrompt(): string {
+ if (cachedResumePrompt) return cachedResumePrompt;
+ cachedResumePrompt = `你是大厂资深技术招聘负责人与架构面试官。当前任务：【根据 JD 深度调研报告生成可直接对照打磨的高匹配度岗位参考简历（含专业技术栈与深度实战项目）】。
+
+严格规则：
+1. 深度贴合给定调研报告的 \`roleTitle\`、\`inferredLevel\`、\`companyStyle\`、\`dimensions\`（严格按 \`P0\` → \`P1\` → \`P2\` 权重倾斜），并主动规避 \`traps\` 中的高频扣分坑点，同时呼应原始 JD / 面经的技术场景。
+2. \`techStack\`（专业技术栈）：输出 3–5 个清晰分类（如：核心语言与运行时、存储与高并发、AI/工程化架构等），\`category\` ≤ 16 字，每组 3–5 条具体技能点，用「熟练掌握 / 深入理解 + 具体底层机制 + 生产落地场景」表述，禁止空洞堆砌名词。
+3. \`projects\`（核心项目经历）：生成 2–3 个真实可落地、逻辑自洽且经得起面试深挖的生产级实战项目，高度契合目标岗位业务与架构域：
+   - \`name\`：项目名称（≤ 28 字，具体真实，不用“某电商/某某系统”等泛化词）
+   - \`role\`：担任角色（≤ 18 字，符合 \`inferredLevel\`）
+   - \`period\`：项目周期（如 \`6 个月\`、\`8 个月\`）
+   - \`stack\`：4–8 个核心技术栈标签
+   - \`background\`：简明说明业务背景、数据规模与核心技术痛点（60–140 字）
+   - \`actions\`：3–5 条具体架构设计与工程落地动作，写明关键方案、数据结构、并发/一致性/性能权衡（每条 45–120 字）
+   - \`results\`：2–3 条可验证、数量级合理且匹配 \`inferredLevel\` 的量化工程成果（如 P99 延迟、QPS、可用性、成本或准确率提升）
+   - \`interviewTips\`：2–3 条面试官针对该项目最可能深挖的追问与应答抓手
+4. 严禁调用任何工具、执行命令或读写文件；直接输出**一个合法 JSON 对象**（用 \`\`\`json 和 \`\`\` 包裹，不要在代码块外写其他解释文字），使用简体中文。
+
+\`\`\`json
+{
+  "targetRole": "目标岗位名称（25字内）",
+  "positioning": "2-3 句简历顶部个人定位与核心优势总结（匹配职级与考察风格）",
+  "techStack": [
+    {
+      "category": "技术栈分组名（16字内）",
+      "items": ["熟练掌握 ... 并在 ... 场景落地", "深入理解 ... 机制并解决 ... 问题"]
+    }
+  ],
+  "projects": [
+    {
+      "name": "具体实战项目名称",
+      "role": "核心研发 / 架构负责人",
+      "period": "8 个月",
+      "stack": ["Go", "MySQL", "Redis", "Kafka"],
+      "background": "业务规模与核心痛点描述（60-140字）",
+      "actions": ["架构设计或核心改造动作1", "性能优化或稳定性治理动作2", "关键边界兜底与工程化动作3"],
+      "results": ["量化指标成果1", "量化指标成果2"],
+      "interviewTips": ["面试追问要点与防扣分抓手1", "面试追问要点2"]
+    }
+  ]
+}
+\`\`\``;
+ return cachedResumePrompt;
+}
+
+export function buildJdResumeInput(opts: {
+ kind: JdInputKind;
+ source: string;
+ report: JdResearchReport;
+}): string {
+ const r = opts.report;
+ const dims = r.dimensions.map(d => `- [${d.priority} · ${d.weight}%] ${d.name}：${d.focus}`).join('\n');
+ const traps = r.traps.map((t, i) => `${i + 1}. ${t}`).join('\n');
+ const roadmap = r.roadmap.map(s => `- ${s.phase} · ${s.title}`).join('\n');
+ const qTitles = r.questions.slice(0, 10).map((q, i) => `${i + 1}. ${q.title}`).join('\n');
+ return [
+  `【目标岗位】${r.roleTitle}（${[r.inferredLevel, r.companyStyle].filter(Boolean).join(' · ')}）`,
+  r.summary ? `【核心结论】${r.summary}` : '',
+  dims ? `【核心考点权重】\n${dims}` : '',
+  traps ? `【需规避的高频扣分点】\n${traps}` : '',
+  roadmap ? `【复习路径阶段】\n${roadmap}` : '',
+  qTitles ? `【重点考察面试题】\n${qTitles}` : '',
+  opts.source ? `【原始${opts.kind === 'experience' ? '面经' : '岗位 JD'}】\n${opts.source.slice(0, 6000)}` : '',
+  '【任务】请基于以上 JD 深度调研报告生成包含「个人定位」「专业技术栈」与「核心项目经历」的高匹配度参考简历，直接输出 JSON。',
+ ]
+  .filter(Boolean)
+  .join('\n\n');
+}
+
 export function buildJdResearchInput(opts: {
  kind: JdInputKind;
  source: string;
@@ -550,11 +623,11 @@ export function extractThoughtsAndJson(raw: string): { thoughts: string; jsonRaw
   if (inner && inner.trim()) thoughtsParts.push(inner.trim());
   return '';
  });
- // Handle unclosed <think> before ```json or {"roleTitle" / {"studyQuizzes"
+ // Handle unclosed <think> before ```json or {"roleTitle" / {"studyQuizzes" / {"targetRole"
  const openIdx = s.toLowerCase().indexOf('<think>');
  if (openIdx >= 0) {
   const afterOpen = s.slice(openIdx + 7);
-  const fenceIdx = afterOpen.search(/```json|```|\{\s*"(?:roleTitle|studyQuizzes|questions)"/);
+  const fenceIdx = afterOpen.search(/```json|```|\{\s*"(?:roleTitle|studyQuizzes|questions|targetRole)"/);
   if (fenceIdx >= 0) {
    const tPart = afterOpen.slice(0, fenceIdx).trim();
    if (tPart) thoughtsParts.push(tPart);
@@ -623,7 +696,7 @@ export function createThinkJsonStreamSplitter(callbacks: {
      return;
     }
     // Also detect if model forgot </think> and directly started ```json or {"roleTitle"
-    const jsonStartMatch = pending.match(/```json|\{\s*"(?:roleTitle|studyQuizzes|questions)"/);
+    const jsonStartMatch = pending.match(/```json|\{\s*"(?:roleTitle|studyQuizzes|questions|targetRole)"/);
     if (jsonStartMatch && jsonStartMatch.index !== undefined) {
      const thoughtChunk = pending.slice(0, jsonStartMatch.index);
      if (thoughtChunk) callbacks.onThoughtDelta(thoughtChunk);
@@ -986,6 +1059,99 @@ function parseQuestionsArray(rawQuestions: unknown): JdQuestionItem[] {
   .filter((x): x is JdQuestionItem => x !== null);
 }
 
+export function parseResumeObject(rawObj: unknown, fallbackRoleTitle?: string): JdReferenceResume | null {
+ if (!rawObj || typeof rawObj !== 'object') return null;
+ const obj = rawObj as Record<string, unknown>;
+ const targetRole = str(obj.targetRole, 80) || str(fallbackRoleTitle, 80) || '目标岗位';
+ const positioning = str(obj.positioning, 600);
+
+ const techStack: JdResumeSkillGroup[] = Array.isArray(obj.techStack)
+  ? obj.techStack
+     .slice(0, 8)
+     .map((g): JdResumeSkillGroup | null => {
+      if (!g || typeof g !== 'object') return null;
+      const go = g as Record<string, unknown>;
+      const category = str(go.category, 40);
+      const items = Array.isArray(go.items)
+       ? go.items
+          .slice(0, 8)
+          .map(x => str(x, 220))
+          .filter(Boolean)
+       : [];
+      if (!category || !items.length) return null;
+      return { category, items };
+     })
+     .filter((x): x is JdResumeSkillGroup => x !== null)
+  : [];
+
+ const projects: JdResumeProject[] = Array.isArray(obj.projects)
+  ? obj.projects
+     .slice(0, 5)
+     .map((p): JdResumeProject | null => {
+      if (!p || typeof p !== 'object') return null;
+      const po = p as Record<string, unknown>;
+      const name = str(po.name, 80);
+      const role = str(po.role, 40) || '核心研发';
+      const period = str(po.period, 32) || undefined;
+      const stack = Array.isArray(po.stack)
+       ? po.stack
+          .slice(0, 12)
+          .map(x => str(x, 40))
+          .filter(Boolean)
+       : [];
+      const background = str(po.background, 400);
+      const actions = Array.isArray(po.actions)
+       ? po.actions
+          .slice(0, 8)
+          .map(x => str(x, 300))
+          .filter(Boolean)
+       : [];
+      const results = Array.isArray(po.results)
+       ? po.results
+          .slice(0, 6)
+          .map(x => str(x, 240))
+          .filter(Boolean)
+       : [];
+      const interviewTips = Array.isArray(po.interviewTips)
+       ? po.interviewTips
+          .slice(0, 6)
+          .map(x => str(x, 240))
+          .filter(Boolean)
+       : [];
+      if (!name || !actions.length) return null;
+      return {
+       name,
+       role,
+       ...(period ? { period } : {}),
+       stack,
+       background,
+       actions,
+       results,
+       ...(interviewTips.length ? { interviewTips } : {}),
+      };
+     })
+     .filter((x): x is JdResumeProject => x !== null)
+  : [];
+
+ if (!techStack.length || !projects.length) return null;
+ return {
+  targetRole,
+  positioning,
+  techStack,
+  projects,
+ };
+}
+
+export function parseJdReferenceResume(rawText: string, fallbackRoleTitle?: string): JdReferenceResume | null {
+ const jsonText = extractJsonText(rawText);
+ if (!jsonText) return null;
+ const parsed = safeParseJson(jsonText);
+ if (!parsed || typeof parsed !== 'object') return null;
+ const obj = parsed as Record<string, unknown>;
+ const candidate = obj.resume && typeof obj.resume === 'object' ? obj.resume : obj;
+ return parseResumeObject(candidate, fallbackRoleTitle);
+}
+
 export function parseAndEnrichJdReport(rawText: string): JdResearchReport | null {
  const jsonText = extractJsonText(rawText);
  if (!jsonText) return null;
@@ -1070,6 +1236,7 @@ export function parseAndEnrichJdReport(rawText: string): JdResearchReport | null
   : [];
 
  const questions = parseQuestionsArray(obj.questions);
+ const resume = parseResumeObject(obj.resume, roleTitle);
 
  if (!dimensions.length && !roadmap.length && !questions.length) return null;
 
@@ -1084,6 +1251,7 @@ export function parseAndEnrichJdReport(rawText: string): JdResearchReport | null
   traps,
   roadmap,
   questions,
+  ...(resume ? { resume } : {}),
  };
 }
 

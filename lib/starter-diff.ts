@@ -1,7 +1,7 @@
 import {startersFor} from '@/content/code-starters';
 import type {GradeMark} from './grade-types';
 
-const isCommentLine=(line:string)=>{const t=line.trim();return t.startsWith('//')||t.startsWith('#')||t.startsWith('/*')||t.startsWith('*')};
+const isCommentLine=(line:string)=>{const t=line.trim();return t.startsWith('//')||t.startsWith('#')||t.startsWith('--')||t.startsWith('/*')||t.startsWith('*')};
 
 export type StarterAnalysis={
  template:string;

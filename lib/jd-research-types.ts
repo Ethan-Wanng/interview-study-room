@@ -32,6 +32,29 @@ export type JdQuestionItem = {
  followups: string[];
 };
 
+export type JdResumeSkillGroup = {
+ category: string;
+ items: string[];
+};
+
+export type JdResumeProject = {
+ name: string;
+ role: string;
+ period?: string;
+ stack: string[];
+ background: string;
+ actions: string[];
+ results: string[];
+ interviewTips?: string[];
+};
+
+export type JdReferenceResume = {
+ targetRole: string;
+ positioning: string;
+ techStack: JdResumeSkillGroup[];
+ projects: JdResumeProject[];
+};
+
 export type JdResearchReport = {
  roleTitle: string;
  inferredLevel?: string;
@@ -43,6 +66,7 @@ export type JdResearchReport = {
  traps: string[];
  roadmap: JdRoadmapStep[];
  questions: JdQuestionItem[];
+ resume?: JdReferenceResume;
 };
 
 export type JdStageKey = 'profile' | 'roadmap' | 'quizzes' | 'questions';
@@ -116,6 +140,47 @@ function formatStudyQuizMarkdown(qz: AiQuiz, idx: number): string[] {
  return lines;
 }
 
+function formatResumeSectionsMarkdown(resume: JdReferenceResume, headingPrefix = '##'): string[] {
+ const lines: string[] = [];
+ if (resume.positioning) {
+  lines.push('', `${headingPrefix} 个人定位`, '', resume.positioning);
+ }
+ if (resume.techStack.length) {
+  lines.push('', `${headingPrefix} 专业技术栈`);
+  for (const grp of resume.techStack) {
+   lines.push('', `${headingPrefix}# ${grp.category}`);
+   for (const item of grp.items) lines.push(`- ${item}`);
+  }
+ }
+ if (resume.projects.length) {
+  lines.push('', `${headingPrefix} 核心项目经历`);
+  for (const proj of resume.projects) {
+   const meta = [proj.role, proj.period].filter(Boolean).join(' · ');
+   lines.push('', `${headingPrefix}# ${proj.name}${meta ? `（${meta}）` : ''}`);
+   if (proj.stack.length) lines.push(`- **技术栈**：${proj.stack.join(' / ')}`);
+   if (proj.background) lines.push(`- **项目背景**：${proj.background}`);
+   if (proj.actions.length) {
+    lines.push('- **核心工作**：');
+    for (const act of proj.actions) lines.push(`  - ${act}`);
+   }
+   if (proj.results.length) {
+    lines.push('- **量化成果**：');
+    for (const res of proj.results) lines.push(`  - ${res}`);
+   }
+   if (proj.interviewTips?.length) {
+    lines.push('- **面试深挖准备**：');
+    for (const tip of proj.interviewTips) lines.push(`  - ${tip}`);
+   }
+  }
+ }
+ return lines;
+}
+
+export function resumeToMarkdown(resume: JdReferenceResume): string {
+ const lines: string[] = [`# 参考简历 · ${resume.targetRole}`, ...formatResumeSectionsMarkdown(resume, '##')];
+ return lines.join('\n').trim();
+}
+
 export function reportToMarkdown(r: JdResearchReport): string {
  const lines: string[] = [];
  const meta = [r.inferredLevel, r.prepDays ? `建议周期 ${r.prepDays}` : '', r.companyStyle].filter(Boolean).join(' · ');
@@ -162,6 +227,10 @@ export function reportToMarkdown(r: JdResearchReport): string {
     lines.push('', `**常见追问**：${q.followups.join('；')}`);
    }
   });
+ }
+
+ if (r.resume) {
+  lines.push('', '## 五、岗位参考简历', ...formatResumeSectionsMarkdown(r.resume, '###'));
  }
 
  return lines.join('\n').trim();

@@ -9,6 +9,7 @@ import {
  ArrowLeft,
  ArrowUpRight,
  BookOpen,
+ Briefcase,
  Check,
  ChevronDown,
  ChevronUp,
@@ -45,6 +46,7 @@ import type { AntigravityUsage } from '@/lib/antigravity-agent';
 import {
  countJdStudyQuizzes,
  reportToMarkdown,
+ resumeToMarkdown,
  type JdInputKind,
  type JdLiveProgress,
  type JdResearchReport,
@@ -146,7 +148,7 @@ async function exportElementToPdf(el: HTMLElement, filename: string): Promise<vo
 }
 
 type SubjectOpt = { id: string; name: string; nameEn: string };
-type TabKey = 'profile' | 'roadmap' | 'questions';
+type TabKey = 'profile' | 'roadmap' | 'questions' | 'resume';
 
 type StoredPayload = {
  kind?: JdInputKind;
@@ -351,6 +353,14 @@ export default function JdResearchClient({
  const [renaming, setRenaming] = useState(false);
  const [renameVal, setRenameVal] = useState('');
  const [exportingPdf, setExportingPdf] = useState(false);
+ const [exportingResumePdf, setExportingResumePdf] = useState(false);
+
+ const [generatingResume, setGeneratingResume] = useState(false);
+ const [resumeElapsed, setResumeElapsed] = useState(0);
+ const [resumeModel, setResumeModel] = useState('');
+ const [resumeThoughts, setResumeThoughts] = useState('');
+ const [resumeTail, setResumeTail] = useState('');
+ const [resumeErr, setResumeErr] = useState('');
 
  const [selected, setSelected] = useState<Record<number, boolean>>({});
  const [expandedQ, setExpandedQ] = useState<Record<number, boolean>>({ 0: true });
@@ -362,13 +372,27 @@ export default function JdResearchClient({
 
  const abortRef = useRef<AbortController | null>(null);
  const timerRef = useRef<number | null>(null);
+ const resumeAbortRef = useRef<AbortController | null>(null);
+ const resumeTimerRef = useRef<number | null>(null);
  const bgModeRef = useRef(false);
  const streamingRecordIdRef = useRef('');
  const thinkBoxRef = useRef<HTMLPreElement | null>(null);
  const fileInputRef = useRef<HTMLInputElement | null>(null);
  const printRef = useRef<HTMLDivElement | null>(null);
+ const resumePrintRef = useRef<HTMLDivElement | null>(null);
+
+ const stopResume = () => {
+  resumeAbortRef.current?.abort();
+  resumeAbortRef.current = null;
+  if (resumeTimerRef.current !== null) {
+   window.clearInterval(resumeTimerRef.current);
+   resumeTimerRef.current = null;
+  }
+  setGeneratingResume(false);
+ };
 
  const stopActive = () => {
+  stopResume();
   bgModeRef.current = false;
   if (streamingRecordIdRef.current) {
    removeJdBgTask(streamingRecordIdRef.current);
@@ -389,6 +413,11 @@ export default function JdResearchClient({
     window.clearInterval(timerRef.current);
     timerRef.current = null;
    }
+   if (resumeTimerRef.current !== null) {
+    window.clearInterval(resumeTimerRef.current);
+    resumeTimerRef.current = null;
+   }
+   resumeAbortRef.current?.abort();
    // If a stream is active when navigating away, let it continue in background instead of aborting
    if (streamingRecordIdRef.current) {
     bgModeRef.current = true;
@@ -433,6 +462,10 @@ export default function JdResearchClient({
   setReportUsage(meta?.usage);
   setReportDurationMs(meta?.durationMs);
   setFillStepErr('');
+  setResumeErr('');
+  setResumeThoughts('');
+  setResumeTail('');
+  setResumeModel('');
   if (meta?.kind) setKind(meta.kind);
   if (typeof src === 'string' && src) setSource(src);
   setThoughtsOpen(Boolean(th && th.trim()));
@@ -455,6 +488,10 @@ export default function JdResearchClient({
   if (!activeId || fillingStepIdx !== null) return;
   setFillingStepIdx(stepIdx);
   setFillStepErr('');
+  setResumeErr('');
+  setResumeThoughts('');
+  setResumeTail('');
+  setResumeModel('');
   try {
    const r = await fetch('/api/jd-research/fill-phase', {
     method: 'POST',
@@ -517,6 +554,118 @@ export default function JdResearchClient({
    setFillStepErr((e as Error).message || L('补题失败，请重试', 'Generation failed'));
   } finally {
    setFillingStepIdx(null);
+  }
+ };
+
+ const generateResume = async (opts?: { bypassCache?: boolean }) => {
+  if (!activeId || generatingResume || !report) return;
+  stopResume();
+  setGeneratingResume(true);
+  setResumeElapsed(0);
+  setResumeErr('');
+  setResumeThoughts('');
+  setResumeTail('');
+  setResumeModel('Antigravity Agent');
+
+  const ctl = new AbortController();
+  resumeAbortRef.current = ctl;
+  const t0 = Date.now();
+  resumeTimerRef.current = window.setInterval(() => {
+   setResumeElapsed(Math.floor((Date.now() - t0) / 1000));
+  }, 1000);
+
+  let accTh = '';
+  let accTail = '';
+  try {
+   const r = await fetch('/api/jd-research/resume', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+     recordId: activeId,
+     bypassCache: Boolean(opts?.bypassCache),
+     geminiProxy: getGeminiAutoProxy(),
+    }),
+    signal: ctl.signal,
+   });
+   if (!r.ok || !r.body) {
+    let msg = L('生成参考简历失败，请重试', 'Resume generation failed');
+    try {
+     const j = (await r.json()) as { error?: string };
+     if (j.error) msg = j.error;
+    } catch {}
+    throw new Error(msg);
+   }
+
+   const reader = r.body.getReader();
+   const dec = new TextDecoder();
+   let buf = '';
+   let doneReport: JdResearchReport | undefined;
+   let doneUsage: AntigravityUsage | undefined;
+
+   for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+    let nl: number;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+     const line = buf.slice(0, nl).trim();
+     buf = buf.slice(nl + 1);
+     if (!line) continue;
+     let ev: {
+      type?: string;
+      model?: string;
+      text?: string;
+      report?: JdResearchReport;
+      usage?: AntigravityUsage;
+      error?: string;
+     };
+     try {
+      ev = JSON.parse(line) as typeof ev;
+     } catch {
+      continue;
+     }
+     if (ev.model) setResumeModel(ev.model);
+     if (ev.type === 'reset') {
+      accTail = '';
+      setResumeTail('');
+      continue;
+     }
+     if (ev.type === 'thought' && typeof ev.text === 'string' && ev.text) {
+      accTh += ev.text;
+      setResumeThoughts(accTh);
+      continue;
+     }
+     if (ev.type === 'delta' && typeof ev.text === 'string' && ev.text) {
+      accTail = (accTail + ev.text).replace(/\s+/g, ' ').slice(-180);
+      setResumeTail(accTail);
+      continue;
+     }
+     if (ev.type === 'error') {
+      throw new Error(ev.error || L('生成参考简历失败，请重试', 'Resume generation failed'));
+     }
+     if (ev.type === 'done' && ev.report) {
+      doneReport = ev.report;
+      doneUsage = ev.usage;
+     }
+    }
+   }
+   if (!doneReport?.resume) {
+    throw new Error(L('参考简历生成未完成，请重试', 'Incomplete resume — please retry'));
+   }
+   setReport(doneReport);
+   if (doneUsage) setReportUsage(doneUsage);
+   void refreshRecords();
+  } catch (e) {
+   if (!ctl.signal.aborted) {
+    setResumeErr((e as Error).message || L('生成参考简历失败，请重试', 'Resume generation failed'));
+   }
+  } finally {
+   if (resumeAbortRef.current === ctl) resumeAbortRef.current = null;
+   if (resumeTimerRef.current !== null) {
+    window.clearInterval(resumeTimerRef.current);
+    resumeTimerRef.current = null;
+   }
+   setGeneratingResume(false);
   }
  };
 
@@ -730,6 +879,11 @@ export default function JdResearchClient({
   const sp = new URLSearchParams(window.location.search);
   const wantNew = sp.get('new') === '1';
   const wantId = sp.get('id') || '';
+  const rawWantTab = sp.get('tab');
+  const wantTab: TabKey | null =
+   rawWantTab === 'profile' || rawWantTab === 'roadmap' || rawWantTab === 'questions' || rawWantTab === 'resume'
+    ? rawWantTab
+    : null;
   (async () => {
    let items = await refreshRecords();
    if (!alive) return;
@@ -814,6 +968,7 @@ export default function JdResearchClient({
       kind: target.payload.kind,
      },
     );
+    if (wantTab) setTab(wantTab);
    }
   })();
   return () => {
@@ -1010,6 +1165,10 @@ export default function JdResearchClient({
   setReport(null);
   setReportDurationMs(undefined);
   setFillStepErr('');
+  setResumeErr('');
+  setResumeThoughts('');
+  setResumeTail('');
+  setResumeModel('');
   setPartialReport(null);
   setLiveProgress({
    stage: 1,
@@ -2046,6 +2205,35 @@ export default function JdResearchClient({
   }
  };
 
+ const resumeMarkdown = useMemo(() => (report?.resume ? resumeToMarkdown(report.resume) : ''), [report?.resume]);
+
+ const downloadResumeMarkdown = () => {
+  if (!resumeMarkdown || !report?.resume) return;
+  const name = (report.resume.targetRole || report.roleTitle || '参考简历').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 46);
+  const blob = new Blob([resumeMarkdown], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${name}_参考简历.md`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+ };
+
+ const handleExportResumePdf = async () => {
+  if (!report?.resume || exportingResumePdf || !resumePrintRef.current) return;
+  setExportingResumePdf(true);
+  try {
+   const name = (report.resume.targetRole || report.roleTitle || '参考简历').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 46);
+   await exportElementToPdf(resumePrintRef.current, `${name}_参考简历.pdf`);
+  } catch {
+   setResumeErr(L('PDF 导出失败，请重试', 'PDF export failed'));
+  } finally {
+   setExportingResumePdf(false);
+  }
+ };
+
  const filteredRecords = useMemo(() => {
   const q = histQuery.trim().toLowerCase();
   if (!q) return records;
@@ -2660,6 +2848,26 @@ export default function JdResearchClient({
            <span>{L(`专题学习 (${countJdStudyQuizzes(report)})`, `Learn (${countJdStudyQuizzes(report)})`)}</span>
           </a>
          )}
+         {activeId && report && member && (
+          <button
+           type="button"
+           className="button secondary arch-new-btn"
+           disabled={generatingResume}
+           onClick={() => {
+            setTab('resume');
+            if (!report.resume && !generatingResume) void generateResume();
+           }}
+          >
+           {generatingResume ? <Loader2 size={14} className="ai-spin" /> : <Briefcase size={14} />}
+           <span>
+            {report.resume
+             ? L('参考简历', 'Resume')
+             : generatingResume
+               ? L('生成简历中…', 'Generating…')
+               : L('生成参考简历', 'Generate Resume')}
+           </span>
+          </button>
+         )}
          <button
           type="button"
           className="ai-note-pill"
@@ -2794,6 +3002,20 @@ export default function JdResearchClient({
          >
           <BookOpen size={14} />
           <span>{L(`面试专题 (${report.questions.length})`, `Questions (${report.questions.length})`)}</span>
+         </button>
+         <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'resume'}
+          className={tab === 'resume' ? 'on' : ''}
+          onClick={() => setTab('resume')}
+         >
+          <Briefcase size={14} />
+          <span>
+           {report.resume
+            ? L(`参考简历 (${report.resume.projects.length})`, `Resume (${report.resume.projects.length})`)
+            : L('参考简历', 'Resume')}
+          </span>
          </button>
         </div>
 
@@ -3052,6 +3274,241 @@ export default function JdResearchClient({
          </section>
         )}
 
+        {tab === 'resume' && (
+         <section className="jdr-panel">
+          {generatingResume ? (
+           <div className="ai-card arch-reply-card">
+            <div className="arch-running">
+             <div className="jdr-stream-meta">
+              <span className="arch-running-left">
+               <Loader2 size={16} className="ai-spin" />
+               <span>
+                {L(
+                 `生成参考简历 · ${fmtDuration(resumeElapsed * 1000, false)}`,
+                 `Generating Resume · ${fmtDuration(resumeElapsed * 1000, true)}`,
+                )}
+               </span>
+              </span>
+              {resumeModel && <span className="jdr-model-pill">{resumeModel}</span>}
+             </div>
+             <div className="jdr-run-btns">
+              <button type="button" className="button secondary arch-stop-btn" onClick={stopResume}>
+               <Square size={12} fill="currentColor" />
+               <span>{L('停止', 'Stop')}</span>
+              </button>
+             </div>
+            </div>
+
+            {resumeThoughts && (
+             <div className="arch-thoughts">
+              <div className="arch-thoughts-btn" style={{ cursor: 'default' }}>
+               <span>{L('思考过程', 'Reasoning')}</span>
+              </div>
+              <pre className="arch-thoughts-body">{resumeThoughts}</pre>
+             </div>
+            )}
+
+            {resumeTail && (
+             <div className="jdr-stream-tail" aria-live="off">
+              <span className="jdr-tail-tag">{L('实时输出流', 'Live Stream')}</span>
+              <code>{resumeTail} ▋</code>
+             </div>
+            )}
+           </div>
+          ) : !report.resume ? (
+           <div className="ai-card jdr-resume-empty">
+            <Briefcase size={26} style={{ color: 'var(--primary)' }} />
+            <h3>{L('暂无参考简历', 'No reference resume')}</h3>
+            {resumeErr && <p className="ai-grade-error" style={{ margin: 0 }}>{resumeErr}</p>}
+            {member && activeId && (
+             <button
+              type="button"
+              className="button primary"
+              onClick={() => void generateResume()}
+             >
+              <Briefcase size={15} />
+              <span>{L('生成参考简历', 'Generate Resume')}</span>
+             </button>
+            )}
+           </div>
+          ) : (
+           <>
+            <div className="ai-card jdr-qbar">
+             <div className="jdr-qbar-left">
+              <strong className="jdr-resume-role">{report.resume.targetRole}</strong>
+             </div>
+             <div className="jdr-qbar-right">
+              <button
+               type="button"
+               className="ai-note-pill"
+               onClick={() => void copyText('resume-all', resumeMarkdown)}
+              >
+               {copiedKey === 'resume-all' ? <Check size={13} /> : <Copy size={13} />}
+               <span>{copiedKey === 'resume-all' ? L('已复制', 'Copied') : L('复制 MD', 'Copy MD')}</span>
+              </button>
+              <button type="button" className="ai-note-pill" onClick={downloadResumeMarkdown}>
+               <FileDown size={13} />
+               <span>{L('下载 MD', 'MD')}</span>
+              </button>
+              <button
+               type="button"
+               className="ai-note-pill"
+               disabled={exportingResumePdf}
+               onClick={() => void handleExportResumePdf()}
+              >
+               {exportingResumePdf ? <Loader2 size={13} className="ai-spin" /> : <FileText size={13} />}
+               <span>{exportingResumePdf ? L('导出中…', 'Exporting…') : L('导出 PDF', 'PDF')}</span>
+              </button>
+              <AddToNoteButton
+               compact
+               title={`${report.resume.targetRole} · ${L('参考简历', 'Reference Resume')}`.slice(0, 64)}
+               questionOnly={resumeMarkdown}
+               questionAndAnswer={resumeMarkdown}
+               source={{
+                kind: 'interview',
+                label: `${L('参考简历', 'Resume')} · ${report.resume.targetRole.slice(0, 20)}`,
+                href: activeId ? `/interview/jd-research?id=${encodeURIComponent(activeId)}&tab=resume` : '/interview/jd-research',
+               }}
+              />
+              {member && activeId && (
+               <button
+                type="button"
+                className="button secondary arch-new-btn"
+                onClick={() => void generateResume({ bypassCache: true })}
+               >
+                <RotateCcw size={14} />
+                <span>{L('重新生成', 'Regenerate')}</span>
+               </button>
+              )}
+             </div>
+            </div>
+
+            {resumeErr && <p className="ai-grade-error" style={{ margin: 0 }}>{resumeErr}</p>}
+
+            {report.resume.positioning && (
+             <div className="ai-card jdr-resume-card">
+              <h3>{L('个人定位', 'Positioning')}</h3>
+              <p className="jdr-summary">{report.resume.positioning}</p>
+             </div>
+            )}
+
+            {report.resume.techStack.length > 0 && (
+             <div className="ai-card jdr-resume-card">
+              <h3>{L('技术栈', 'Tech Stack')}</h3>
+              <div className="jdr-skill-grid">
+               {report.resume.techStack.map((grp, gi) => (
+                <div key={gi} className="jdr-skill-group">
+                 <strong>{grp.category}</strong>
+                 <ul>
+                  {grp.items.map((item, ii) => (
+                   <li key={ii}>{item}</li>
+                  ))}
+                 </ul>
+                </div>
+               ))}
+              </div>
+             </div>
+            )}
+
+            <div className="jdr-resume-projects">
+             {report.resume.projects.map((proj, pi) => {
+              const projMd = [
+               `### ${proj.name}（${[proj.role, proj.period].filter(Boolean).join(' · ')}）`,
+               proj.stack.length ? `- **技术栈**：${proj.stack.join(' / ')}` : '',
+               proj.background ? `- **项目背景**：${proj.background}` : '',
+               proj.actions.length ? `- **核心工作**：\n${proj.actions.map(a => `  - ${a}`).join('\n')}` : '',
+               proj.results.length ? `- **量化成果**：\n${proj.results.map(r => `  - ${r}`).join('\n')}` : '',
+               proj.interviewTips?.length ? `- **面试深挖准备**：\n${proj.interviewTips.map(t => `  - ${t}`).join('\n')}` : '',
+              ]
+               .filter(Boolean)
+               .join('\n');
+              return (
+               <article key={pi} className="ai-card jdr-proj-card">
+                <div className="jdr-proj-head">
+                 <div className="jdr-proj-title-wrap">
+                  <h3>{proj.name}</h3>
+                  <div className="jdr-head-tags">
+                   <span className="jdr-style-tag">{proj.role}</span>
+                   {proj.period && <span className="jdr-qtag">{proj.period}</span>}
+                  </div>
+                 </div>
+                 <div className="jdr-proj-actions">
+                  <a
+                   href={`/interview/architect?mode=mock&topic=${encodeURIComponent(proj.name)}`}
+                   className="ai-note-pill"
+                   style={{ textDecoration: 'none' }}
+                  >
+                   <MessageSquare size={13} />
+                   <span>{L('模拟深挖', 'Mock')}</span>
+                   <ExternalLink size={11} />
+                  </a>
+                  <button
+                   type="button"
+                   className="ai-note-pill"
+                   onClick={() => void copyText(`proj-${pi}`, projMd)}
+                  >
+                   {copiedKey === `proj-${pi}` ? <Check size={13} /> : <Copy size={13} />}
+                   <span>{copiedKey === `proj-${pi}` ? L('已复制', 'Copied') : L('复制', 'Copy')}</span>
+                  </button>
+                 </div>
+                </div>
+
+                {proj.stack.length > 0 && (
+                 <div className="jdr-proj-stack">
+                  {proj.stack.map((tk, ti) => (
+                   <span key={ti} className="jdr-qtag">{tk}</span>
+                  ))}
+                 </div>
+                )}
+
+                {proj.background && (
+                 <div className="jdr-proj-sec">
+                  <strong>{L('项目背景', 'Background')}</strong>
+                  <p>{proj.background}</p>
+                 </div>
+                )}
+
+                {proj.actions.length > 0 && (
+                 <div className="jdr-proj-sec">
+                  <strong>{L('核心工作', 'Key Actions')}</strong>
+                  <ul>
+                   {proj.actions.map((act, ai) => (
+                    <li key={ai}>{act}</li>
+                   ))}
+                  </ul>
+                 </div>
+                )}
+
+                {proj.results.length > 0 && (
+                 <div className="jdr-proj-sec">
+                  <strong>{L('量化成果', 'Results')}</strong>
+                  <ul>
+                   {proj.results.map((res, ri) => (
+                    <li key={ri}>{res}</li>
+                   ))}
+                  </ul>
+                 </div>
+                )}
+
+                {proj.interviewTips && proj.interviewTips.length > 0 && (
+                 <div className="jdr-followups">
+                  <strong>{L('面试深挖准备', 'Interview Defense')}</strong>
+                  <ul>
+                   {proj.interviewTips.map((tip, ti) => (
+                    <li key={ti}>{tip}</li>
+                   ))}
+                  </ul>
+                 </div>
+                )}
+               </article>
+              );
+             })}
+            </div>
+           </>
+          )}
+         </section>
+        )}
+
         {/* Offscreen printable sheet for A4 PDF export (includes Profile, Roadmap, Study Quizzes, and Interview Questions) */}
         <div ref={printRef} className="jdr-print-host" aria-hidden="true">
          <h1>{report.roleTitle}</h1>
@@ -3182,7 +3639,118 @@ export default function JdResearchClient({
            ))}
           </>
          )}
+
+         {report.resume && (
+          <>
+           <h2>五、岗位参考简历</h2>
+           {report.resume.positioning && <p>{report.resume.positioning}</p>}
+           {report.resume.techStack.length > 0 && (
+            <div className="jdr-print-item">
+             <h3>专业技术栈</h3>
+             {report.resume.techStack.map((grp, gi) => (
+              <div key={gi}>
+               <p><strong>{grp.category}</strong></p>
+               <ul>
+                {grp.items.map((it, ii) => (
+                 <li key={ii}>{it}</li>
+                ))}
+               </ul>
+              </div>
+             ))}
+            </div>
+           )}
+           {report.resume.projects.map((proj, pi) => (
+            <div key={pi} className="jdr-print-item">
+             <h3>
+              {proj.name}（{[proj.role, proj.period].filter(Boolean).join(' · ')}）
+             </h3>
+             {proj.stack.length > 0 && <p>技术栈：{proj.stack.join(' / ')}</p>}
+             {proj.background && <p>项目背景：{proj.background}</p>}
+             {proj.actions.length > 0 && (
+              <ul>
+               {proj.actions.map((act, ai) => (
+                <li key={ai}>{act}</li>
+               ))}
+              </ul>
+             )}
+             {proj.results.length > 0 && (
+              <ul>
+               {proj.results.map((res, ri) => (
+                <li key={ri}>{res}</li>
+               ))}
+              </ul>
+             )}
+            </div>
+           ))}
+          </>
+         )}
         </div>
+
+        {report.resume && (
+         <div ref={resumePrintRef} className="jdr-print-host" aria-hidden="true">
+          <h1>参考简历 · {report.resume.targetRole}</h1>
+          {report.resume.positioning && <p>{report.resume.positioning}</p>}
+          {report.resume.techStack.length > 0 && (
+           <>
+            <h2>专业技术栈</h2>
+            {report.resume.techStack.map((grp, gi) => (
+             <div key={gi} className="jdr-print-item">
+              <h3>{grp.category}</h3>
+              <ul>
+               {grp.items.map((it, ii) => (
+                <li key={ii}>{it}</li>
+               ))}
+              </ul>
+             </div>
+            ))}
+           </>
+          )}
+          {report.resume.projects.length > 0 && (
+           <>
+            <h2>核心项目经历</h2>
+            {report.resume.projects.map((proj, pi) => (
+             <div key={pi} className="jdr-print-item">
+              <h3>
+               {proj.name}（{[proj.role, proj.period].filter(Boolean).join(' · ')}）
+              </h3>
+              {proj.stack.length > 0 && <p><strong>技术栈：</strong>{proj.stack.join(' / ')}</p>}
+              {proj.background && <p><strong>项目背景：</strong>{proj.background}</p>}
+              {proj.actions.length > 0 && (
+               <>
+                <p><strong>核心工作：</strong></p>
+                <ul>
+                 {proj.actions.map((act, ai) => (
+                  <li key={ai}>{act}</li>
+                 ))}
+                </ul>
+               </>
+              )}
+              {proj.results.length > 0 && (
+               <>
+                <p><strong>量化成果：</strong></p>
+                <ul>
+                 {proj.results.map((res, ri) => (
+                  <li key={ri}>{res}</li>
+                 ))}
+                </ul>
+               </>
+              )}
+              {proj.interviewTips && proj.interviewTips.length > 0 && (
+               <>
+                <p><strong>面试深挖准备：</strong></p>
+                <ul>
+                 {proj.interviewTips.map((tip, ti) => (
+                  <li key={ti}>{tip}</li>
+                 ))}
+                </ul>
+               </>
+              )}
+             </div>
+            ))}
+           </>
+          )}
+         </div>
+        )}
        </>
       ) : (
        <div className="ai-card arch-reply-card">

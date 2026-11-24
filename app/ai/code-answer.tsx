@@ -4,6 +4,7 @@ import {Check,Play} from 'lucide-react';
 import {useI18n} from '../components/i18n';
 import {codeLangs,type CodeLang} from '@/content/code-refs';
 import {startersFor} from '@/content/code-starters';
+import type {StarterLang} from '@/content/code-starters/types';
 import {codeEditing} from './code-input';
 import {setCodeLang,useCodeLang} from './code-reference';
 import {
@@ -66,20 +67,22 @@ export function buildFiveLangStarters(
  return out;
 }
 
-export function resolveStarters(id:string,customStarters?:Partial<Record<CodeLang,string>>):Partial<Record<CodeLang,string>>|undefined{
+const starterLangs=[...codeLangs,{id:'sql' as const,label:'SQL'}];
+
+export function resolveStarters(id:string,customStarters?:Partial<Record<StarterLang,string>>):Partial<Record<StarterLang,string>>|undefined{
  if(customStarters&&Object.values(customStarters).some(v=>typeof v==='string'&&v.trim()))return customStarters;
  return startersFor(id);
 }
 
 // 作答框里的内容还是某个语言的原始框架（没补任何 TODO）时，算作还没作答。
-export function untouchedStarter(id:string,text:string,customStarters?:Partial<Record<CodeLang,string>>){const s=resolveStarters(id,customStarters);return !!s&&Object.values(s).some(v=>v&&v.trim()===text.trim())}
+export function untouchedStarter(id:string,text:string,customStarters?:Partial<Record<StarterLang,string>>){const s=resolveStarters(id,customStarters);return !!s&&Object.values(s).some(v=>v&&v.trim()===text.trim())}
 
 // 代码题作答框：这道题有框架时，先选语言，作答框预填该语言的框架，学习者补全 TODO；没有框架的题就是普通代码输入框。支持一键带入操场调试并同步回答题框。
-export default function CodeAnswer({id,value,onChange,disabled,rows=10,placeholder,autoFocus,playground,customStarters}:{id:string;value:string;onChange:(v:string)=>void;disabled?:boolean;rows?:number;placeholder?:string;autoFocus?:boolean;playground?:CodeAnswerPlayground;customStarters?:Partial<Record<CodeLang,string>>}){
+export default function CodeAnswer({id,value,onChange,disabled,rows=10,placeholder,autoFocus,playground,customStarters}:{id:string;value:string;onChange:(v:string)=>void;disabled?:boolean;rows?:number;placeholder?:string;autoFocus?:boolean;playground?:CodeAnswerPlayground;customStarters?:Partial<Record<StarterLang,string>>}){
  const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
  const starters=resolveStarters(id,customStarters),picked=useCodeLang();
- const langs=starters?codeLangs.filter(l=>starters[l.id]):[];
- const cur:CodeLang|undefined=starters?(picked&&starters[picked]?picked:langs[0]?.id):undefined;
+ const langs=starters?starterLangs.filter(l=>starters[l.id]):[];
+ const cur:StarterLang|undefined=starters?(picked&&starters[picked]?picked:langs[0]?.id):undefined;
  const [synced,setSynced]=useState(false);
  // 作答框还空着时填入当前语言的框架；已经写了内容就不动。
  useEffect(()=>{if(!disabled&&cur&&starters&&!value.trim())onChange(starters[cur]!)},[cur]); // eslint-disable-line react-hooks/exhaustive-deps -- 只在语言确定 / 切换时预填
@@ -111,10 +114,11 @@ export default function CodeAnswer({id,value,onChange,disabled,rows=10,placehold
    window.removeEventListener(PG_QUIZ_SYNC_EVENT,onCustom);
   };
  },[id,allowPlayground,disabled,starters,onChange]);
- const pick=(l:CodeLang)=>{if(!starters||l===cur)return;
+ const pick=(l:StarterLang)=>{if(!starters||l===cur)return;
   // 已经补了内容时，换语言会覆盖掉，先确认。
   if(value.trim()&&!untouchedStarter(id,value,customStarters)&&!window.confirm(L('换语言会用新语言的框架替换你已经写的内容，确定吗？','Switching replaces what you wrote with the new language template. Continue?')))return;
-  setCodeLang(l);onChange(starters[l]!)};
+  if(l!=='sql')setCodeLang(l);
+  onChange(starters[l]!)};
  const playLang:PlaygroundLang|undefined=cur??(playground?(detectPlaygroundLang(value,playground.hintLang,{allowThirdParty:true})??playground.hintLang??undefined):undefined);
  const openPlayground=()=>{
   if(!playLang)return;

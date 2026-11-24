@@ -10,6 +10,11 @@ export function groupReleasesByDay(releases:Release[]):ReleaseDay[]{
 }
 
 export const RELEASES:Release[]=[
+ {version:'2026.11.25-1',date:'2026-11-25',title:'JD 调研一键生成岗位参考简历、全站代码题补齐作答骨架与《复刻面试自习室》升级 24 关',changes:[
+  '新增基于 JD 深度调研报告生成参考简历（POST /api/jd-research/resume）：支持分组技术栈、STAR 项目经历与面试深挖追问角度，支持一键发起模拟深挖、复制/导出 Markdown 及独立打印 PDF',
+  '为全站课程、模拟考与真题试卷此前缺失骨架的全部代码题补齐 TODO 作答框架（新增 sql、go、frontend、rust、python、ai/backend 真题卷与项目实战骨架，真题卷支持一键隐藏冗余代码框）',
+  '重构升级《复刻面试自习室》第 15 关起路线至 24 关：新增 AI 流式输出与思考面板、笔记本与全站检索、在线编程实验场与代码沙箱、JD 调研与参考简历、通知中心与反馈闭环，并将第三方登录/后台/测试/部署顺延重排',
+ ]},
  {version:'2026.11.24-11',date:'2026-11-24',title:'JD 调研防卡死超时兜底、后台轮询保护、总耗时展示及专题一键 AI 补题',changes:[
   '新增 Antigravity Agent 长时间无输出静默卡死检测：当单个 Agent 会话持续 2 个切片无文本/思考产出或流中停滞超 100 秒时，立即自动切换底层模型或触发 DeepSeek 接力，彻底解决单步卡住数百秒的问题。',
   '修复历史任务旧轮询接口误将进行中的分步调研记录提前覆盖为已完成的问题，并强化全量缓存完整性校验以自动跳过残缺缓存。',

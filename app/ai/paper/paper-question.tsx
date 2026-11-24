@@ -11,6 +11,7 @@ import type {GradeResult} from '@/lib/grade-types';
 import {codeEditing,markdownEditing} from '../code-input';
 import CodeReference from '../code-reference';
 import AddToNoteButton from '../../components/add-to-note';
+import {startersFor} from '@/content/code-starters';
 import type {AiQuiz} from '@/content/journey';
 import {fillPoints,fillScores,isAiGradedQuiz,isWrittenQuiz,type PaperAnswer,type WrittenScore} from './paper-score';
 
@@ -45,9 +46,12 @@ export default function PaperQuestion({q,no,max,answer,order,onChange,review}:{q
  const noteQA=review
   ?[noteQOnly,`**${L('参考答案','Reference Answer')}**：\n${written&&q.type!=='short'?`\`\`\`\n${written.reference}\n\`\`\``:answerText(q,L)}`,`**${L('解析','Explanation')}**：${q.explain}`].join('\n\n')
   :[noteQOnly,a.text?`**${L('我的作答草稿','My Draft')}**：\n${a.text}`:L('*（正式考试交卷后可收录完整参考答案与解析）*','*(Submit the paper to include the reference answer & explanation)*')].join('\n\n');
+ const hideRedundantCodeBox=Boolean(
+  type==='code'&&startersFor(q.id)&&q.code&&/(?:TODO|请补全|pass\b|unimplemented!|NotImplementedError)/i.test(q.code),
+ );
  return <article className="paper-q" id={'pq-'+no}>
   <header><span className="paper-no">{no}</span><span className="paper-max">{L(`（${max} 分）`,`(${max} pts)`)}</span>{review&&<span className={'paper-got '+(review.got>=max?'full':review.got>0?'part':'none')}>{L(`得 ${review.got} 分`,`${review.got} pts`)}</span>}<AddToNoteButton title={`第 ${no} 题 · ${q.q.slice(0,48)}`} questionOnly={noteQOnly} questionAndAnswer={noteQA} defaultMode={review?'question-and-answer':'question-only'} source={{kind:'paper',label:L(`正式试卷 · 第 ${no} 题`,`Exam Paper · Q${no}`),href:'',questionId:q.id}}/></header>
-  <h3>{q.q}</h3>{q.code&&<pre className="ai-snippet"><code>{q.code}</code></pre>}{body}
+  <h3>{q.q}</h3>{q.code&&!hideRedundantCodeBox&&<pre className="ai-snippet"><code>{q.code}</code></pre>}{body}
   {review&&<div className="paper-review">
    {!written&&<p className="ai-answer">{L('正确答案：','Answer: ')}{type==='single'||type==='multi'?(type==='multi'?(q as Extract<AiQuiz,{type:'multi'}>).answers:[(q as Extract<AiQuiz,{answer:number}>).answer]).map(i=>letters[(order??[]).indexOf(i)>=0?(order??[]).indexOf(i):i]).sort().join('、')+'  ':''}{answerText(q,L)}</p>}
    {aiGraded&&!review.written&&review.live!==undefined&&(review.live?<GradeBreakdown result={review.live} live code={q.type==='code'||q.type==='design'} answer={written?a.text:undefined} onStop={review.onStop}/>:<GradeWaiting onStop={review.onStop}/>)}
