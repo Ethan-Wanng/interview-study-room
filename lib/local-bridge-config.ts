@@ -11,6 +11,15 @@ export const LOCAL_PROVIDER_LABEL: Record<LocalBridgeProvider, string> = {
  workbuddy: 'WorkBuddy',
 };
 
+export type CachedLocalModel = {
+ id: string;
+ label: string;
+ thinkingLevels?: string[];
+ defaultThinkingLevel?: string;
+};
+
+export type CachedLocalProviderCatalog = Partial<Record<LocalBridgeProvider, CachedLocalModel[]>>;
+
 export type LocalBridgeConfig = {
  enabled: boolean;
  port: number;
@@ -23,6 +32,7 @@ export type LocalBridgeConfig = {
  allowWebSearch: boolean;
  thinkingLevels?: string[];
  defaultThinkingLevel?: string;
+ providerModels?: CachedLocalProviderCatalog;
 };
 
 export const LOCAL_BRIDGE_KEY = 'local-agent-bridge-v1';
@@ -52,8 +62,43 @@ function normProvider(v: unknown): LocalBridgeProvider {
  return v === 'codex' || v === 'workbuddy' || v === 'antigravity' ? v : 'antigravity';
 }
 
+function normalizeCatalog(raw: unknown): CachedLocalProviderCatalog | undefined {
+ if (!raw || typeof raw !== 'object') return undefined;
+ const src = raw as Record<string, unknown>;
+ const out: CachedLocalProviderCatalog = {};
+ let hasAny = false;
+ for (const pid of LOCAL_BRIDGE_PROVIDERS) {
+  const list = src[pid];
+  if (!Array.isArray(list)) continue;
+  const cleaned: CachedLocalModel[] = [];
+  for (const item of list) {
+   if (!item || typeof item !== 'object') continue;
+   const o = item as Record<string, unknown>;
+   const id = typeof o.id === 'string' ? o.id.trim() : '';
+   if (!id) continue;
+   const label = typeof o.label === 'string' && o.label.trim() ? o.label.trim() : id;
+   const levels = Array.isArray(o.thinkingLevels)
+    ? o.thinkingLevels.filter((v): v is string => typeof v === 'string' && Boolean(v.trim())).map(v => v.trim())
+    : undefined;
+   const def = typeof o.defaultThinkingLevel === 'string' && o.defaultThinkingLevel.trim() ? o.defaultThinkingLevel.trim() : undefined;
+   cleaned.push({
+    id,
+    label,
+    ...(levels ? { thinkingLevels: levels } : {}),
+    ...(def ? { defaultThinkingLevel: def } : {}),
+   });
+  }
+  if (cleaned.length) {
+   out[pid] = cleaned;
+   hasAny = true;
+  }
+ }
+ return hasAny ? out : undefined;
+}
+
 function normalizeConfig(raw: Partial<LocalBridgeConfig> | null | undefined): LocalBridgeConfig {
  if (!raw || typeof raw !== 'object') return DEFAULT_LOCAL_BRIDGE_CONFIG;
+ const providerModels = normalizeCatalog(raw.providerModels);
  return {
   enabled: Boolean(raw.enabled),
   port: clampPort(raw.port),
@@ -70,6 +115,7 @@ function normalizeConfig(raw: Partial<LocalBridgeConfig> | null | undefined): Lo
   ...(typeof raw.defaultThinkingLevel === 'string' && raw.defaultThinkingLevel.trim()
    ? { defaultThinkingLevel: raw.defaultThinkingLevel.trim() }
    : {}),
+  ...(providerModels ? { providerModels } : {}),
  };
 }
 

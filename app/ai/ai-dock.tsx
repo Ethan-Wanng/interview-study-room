@@ -27,8 +27,8 @@ import ThinkBox from './think-box';
 import {getGeminiAutoProxy} from './gemini-proxy-pref';
 import {getModelThinkingLevel,notifyTutorModelChanged,useModelThinkingLevel} from './thinking-pref';
 import {getTutorThinkingSpec,THINKING_META,type ThinkingLevel} from '@/lib/thinking';
-import {getLocalBridgeConfig,isLocalTutorReady,LOCAL_PROVIDER_LABEL,useLocalBridgeConfig} from '@/lib/local-bridge-config';
-import {streamTutorViaBridge} from '@/lib/local-bridge-client';
+import {getLocalBridgeConfig,isLocalTutorReady,LOCAL_BRIDGE_PROVIDERS,LOCAL_PROVIDER_LABEL,useLocalBridgeConfig,type LocalBridgeProvider} from '@/lib/local-bridge-config';
+import {probeBridgeProviders,streamTutorViaBridge} from '@/lib/local-bridge-client';
 import {markdownEditing} from './code-input';
 import AddToNoteButton from '../components/add-to-note';
 import {detectPlaygroundLang,normalizePlaygroundLang,type PlaygroundLang} from '@/lib/playground-bridge';
@@ -357,12 +357,48 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
   };
  },[site,setOpen]);
  const {status:aiStatus}=useAiConfigStatus();
- const [localCfg]=useLocalBridgeConfig();
+ const [localCfg,updateLocal]=useLocalBridgeConfig();
  const localTutorActive=isLocalTutorReady(localCfg);
  const localSpecCfg=localTutorActive?localCfg:null;
  const isGuest=Boolean(aiStatus?.isGuest);
  const hasCustom=!isGuest&&!!aiStatus?.settings?.enabled&&!!aiStatus?.settings?.hasKey,customBadge=hasCustom?providerMeta(aiStatus!.settings!.provider).badge:'';
- // 选模型：默认（本地客户端或专属 API 优先，否则 DeepSeek V4.1 Flash）、站点提供的几个模型、自己的专属 API。选择记在浏览器里。
+ // 若已启用本地客户端但尚未缓存模型列表，在打开面板时自动静默探测一次，方便在顶栏直接切换客户端与模型。
+ const probedOnceRef=useRef(false);
+ useEffect(()=>{
+  if(!open||!localTutorActive||probedOnceRef.current)return;
+  if(localCfg.providerModels?.[localCfg.provider]?.length)return;
+  probedOnceRef.current=true;
+  let alive=true;
+  void probeBridgeProviders(localCfg.port,localCfg.token).then(out=>{
+   if(!alive||!out.ok)return;
+   const nextCatalog={...(localCfg.providerModels??{})};
+   for(const p of out.providers){
+    if(p.status==='ready'&&p.models.length){
+     nextCatalog[p.id]=p.models.map(m=>({
+      id:m.id,
+      label:m.label,
+      ...(m.thinkingLevels?{thinkingLevels:m.thinkingLevels}:{}),
+      ...(m.defaultThinkingLevel?{defaultThinkingLevel:m.defaultThinkingLevel}:{}),
+     }));
+    }
+   }
+   const curProv=out.providers.find(p=>p.id===localCfg.provider&&p.status==='ready');
+   if(curProv){
+    const curId=localCfg.model.trim()||curProv.defaultModel||curProv.models[0]?.id||'';
+    const matched=curProv.models.find(m=>m.id===curId)??curProv.models[0];
+    updateLocal({
+     ...(curId&&!localCfg.model.trim()?{model:curId}:{}),
+     thinkingLevels:matched?.thinkingLevels??[],
+     defaultThinkingLevel:matched?.defaultThinkingLevel??'',
+     providerModels:nextCatalog,
+    });
+   }else if(Object.keys(nextCatalog).length){
+    updateLocal({providerModels:nextCatalog});
+   }
+  });
+  return()=>{alive=false};
+ },[open,localTutorActive,localCfg.port,localCfg.token,localCfg.provider,localCfg.model,localCfg.providerModels,updateLocal]);
+ // 选模型：默认（本地客户端或专属 API 优先，否则 DeepSeek V4.1 Flash）、本地客户端模型分组、站点模型、自己的专属 API。选择记在浏览器里。
  const customSpecCfg=useMemo(()=>(hasCustom&&aiStatus?.settings?{provider:aiStatus.settings.provider,model:aiStatus.settings.model}:null),[hasCustom,aiStatus?.settings]);
  const [model,setModelState]=useState<string>(()=>{try{const raw=localStorage.getItem(MODEL_KEY)||'auto',v=raw==='gemini-flash'?'gemini-4':raw;return v==='auto'||v==='custom'||v==='local'||TUTOR_MODELS.some(m=>m.id===v)?v:'auto'}catch{return 'auto'}}),modelRef=useRef(model); // 以前存的旧模型名（deepseek-chat 等）已经没有了，回到默认
  const visibleTutorModels=useMemo(()=>isGuest?TUTOR_MODELS.filter(m=>m.provider!=='gemini'):TUTOR_MODELS,[isGuest]);
@@ -376,19 +412,82 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
  const localRef=useRef(localSpecCfg);useEffect(()=>{localRef.current=localSpecCfg},[localSpecCfg]);
  const setModel=(v:string)=>{modelRef.current=v;setModelState(v);try{localStorage.setItem(MODEL_KEY,v)}catch{};notifyTutorModelChanged()};
  useEffect(()=>{if(model==='custom'&&aiStatus&&!hasCustom)setModel('auto');if(isGuest&&TUTOR_MODELS.find(m=>m.id===model)?.provider==='gemini')setModel('auto')},[aiStatus,hasCustom,isGuest,model]); // eslint-disable-line react-hooks/exhaustive-deps
- const modelPicker=<select className="ai-dock-model" value={effectiveModel} onChange={e=>setModel(e.target.value)} title={L('选择 AI 模型','Choose the AI model')} aria-label={L('选择 AI 模型','Choose the AI model')}>
-  <option value="auto">
-   {localTutorActive
-    ?L(`默认（本地 ${LOCAL_PROVIDER_LABEL[localCfg.provider]}）`,`Default (Local ${LOCAL_PROVIDER_LABEL[localCfg.provider]})`)
-    :hasCustom
+ const localModelGroups=useMemo(()=>{
+  if(!localTutorActive)return [] as {provider:LocalBridgeProvider;models:{id:string;label:string;thinkingLevels?:string[];defaultThinkingLevel?:string}[]}[];
+  const groups:{provider:LocalBridgeProvider;models:{id:string;label:string;thinkingLevels?:string[];defaultThinkingLevel?:string}[]}[]=[];
+  const cat=localCfg.providerModels??{};
+  for(const pid of LOCAL_BRIDGE_PROVIDERS){
+   const list=cat[pid];
+   if(list&&list.length){
+    const curInList=pid===localCfg.provider&&localCfg.model.trim()&&!list.some(m=>m.id===localCfg.model.trim());
+    groups.push({
+     provider:pid,
+     models:curInList?[{id:localCfg.model.trim(),label:localCfg.model.trim()},...list]:list,
+    });
+   }else if(pid===localCfg.provider){
+    const id=localCfg.model.trim()||'default';
+    groups.push({provider:pid,models:[{id,label:id,thinkingLevels:localCfg.thinkingLevels,defaultThinkingLevel:localCfg.defaultThinkingLevel}]});
+   }
+  }
+  return groups;
+ },[localTutorActive,localCfg.provider,localCfg.model,localCfg.providerModels,localCfg.thinkingLevels,localCfg.defaultThinkingLevel]);
+ const activeLocalSelectVal=useMemo(()=>{
+  if(!isUsingLocalTutor)return '';
+  const curGroup=localModelGroups.find(g=>g.provider===localCfg.provider);
+  const targetId=localCfg.model.trim()||curGroup?.models[0]?.id||'default';
+  return `local:${localCfg.provider}/${targetId}`;
+ },[isUsingLocalTutor,localModelGroups,localCfg.provider,localCfg.model]);
+ const selectValue=isUsingLocalTutor&&activeLocalSelectVal?activeLocalSelectVal:effectiveModel;
+ const onPickModel=(val:string)=>{
+  if(val.startsWith('local:')){
+   const rest=val.slice(6),slash=rest.indexOf('/');
+   const pid=(slash>0?rest.slice(0,slash):rest) as LocalBridgeProvider;
+   const mid=slash>0?rest.slice(slash+1):'';
+   if(LOCAL_BRIDGE_PROVIDERS.includes(pid)){
+    const matched=localCfg.providerModels?.[pid]?.find(m=>m.id===mid);
+    updateLocal({
+     provider:pid,
+     model:mid==='default'?'':mid,
+     thinkingLevels:matched?.thinkingLevels??[],
+     defaultThinkingLevel:matched?.defaultThinkingLevel??'',
+    });
+    setModel('local');
+    return;
+   }
+  }
+  setModel(val);
+ };
+ const modelPicker=<select className="ai-dock-model" value={selectValue} onChange={e=>onPickModel(e.target.value)} title={L('选择 AI 模型','Choose the AI model')} aria-label={L('选择 AI 模型','Choose the AI model')}>
+  {!localTutorActive&&(
+   <option value="auto">
+    {hasCustom
      ?L(`默认（我的 ${customBadge}）`,`Default (my ${customBadge})`)
      :isGuest
       ?L('默认（DeepSeek）','Default (DeepSeek)')
       :L('默认（自动 · DeepSeek / Gemini 4）','Default (Auto · DeepSeek / Gemini 4)')}
-  </option>
-  {localTutorActive&&<option value="local">{L(`本地：${LOCAL_PROVIDER_LABEL[localCfg.provider]}`,`Local: ${LOCAL_PROVIDER_LABEL[localCfg.provider]}`)}</option>}
-  {visibleTutorModels.map(m=><option key={m.id} value={m.id} title={L(m.note[0],m.note[1])}>{L(m.label[0],m.label[1])}{m.vision?L(' · 识图',' · images'):''}</option>)}
-  {hasCustom&&<option value="custom">{L(`我的 API：${customBadge}`,`My API: ${customBadge}`)}</option>}</select>;
+   </option>
+  )}
+  {localModelGroups.map(g=>(
+   <optgroup key={g.provider} label={L(`本地 · ${LOCAL_PROVIDER_LABEL[g.provider]}`,`Local · ${LOCAL_PROVIDER_LABEL[g.provider]}`)}>
+    {g.models.map(m=>(
+     <option key={`${g.provider}/${m.id}`} value={`local:${g.provider}/${m.id}`}>
+      {LOCAL_PROVIDER_LABEL[g.provider]} → {m.label}
+     </option>
+    ))}
+   </optgroup>
+  ))}
+  {localTutorActive?(
+   <optgroup label={L('站点模型','Site Models')}>
+    {visibleTutorModels.map(m=><option key={m.id} value={m.id} title={L(m.note[0],m.note[1])}>{L(m.label[0],m.label[1])}{m.vision?L(' · 识图',' · images'):''}</option>)}
+    {hasCustom&&<option value="custom">{L(`我的 API：${customBadge}`,`My API: ${customBadge}`)}</option>}
+   </optgroup>
+  ):(
+   <>
+    {visibleTutorModels.map(m=><option key={m.id} value={m.id} title={L(m.note[0],m.note[1])}>{L(m.label[0],m.label[1])}{m.vision?L(' · 识图',' · images'):''}</option>)}
+    {hasCustom&&<option value="custom">{L(`我的 API：${customBadge}`,`My API: ${customBadge}`)}</option>}
+   </>
+  )}
+ </select>;
  const box=useRef<HTMLDivElement>(null),busy=live!==null,handled=useRef(request?.n??0);
  // images：输入框里待发送的图片；answerAt：AI 正在回复的位置（回复插在这条之后，回复期间新发的消息排在后面）。
  const [images,setImages]=useState<string[]>([]),[answerAt,setAnswerAt]=useState(-1),fileRef=useRef<HTMLInputElement>(null),inputRef=useRef<HTMLTextAreaElement>(null);

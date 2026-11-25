@@ -70,6 +70,17 @@ export function LocalBridgeSection({L,hideGuideBtn}:{L:(zh:string,en:string)=>st
 
  const applyProviderStatus=(list:LocalProviderInfo[],target:LocalBridgeProvider,modelOverride?:string)=>{
   setProviders(list);
+  const nextCatalog={...(localCfg.providerModels??{})};
+  for(const p of list){
+   if(p.status==='ready'&&p.models.length){
+    nextCatalog[p.id]=p.models.map(m=>({
+     id:m.id,
+     label:m.label,
+     ...(m.thinkingLevels?{thinkingLevels:m.thinkingLevels}:{}),
+     ...(m.defaultThinkingLevel?{defaultThinkingLevel:m.defaultThinkingLevel}:{}),
+    }));
+   }
+  }
   const found=list.find(p=>p.id===target);
   if(!found){
    setProbeState('err');
@@ -79,7 +90,13 @@ export function LocalBridgeSection({L,hideGuideBtn}:{L:(zh:string,en:string)=>st
   if(found.status==='ready'){
    setProbeState('ready');
    setProbeLabel(L('已连接','Connected'));
-   updateLocal(syncModelThinking(found,modelOverride!==undefined?modelOverride:localCfg.model));
+   const effModel=modelOverride!==undefined?modelOverride:localCfg.model;
+   const nextModel=effModel.trim()||found.defaultModel||found.models[0]?.id||'';
+   updateLocal({
+    ...(nextModel&&!effModel.trim()?{model:nextModel}:{}),
+    ...syncModelThinking(found,nextModel),
+    providerModels:nextCatalog,
+   });
    return;
   }
   if(found.status==='auth_required'){
