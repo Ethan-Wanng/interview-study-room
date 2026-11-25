@@ -1,9 +1,9 @@
 // AI 思考强度设置：不同模型支持的挡位和默认值各不相同，前后端统一从这里的规格表读取并校验。
-export type ConcreteThinkingLevel='off'|'low'|'medium'|'high'|'xhigh'|'max';
+export type ConcreteThinkingLevel='off'|'low'|'medium'|'high'|'xhigh'|'max'|'ultra';
 export type ThinkingLevel='auto'|ConcreteThinkingLevel;
 export const DEFAULT_THINKING_LEVEL:ThinkingLevel='auto';
 
-const CONCRETE:ConcreteThinkingLevel[]=['off','low','medium','high','xhigh','max'];
+const CONCRETE:ConcreteThinkingLevel[]=['off','low','medium','high','xhigh','max','ultra'];
 
 export const isThinkingLevel=(v:unknown):v is ThinkingLevel=>
  v==='auto'||CONCRETE.includes(v as ConcreteThinkingLevel);
@@ -59,8 +59,15 @@ export const THINKING_META:Record<ConcreteThinkingLevel,ThinkingMeta>={
   id:'max',
   shortZh:'Max',
   shortEn:'Max',
-  hintZh:'极限深度推理（DeepSeek V4 最高挡位，适合高难度推导）',
-  hintEn:'Maximum reasoning effort on DeepSeek V4',
+  hintZh:'极限深度推理（适合高难度推导）',
+  hintEn:'Maximum reasoning effort for complex tasks',
+ },
+ ultra:{
+  id:'ultra',
+  shortZh:'Ultra',
+  shortEn:'Ultra',
+  hintZh:'最高档极限推理（仅部分模型支持，耗时最长）',
+  hintEn:'Ultra reasoning effort (supported models only)',
  },
 };
 
@@ -112,6 +119,7 @@ function normalizeLocalLevel(raw?: string): ConcreteThinkingLevel | null {
  if (s === 'high') return 'high';
  if (s === 'xhigh' || s === 'extra_high' || s === 'extra-high' || s === 'very_high') return 'xhigh';
  if (s === 'max') return 'max';
+ if (s === 'ultra') return 'ultra';
  return null;
 }
 
@@ -188,13 +196,15 @@ export function getGradeThinkingSpec(gradeModel:string,custom?:{provider:string;
 export function clampThinkingToSpec(level:ThinkingLevel,spec:ModelThinkingSpec):ConcreteThinkingLevel{
  if(level==='auto')return spec.defaultLevel;
  if(spec.levels.includes(level))return level;
+ if(level==='ultra'&&spec.levels.includes('max'))return 'max';
+ if(level==='ultra'&&spec.levels.includes('xhigh'))return 'xhigh';
  if(level==='max'&&spec.levels.includes('xhigh'))return 'xhigh';
  if(level==='xhigh'&&spec.levels.includes('max'))return 'max';
  if(level==='medium'){
   if(spec.levels.includes('high'))return 'high';
   if(spec.levels.includes('low'))return 'low';
  }
- const order:ConcreteThinkingLevel[]=['off','low','medium','high','xhigh','max'];
+ const order:ConcreteThinkingLevel[]=['off','low','medium','high','xhigh','max','ultra'];
  const want=order.indexOf(level);
  let best=spec.defaultLevel,bestDist=99;
  for(const cand of spec.levels){

@@ -68,7 +68,7 @@ function effectiveDsLevel(model:string,level:ThinkingLevel,defaultThinking?:bool
  }
  if(level==='off')return 'off';
  if(level==='low')return 'low';
- if(level==='max'||level==='xhigh')return 'max';
+ if(level==='max'||level==='xhigh'||level==='ultra')return 'max';
  return 'high';
 }
 
@@ -92,8 +92,8 @@ function geminiThinkingCfgs(model:string,level:ThinkingLevel,defaultOn:boolean):
  if(level==='off'){
   return [{includeThoughts:false,thinkingLevel:'MINIMAL'},{includeThoughts:false,thinkingBudget:0},undefined];
  }
- const budget=level==='low'?1024:level==='medium'?8192:(level==='xhigh'||level==='max')?32768:24576;
- const apiLvl=(level==='xhigh'||level==='max')?'HIGH':level.toUpperCase();
+ const budget=level==='low'?1024:level==='medium'?8192:(level==='xhigh'||level==='max'||level==='ultra')?32768:24576;
+ const apiLvl=(level==='xhigh'||level==='max'||level==='ultra')?'HIGH':level.toUpperCase();
  return [{includeThoughts:true,thinkingLevel:apiLvl},{includeThoughts:true,thinkingBudget:budget},{includeThoughts:true},undefined];
 }
 
@@ -139,7 +139,7 @@ async function runProviderStream(
  const dsLevel=provider==='deepseek'?effectiveDsLevel(model,level,opts.thinking):'off';
  const dsThinking=provider==='deepseek'&&dsLevel!=='off';
  const effLevel=resolveEffectiveConcreteLevel(provider,model,level,opts.thinking);
- const effort:'low'|'medium'|'high'|'max'=effLevel==='xhigh'||effLevel==='max'?'max':effLevel==='medium'?'medium':effLevel==='high'?'high':'low';
+ const effort:'low'|'medium'|'high'|'max'=effLevel==='xhigh'||effLevel==='max'||effLevel==='ultra'?'max':effLevel==='medium'?'medium':effLevel==='high'?'high':'low';
  if(provider==='deepseek'&&(model==='deepseek-chat'||model==='deepseek-reasoner'))model='deepseek-flash';
  // DeepSeek 的普通对话走 Anthropic 格式的 Messages API（https://api-docs.deepseek.com/zh-cn/api/create-message/），思考过程以 thinking_delta 返回；
  // 要求 JSON 输出的评分仍走 Chat Completions（Messages API 不支持指定输出格式）。

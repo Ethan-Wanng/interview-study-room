@@ -362,11 +362,10 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
  const localSpecCfg=localTutorActive?localCfg:null;
  const isGuest=Boolean(aiStatus?.isGuest);
  const hasCustom=!isGuest&&!!aiStatus?.settings?.enabled&&!!aiStatus?.settings?.hasKey,customBadge=hasCustom?providerMeta(aiStatus!.settings!.provider).badge:'';
- // 若已启用本地客户端但尚未缓存模型列表，在打开面板时自动静默探测一次，方便在顶栏直接切换客户端与模型。
+ // 若已启用本地客户端，在打开面板时静默同步一次模型列表与各模型思考强度，确保升级桥接或切换客户端后立即可用。
  const probedOnceRef=useRef(false);
  useEffect(()=>{
   if(!open||!localTutorActive||probedOnceRef.current)return;
-  if(localCfg.providerModels?.[localCfg.provider]?.length)return;
   probedOnceRef.current=true;
   let alive=true;
   void probeBridgeProviders(localCfg.port,localCfg.token).then(out=>{
