@@ -103,13 +103,13 @@ export function getCustomThinkingSpec(provider:string,model?:string):ModelThinki
  return SPEC_DS_OFF;
 }
 
-// 本地客户端对应的思考强度规格（Codex 支持 low/medium/high effort，ACP 驱动锁定默认思考模式）。
+// 本地客户端对应的思考强度规格（Antigravity / Codex / WorkBuddy 均支持按档位透传思考强度）。
 export function getLocalThinkingSpec(provider:string,model?:string):ModelThinkingSpec{
- if(provider==='codex'){
-  return {levels:['low','medium','high'],defaultLevel:'medium'};
- }
- return {levels:[SPEC_GM_HYDROGEN.defaultLevel],defaultLevel:SPEC_GM_HYDROGEN.defaultLevel,locked:true};
  void model;
+ if(provider==='antigravity'||provider==='codex'){
+  return {levels:['low','medium','high','xhigh'],defaultLevel:'medium'};
+ }
+ return {levels:['low','medium','high'],defaultLevel:'medium'};
 }
 
 // AI 问答模型与自定义配置对应的思考规格与作用域键。
