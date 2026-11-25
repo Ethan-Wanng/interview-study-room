@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { AuthError, assertSameOrigin, rateLimit, sessionUser } from '@/lib/site-auth';
+import { consumeSiteAiQuota } from '@/lib/site-ai-quota';
 import {
  ANTIGRAVITY_AGENT_ID,
  AntigravityError,
@@ -144,12 +145,21 @@ export async function POST(req: Request) {
    }
   }
 
-  const started = await startAntigravityInteraction({
-   systemInstruction: mode === 'mock' ? MOCK_SYSTEM : DESIGN_SYSTEM,
-   input: promptInput,
-   previousInteractionId: previousInteractionId || undefined,
-   geminiProxy,
-  });
+  const siteQ = await consumeSiteAiQuota(req, user, 'gemini');
+  if (!siteQ.ok) throw new AuthError(siteQ.message, siteQ.status);
+
+  let started: Awaited<ReturnType<typeof startAntigravityInteraction>>;
+  try {
+   started = await startAntigravityInteraction({
+    systemInstruction: mode === 'mock' ? MOCK_SYSTEM : DESIGN_SYSTEM,
+    input: promptInput,
+    previousInteractionId: previousInteractionId || undefined,
+    geminiProxy,
+   });
+  } catch (startErr) {
+   await siteQ.refund();
+   throw startErr;
+  }
 
   const sig = await signInteraction(user.id, started.id);
   const ckSig = cacheKey ? await signInteraction(user.id, cacheKey) : '';

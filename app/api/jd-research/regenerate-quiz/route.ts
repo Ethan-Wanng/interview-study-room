@@ -1,4 +1,5 @@
 import { AuthError, assertSameOrigin, rateLimit, sessionUser } from '@/lib/site-auth';
+import { consumeSiteAiQuota } from '@/lib/site-ai-quota';
 import { getAiInterviewRecord, saveAiInterviewRecord } from '@/lib/ai-interview-records';
 import { parseSingleStudyQuiz } from '@/lib/jd-research-server';
 import { isAntigravityRateLimitError, runAntigravityBackgroundToCompletion, type AntigravityUsage } from '@/lib/antigravity-agent';
@@ -111,6 +112,9 @@ export async function POST(req: Request) {
    const parsed = parseSingleStudyQuiz(txt, stepIdx, qIdx, oldQuiz.id, oldQuiz.dimension);
    return Boolean(parsed && (parsed.type ?? 'single') === targetType);
   };
+
+  const siteQ = await consumeSiteAiQuota(req, user, 'gemini');
+  if (!siteQ.ok) throw new AuthError(siteQ.message, siteQ.status);
 
   let out: { text: string; thoughts: string; modelLabel: string; usage?: AntigravityUsage };
   try {

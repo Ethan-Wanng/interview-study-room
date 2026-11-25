@@ -47,8 +47,8 @@ export type GradeResponse={results:GradeResult[];model:string;remaining:number}|
 // reset 换模型重试，清掉已收到的文字；done 最终结果（服务端校正过分数）；error 评分失败，这次不扣次数。
 export type GradeEvent={t:'start'}|{t:'think';text:string}|{t:'delta';text:string}|{t:'reset'}|{t:'done';results:GradeResult[];text?:string;model:string;remaining:number}|{t:'error';message:string};
 
-// 每日 AI 评分额度：游客 5 次，登录用户 100 次。
-export const GRADE_QUOTA={guest:5,user:100} as const;
+// 每日 AI 评分额度：游客 3 次，普通登录用户与全站站点 DeepSeek 共用每日 50 次。
+export const GRADE_QUOTA={guest:3,user:50} as const;
 export const GRADE_LIMITS={items:25,answer:8000,total:80000} as const;
 // 没写 scores 时按得分点平均分配，余数从前往后各补 1 分。
 export function pointScores(points:string[],max:number,scores?:number[]){if(scores&&scores.length===points.length)return scores;

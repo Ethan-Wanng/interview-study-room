@@ -1,4 +1,5 @@
 import { AuthError, assertSameOrigin, rateLimit, sessionUser } from '@/lib/site-auth';
+import { consumeSiteAiQuota } from '@/lib/site-ai-quota';
 import { getAiInterviewRecord, saveAiInterviewRecord } from '@/lib/ai-interview-records';
 import { readPromptCache, sha256Hex, writePromptCache } from '@/lib/prompt-cache';
 import {
@@ -298,6 +299,9 @@ export async function POST(req: Request) {
     existingStems,
    });
 
+   const siteQ = await consumeSiteAiQuota(req, user, 'gemini');
+   if (!siteQ.ok) throw new AuthError(siteQ.message, siteQ.status);
+
    const out = await runWithAgentFallback({
     systemPrompt,
     userInput,
@@ -398,6 +402,11 @@ export async function POST(req: Request) {
      }
 
      if (!drill) {
+      const siteQ = await consumeSiteAiQuota(req, user, 'gemini');
+      if (!siteQ.ok) {
+       send({ type: 'error', error: siteQ.message });
+       return;
+      }
       const kind: JdInputKind = rec.payload.kind || 'jd';
       const source = rec.payload.source || '';
       const systemPrompt = getJdProjectDrillSystemPrompt();

@@ -734,4 +734,10 @@ body.ai-dock-full{overflow:hidden}
 .lb-guide-card{padding:20px}
 .lb-config-card{padding:20px;position:sticky;top:84px}
 .lb-config-card .ai-cfg-local{padding-top:0;border-top:0}
+.ai-cfg-quota{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:6px 9px;border-radius:8px;background:var(--surface-soft);border:1px solid var(--line);font-size:12px;color:var(--body-ink)}
+.ai-cfg-quota-plan{padding:1px 7px;border-radius:999px;background:color-mix(in srgb,var(--primary) 14%,var(--surface));color:var(--primary);font-weight:700;text-transform:uppercase;font-size:11px}
+.ai-cfg-quota-item{color:var(--quiet);font-variant-numeric:tabular-nums}
+.jdr-quota-pill{display:inline-flex;align-items:center;gap:5px;padding:4px 11px;border-radius:999px;border:1px solid var(--line);background:var(--surface-soft);color:var(--quiet);font-size:12.5px;font-weight:600;font-variant-numeric:tabular-nums}
+.jdr-quota-pill.local{border-color:rgba(34,197,94,.42);background:rgba(34,197,94,.12);color:#16a34a}
+.jdr-quota-pill.empty{border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.12);color:var(--alert-ink,#ef4444)}
 @media(max-width:899px){.lb-page-grid{grid-template-columns:1fr}.lb-config-card{position:static}.lb-page-title{font-size:22px}}

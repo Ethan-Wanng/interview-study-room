@@ -1,4 +1,5 @@
 import { AuthError, assertSameOrigin, rateLimit, sessionUser } from '@/lib/site-auth';
+import { consumeSiteAiQuota } from '@/lib/site-ai-quota';
 import { extractJdFromImages } from '@/lib/gemini';
 import { fetchJdTextFromUrl } from '@/lib/jd-extract';
 
@@ -40,8 +41,15 @@ export async function POST(req: Request) {
    if (fromUrl) parts.push(fromUrl);
   }
   if (images.length) {
-   const fromImg = await extractJdFromImages(images, geminiProxy, true);
-   if (fromImg) parts.push(fromImg);
+   const siteQ = await consumeSiteAiQuota(req, user, 'gemini');
+   if (!siteQ.ok) throw new AuthError(siteQ.message, siteQ.status);
+   try {
+    const fromImg = await extractJdFromImages(images, geminiProxy, true);
+    if (fromImg) parts.push(fromImg);
+   } catch (imgErr) {
+    await siteQ.refund();
+    throw imgErr;
+   }
   }
 
   const text = parts.join('\n\n').slice(0, 14_000).trim();

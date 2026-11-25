@@ -29,6 +29,8 @@ import QuestionCard, { type Item, type Result } from '../../ai/question-card';
 import { Annotated } from '../annotated';
 import { getGeminiAutoProxy } from '../../ai/gemini-proxy-pref';
 import { useI18n } from '../../components/i18n';
+import { isLocalDeepReady, LOCAL_PROVIDER_LABEL, useLocalBridgeConfig } from '@/lib/local-bridge-config';
+import { streamDeepViaBridge } from '@/lib/local-bridge-client';
 import { aiQuizTypes, type AiQuiz } from '@/content/journey';
 import type { PlaygroundLang } from '@/lib/playground-bridge';
 import type { JdProjectDrill, JdResearchReport } from '@/lib/jd-research-types';
@@ -137,6 +139,7 @@ export default function ProjectDrillClient({
 }) {
  const { locale } = useI18n();
  const L = (zh: string, en: string) => (locale === 'en' ? en : zh);
+ const [localCfg] = useLocalBridgeConfig();
 
  const [reportOverrides, setReportOverrides] = useState<Record<string, JdResearchReport>>({});
  const topicList = useMemo(
@@ -250,6 +253,79 @@ export default function ProjectDrillClient({
   let accTh = '';
   let accTail = '';
   try {
+   if (isLocalDeepReady(localCfg)) {
+    const targetTopic = topicList.find(t => t.id === tid) ?? activeTopic;
+    if (!targetTopic) throw new Error(L('未找到对应的简历报告', 'Report not found'));
+    setGenModel(`${LOCAL_PROVIDER_LABEL[localCfg.provider]} · ${localCfg.model.trim() || 'default'}`);
+    const pRes = await fetch('/api/jd-research/local-helper', {
+     method: 'POST',
+     headers: { 'content-type': 'application/json' },
+     body: JSON.stringify({
+      action: 'prompts',
+      task: 'project-drill',
+      report: targetTopic.report,
+      projIdx: pi,
+     }),
+     signal: ctl.signal,
+    });
+    const pData = (await pRes.json()) as { system?: string; user?: string; error?: string };
+    if (!pRes.ok || !pData.system || !pData.user) {
+     throw new Error(pData.error || L('准备本地提示词失败', 'Failed to prepare prompt'));
+    }
+    const out = await streamDeepViaBridge({
+     cfg: localCfg,
+     system: pData.system,
+     messages: [{ role: 'user', content: pData.user }],
+     jsonMode: true,
+     onModel: m => setGenModel(m),
+     onThink: d => {
+      accTh += d;
+      setGenThoughts(accTh);
+     },
+     onDelta: d => {
+      accTail = (accTail + d).replace(/\s+/g, ' ').slice(-200);
+      setGenTail(accTail);
+     },
+     signal: ctl.signal,
+    });
+    const parseRes = await fetch('/api/jd-research/local-helper', {
+     method: 'POST',
+     headers: { 'content-type': 'application/json' },
+     body: JSON.stringify({
+      action: 'parse',
+      task: 'project-drill',
+      rawText: out.text,
+      projIdx: pi,
+     }),
+     signal: ctl.signal,
+    });
+    const parseData = (await parseRes.json()) as { drill?: JdProjectDrill; error?: string };
+    if (!parseRes.ok || !parseData.drill) {
+     throw new Error(parseData.error || L('项目深挖预判解析失败，请重试', 'Failed to parse drill'));
+    }
+    const baseResume = targetTopic.report.resume!;
+    const doneReport: JdResearchReport = {
+     ...targetTopic.report,
+     resume: {
+      ...baseResume,
+      projects: baseResume.projects.map((item, idx) => (idx === pi ? { ...item, drill: parseData.drill } : item)),
+     },
+    };
+    fetch('/api/ai-interview-records', {
+     method: 'POST',
+     headers: { 'content-type': 'application/json' },
+     body: JSON.stringify({
+      id: tid,
+      kind: 'jd-research',
+      patch: true,
+      payload: { report: doneReport },
+     }),
+    }).catch(() => {});
+    setReportOverrides(prev => ({ ...prev, [tid]: doneReport }));
+    setLessonIdx(0);
+    setQuizIdx(0);
+    return;
+   }
    const r = await fetch('/api/jd-research/project-drill', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -468,6 +544,81 @@ export default function ProjectDrillClient({
   setRegenKey(targetKey);
   setRegenErr('');
   try {
+   if (isLocalDeepReady(localCfg)) {
+    const pRes = await fetch('/api/jd-research/local-helper', {
+     method: 'POST',
+     headers: { 'content-type': 'application/json' },
+     body: JSON.stringify({
+      action: 'prompts',
+      task: 'project-drill-regen-quiz',
+      report: activeTopic.report,
+      projIdx: safeProjIdx,
+      quizIdx: targetQIdx,
+     }),
+    });
+    const pData = (await pRes.json()) as { system?: string; user?: string; error?: string };
+    if (!pRes.ok || !pData.system || !pData.user) {
+     throw new Error(pData.error || L('准备本地提示词失败', 'Failed to prepare prompt'));
+    }
+    const out = await streamDeepViaBridge({
+     cfg: localCfg,
+     system: pData.system,
+     messages: [{ role: 'user', content: pData.user }],
+     jsonMode: true,
+     onDelta: () => {},
+    });
+    const parseRes = await fetch('/api/jd-research/local-helper', {
+     method: 'POST',
+     headers: { 'content-type': 'application/json' },
+     body: JSON.stringify({
+      action: 'parse',
+      task: 'project-drill-regen-quiz',
+      rawText: out.text,
+      projIdx: safeProjIdx,
+      quizIdx: targetQIdx,
+      fallbackId: qz.id,
+      fallbackDimension: qz.dimension,
+     }),
+    });
+    const parseData = (await parseRes.json()) as { quiz?: AiQuiz; error?: string };
+    if (!parseRes.ok || !parseData.quiz) {
+     throw new Error(parseData.error || L('重出题目解析失败，请重试', 'Regeneration failed'));
+    }
+    const baseResume = activeTopic.report.resume!;
+    const nextReport: JdResearchReport = {
+     ...activeTopic.report,
+     resume: {
+      ...baseResume,
+      projects: baseResume.projects.map((p, idx) =>
+       idx === safeProjIdx && p.drill
+        ? { ...p, drill: { ...p.drill, quizzes: p.drill.quizzes.map((item, qi) => (qi === targetQIdx ? parseData.quiz! : item)) } }
+        : p,
+      ),
+     },
+    };
+    fetch('/api/ai-interview-records', {
+     method: 'POST',
+     headers: { 'content-type': 'application/json' },
+     body: JSON.stringify({
+      id: activeTopic.id,
+      kind: 'jd-research',
+      patch: true,
+      payload: { report: nextReport },
+     }),
+    }).catch(() => {});
+    setReportOverrides(prev => ({ ...prev, [activeTopic.id]: nextReport }));
+    updateSession(prev => {
+     const results = { ...prev.results };
+     const drafts = { ...prev.drafts };
+     const orders = { ...prev.orders };
+     delete results[targetKey];
+     delete drafts[targetKey];
+     delete orders[targetKey];
+     return { ...prev, results, drafts, orders };
+    });
+    setRegenNonce(prev => ({ ...prev, [targetKey]: (prev[targetKey] || 0) + 1 }));
+    return;
+   }
    const r = await fetch('/api/jd-research/project-drill', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

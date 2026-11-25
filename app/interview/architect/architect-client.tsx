@@ -8,6 +8,23 @@ import SiteHeader from '../../components/site-header';
 import AddToNoteButton from '../../components/add-to-note';
 import {useI18n} from '../../components/i18n';
 import {getGeminiAutoProxy} from '../../ai/gemini-proxy-pref';
+import {isLocalDeepReady,LOCAL_PROVIDER_LABEL,useLocalBridgeConfig} from '@/lib/local-bridge-config';
+import {streamDeepViaBridge} from '@/lib/local-bridge-client';
+
+const DESIGN_SYSTEM=`你是顶级互联网大厂（P8/Staff 级别）系统设计与架构面试官。请对候选人的架构方案进行深度、务实、直击要害的技术评审（不要执行 shell 命令或写文件，直接基于专业架构经验作答，必要时可核查最新主流工程实践）。
+输出结构请使用清晰 Markdown：
+1. **综合评级与一句话结论**（给出 10 分制评分与当前水平定位，如 P6/P7/P8）
+2. **方案亮点**（2–3 条具体肯定）
+3. **关键漏洞与瓶颈拆解**（按严重程度列出 3–5 个具体问题：高并发热点、数据一致性、故障降级、容量估算、扩展性等，并给出可落地的修复架构）
+4. **生产级改进架构要点**（给出关键链路或核心数据结构/SQL/伪代码要点）
+5. **面试官深度追问（3 题）**（模拟真实二面/终面最刁钻的 3 个连环追问，引导候选人在下方继续作答）
+语气专业、直接、有干货，用简体中文输出。`;
+
+const MOCK_SYSTEM=`你是顶级互联网大厂（P8/Staff 级别）高阶技术面试官，正在进行真实的多轮深度技术面（不要执行 shell 命令或写文件，直接用简体中文输出）。
+针对候选人的回答：
+1. 先精准点评回答的**深度、准确度与遗漏边界**（指出模糊或背八股的地方，给出 10 分制当轮得分）；
+2. 补充生产级底层原理或关键取舍（带具体数字/场景，简洁硬核）；
+3. 顺着候选人回答中最薄弱或最值得深挖的点，抛出 **1–2 个层层递进的真实追问**，等待候选人下一轮继续回答。`;
 
 type Mode='design'|'mock';
 type Usage={totalTokens:number;inputTokens:number;cachedTokens:number;outputTokens:number;thoughtTokens:number};
@@ -88,9 +105,11 @@ function ReviewMarkdown({text}:{text:string}){
 
 const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
 
-export default function ArchitectClient({username}:{username:string}){
+ export default function ArchitectClient({username}:{username:string}){
  const {locale}=useI18n();
  const L=(zh:string,en:string)=>locale==='en'?en:zh;
+ const [localCfg]=useLocalBridgeConfig();
+ const useLocal=isLocalDeepReady(localCfg);
 
  const [mode,setMode]=useState<Mode>('design');
  const [topic,setTopic]=useState(PRESETS[0].topicZh);
@@ -288,6 +307,56 @@ export default function ArchitectClient({username}:{username:string}){
   const patchTurn=(patch:Partial<Turn>)=>setTurns(list=>list.map(t=>t.id===localTurnId?{...t,...patch}:t));
 
   try{
+   if(isLocalDeepReady(localCfg)){
+    const doneTurns=turns.filter(t=>t.status==='done');
+    const msgs:{role:'user'|'assistant';content:string}[]=[];
+    doneTurns.forEach((t,i)=>{
+     msgs.push({
+      role:'user',
+      content:i===0
+       ?`【${mode==='mock'?'高阶模拟面试题':'系统设计题目'}】\n${cleanTopic}\n\n【候选人方案 / 回答】\n${t.userText}`
+       :`【候选人追问 / 补充回答】\n${t.userText}\n\n请延续上一轮评审语境继续点评与深入追问。`,
+     });
+     msgs.push({role:'assistant',content:t.text});
+    });
+    msgs.push({
+     role:'user',
+     content:doneTurns.length===0
+      ?`【${mode==='mock'?'高阶模拟面试题':'系统设计题目'}】\n${cleanTopic}\n\n【候选人方案 / 回答】\n${cleanAns}`
+      :`【候选人追问 / 补充回答】\n${cleanAns}\n\n请延续上一轮评审语境继续点评与深入追问。`,
+    });
+    let accText='',accThink='';
+    const out=await streamDeepViaBridge({
+     cfg:localCfg,
+     system:mode==='mock'?MOCK_SYSTEM:DESIGN_SYSTEM,
+     messages:msgs,
+     onThink:d=>{accThink+=d;patchTurn({thoughts:accThink})},
+     onDelta:d=>{accText+=d;patchTurn({text:accText})},
+     signal:ctl.signal,
+    });
+    const finalTurn:Turn={id:localTurnId,userText:cleanAns,status:'done',text:out.text,thoughts:out.think};
+    patchTurn(finalTurn);
+    if(username){
+     const nextRecId=recordId||'arch-'+crypto.randomUUID();
+     if(!recordId)setRecordId(nextRecId);
+     const nextTurns=[...doneTurns,finalTurn];
+     const modeLabel=mode==='mock'?'高阶模拟面试':'系统设计评审';
+     fetch('/api/ai-interview-records',{
+      method:'POST',
+      headers:{'content-type':'application/json'},
+      body:JSON.stringify({
+       id:nextRecId,
+       kind:'architect',
+       title:cleanTopic||modeLabel,
+       subtitle:`${modeLabel} · ${LOCAL_PROVIDER_LABEL[localCfg.provider]}`,
+       status:'completed',
+       payload:{mode,topic:cleanTopic,turns:nextTurns},
+      }),
+     }).then(()=>{void refreshRecords()}).catch(()=>{});
+    }
+    stopActive();
+    return;
+   }
    const geminiProxy=getGeminiAutoProxy();
    const r=await fetch('/api/architect-review',{
     method:'POST',
@@ -456,7 +525,7 @@ export default function ArchitectClient({username}:{username:string}){
       {error&&<p className="ai-grade-error" style={{margin:0}}>{error}</p>}
 
       <div className="arch-actions">
-       {username?(
+       {username||useLocal?(
         <button type="button" className="button primary" disabled={busy||!answer.trim()||!topic.trim()} onClick={()=>void runTurn(answer)}>
          <Sparkles size={15}/>
          <span>{L('开始深度点评','Start Review')}</span>
@@ -466,6 +535,11 @@ export default function ArchitectClient({username}:{username:string}){
          <Lock size={15}/>
          <span>{L('登录后开始点评','Sign in to Review')}</span>
         </a>
+       )}
+       {useLocal&&(
+        <span className="jdr-quota-pill local">
+         {L(`本地 · ${LOCAL_PROVIDER_LABEL[localCfg.provider]} · 不消耗站内额度`,`Local · ${LOCAL_PROVIDER_LABEL[localCfg.provider]}`)}
+        </span>
        )}
        {answer.trim()&&(
         <button type="button" className="button secondary" disabled={busy} onClick={()=>{setAnswer('');setError('')}}>
@@ -495,16 +569,20 @@ export default function ArchitectClient({username}:{username:string}){
 
          <div className="ai-card arch-reply-card">
           {turn.status==='running'?(
-           <div className="arch-running">
-            <span className="arch-running-left">
-             <Loader2 size={16} className="ai-spin"/>
-             <span>{L(`深度评审中 · ${elapsed}s`,`Reviewing · ${elapsed}s`)}</span>
-            </span>
-            <button type="button" className="button secondary arch-stop-btn" onClick={stopActive}>
-             <Square size={12} fill="currentColor"/>
-             <span>{L('取消','Stop')}</span>
-            </button>
-           </div>
+           <>
+            <div className="arch-running">
+             <span className="arch-running-left">
+              <Loader2 size={16} className="ai-spin"/>
+              <span>{L(`深度评审中 · ${elapsed}s`,`Reviewing · ${elapsed}s`)}</span>
+             </span>
+             <button type="button" className="button secondary arch-stop-btn" onClick={stopActive}>
+              <Square size={12} fill="currentColor"/>
+              <span>{L('取消','Stop')}</span>
+             </button>
+            </div>
+            {turn.thoughts&&<pre className="arch-thoughts-body" style={{marginTop:10}}>{turn.thoughts}</pre>}
+            {turn.text&&<ReviewMarkdown text={turn.text}/>}
+           </>
           ):turn.status==='error'?(
            <p className="ai-grade-error" style={{margin:0}}>{turn.error}</p>
           ):(

@@ -65,6 +65,6 @@ export function tutorModelBadge(model:string|undefined,lang:'zh'|'en'='zh'):stri
 // think：模型思考过程里新写出的文字（只有开了思考模式的模型才有）。
 export type TutorEvent={t:'start'}|{t:'model';model:string}|{t:'think';text:string}|{t:'delta';text:string}|{t:'reset'}|{t:'done';remaining:number;model?:string}|{t:'error';message:string};
 
-// 每日额度：每发一条消息算一次（动手练习、提示、讲解共用）。
-export const TUTOR_QUOTA={guest:20,user:200} as const;
+// 每日额度：每发一条消息算一次（动手练习、提示、讲解、AI 出题与全站站点 DeepSeek 共用每日 50 次）。
+export const TUTOR_QUOTA={guest:5,user:50} as const;
 export const TUTOR_LIMITS={messages:30,text:4000,lesson:12000} as const;

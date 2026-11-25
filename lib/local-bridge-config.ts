@@ -19,6 +19,8 @@ export type LocalBridgeConfig = {
  model: string;
  allowTutor: boolean;
  allowGrade: boolean;
+ allowDeep: boolean;
+ allowWebSearch: boolean;
 };
 
 export const LOCAL_BRIDGE_KEY = 'local-agent-bridge-v1';
@@ -31,6 +33,8 @@ export const DEFAULT_LOCAL_BRIDGE_CONFIG: LocalBridgeConfig = {
  model: '',
  allowTutor: true,
  allowGrade: true,
+ allowDeep: true,
+ allowWebSearch: false,
 };
 
 const listeners = new Set<() => void>();
@@ -56,6 +60,8 @@ function normalizeConfig(raw: Partial<LocalBridgeConfig> | null | undefined): Lo
   model: typeof raw.model === 'string' ? raw.model.trim() : '',
   allowTutor: raw.allowTutor !== false,
   allowGrade: raw.allowGrade !== false,
+  allowDeep: raw.allowDeep !== false,
+  allowWebSearch: raw.allowWebSearch === true,
  };
 }
 
@@ -120,4 +126,8 @@ export function isLocalTutorReady(cfg: LocalBridgeConfig = getLocalBridgeConfig(
 
 export function isLocalGradeReady(cfg: LocalBridgeConfig = getLocalBridgeConfig()): boolean {
  return Boolean(cfg.enabled && cfg.token.trim() && cfg.allowGrade);
+}
+
+export function isLocalDeepReady(cfg: LocalBridgeConfig = getLocalBridgeConfig()): boolean {
+ return Boolean(cfg.enabled && cfg.token.trim() && cfg.allowDeep);
 }

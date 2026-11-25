@@ -42,7 +42,9 @@ import SiteHeader from '../../components/site-header';
 import AddToNoteButton from '../../components/add-to-note';
 import { useI18n } from '../../components/i18n';
 import { getGeminiAutoProxy } from '../../ai/gemini-proxy-pref';
-import { aiQuizTypes } from '@/content/journey';
+import { isLocalDeepReady, LOCAL_PROVIDER_LABEL, useLocalBridgeConfig } from '@/lib/local-bridge-config';
+import { streamDeepViaBridge } from '@/lib/local-bridge-client';
+import { aiQuizTypes, type AiQuiz } from '@/content/journey';
 import type { AntigravityUsage } from '@/lib/antigravity-agent';
 import {
  countJdStudyQuizzes,
@@ -302,13 +304,20 @@ export default function JdResearchClient({
  username,
  member,
  subjects,
+ dailyLimit,
+ dailyUsed,
 }: {
  username: string;
  member: boolean;
  subjects: SubjectOpt[];
+ dailyLimit?: number | null;
+ dailyUsed?: number;
 }) {
  const { locale } = useI18n();
  const L = (zh: string, en: string) => (locale === 'en' ? en : zh);
+ const [localCfg] = useLocalBridgeConfig();
+ const useLocal = isLocalDeepReady(localCfg);
+ const [usedToday, setUsedToday] = useState(dailyUsed ?? 0);
 
  const [kind, setKind] = useState<JdInputKind>('jd');
  const [source, setSource] = useState('');
@@ -494,6 +503,63 @@ export default function JdResearchClient({
   setResumeTail('');
   setResumeModel('');
   try {
+   if (isLocalDeepReady(localCfg) && report) {
+    const pRes = await fetch('/api/jd-research/local-helper', {
+     method: 'POST',
+     headers: { 'content-type': 'application/json' },
+     body: JSON.stringify({
+      action: 'prompts',
+      task: 'phase-quizzes',
+      kind,
+      source: source || report.roleTitle,
+      stage1: report,
+      phaseIndex: stepIdx,
+     }),
+    });
+    const pData = (await pRes.json()) as { system?: string; user?: string; reusedQuizzes?: AiQuiz[]; error?: string };
+    if (!pRes.ok || !pData.system || !pData.user) {
+     throw new Error(pData.error || L('补题失败，请重试', 'Generation failed'));
+    }
+    const out = await streamDeepViaBridge({
+     cfg: localCfg,
+     system: pData.system,
+     messages: [{ role: 'user', content: pData.user }],
+     jsonMode: true,
+     onDelta: () => {},
+    });
+    const parseRes = await fetch('/api/jd-research/local-helper', {
+     method: 'POST',
+     headers: { 'content-type': 'application/json' },
+     body: JSON.stringify({
+      action: 'parse',
+      task: 'phase-quizzes',
+      rawText: out.text,
+      phaseIndex: stepIdx,
+      reusedQuizzes: pData.reusedQuizzes || [],
+     }),
+    });
+    const parseData = (await parseRes.json()) as { quizzes?: AiQuiz[]; error?: string };
+    if (!parseRes.ok || !parseData.quizzes?.length) {
+     throw new Error(parseData.error || L('补题未返回完整题库，请再试一次', 'Incomplete result — please try again'));
+    }
+    const doneReport: JdResearchReport = {
+     ...report,
+     roadmap: report.roadmap.map((step, idx) => (idx === stepIdx ? { ...step, quizzes: parseData.quizzes } : step)),
+    };
+    fetch('/api/ai-interview-records', {
+     method: 'POST',
+     headers: { 'content-type': 'application/json' },
+     body: JSON.stringify({
+      id: activeId,
+      kind: 'jd-research',
+      patch: true,
+      payload: { report: doneReport },
+     }),
+    }).catch(() => {});
+    setReport(doneReport);
+    void refreshRecords();
+    return;
+   }
    const r = await fetch('/api/jd-research/fill-phase', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -578,6 +644,70 @@ export default function JdResearchClient({
   let accTh = '';
   let accTail = '';
   try {
+   if (isLocalDeepReady(localCfg)) {
+    setResumeModel(`${LOCAL_PROVIDER_LABEL[localCfg.provider]} · ${localCfg.model.trim() || 'default'}`);
+    const pRes = await fetch('/api/jd-research/local-helper', {
+     method: 'POST',
+     headers: { 'content-type': 'application/json' },
+     body: JSON.stringify({
+      action: 'prompts',
+      task: 'resume',
+      kind,
+      source: source || report.roleTitle,
+      report,
+     }),
+     signal: ctl.signal,
+    });
+    const pData = (await pRes.json()) as { system?: string; user?: string; error?: string };
+    if (!pRes.ok || !pData.system || !pData.user) {
+     throw new Error(pData.error || L('生成参考简历失败，请重试', 'Resume generation failed'));
+    }
+    const out = await streamDeepViaBridge({
+     cfg: localCfg,
+     system: pData.system,
+     messages: [{ role: 'user', content: pData.user }],
+     jsonMode: true,
+     onModel: m => setResumeModel(m),
+     onThink: d => {
+      accTh += d;
+      setResumeThoughts(accTh);
+     },
+     onDelta: d => {
+      accTail = (accTail + d).replace(/\s+/g, ' ').slice(-180);
+      setResumeTail(accTail);
+     },
+     signal: ctl.signal,
+    });
+    const parseRes = await fetch('/api/jd-research/local-helper', {
+     method: 'POST',
+     headers: { 'content-type': 'application/json' },
+     body: JSON.stringify({
+      action: 'parse',
+      task: 'resume',
+      rawText: out.text,
+      roleTitle: report.roleTitle,
+     }),
+     signal: ctl.signal,
+    });
+    const parseData = (await parseRes.json()) as { resume?: JdResearchReport['resume']; error?: string };
+    if (!parseRes.ok || !parseData.resume) {
+     throw new Error(parseData.error || L('参考简历生成未完成，请重试', 'Incomplete resume — please retry'));
+    }
+    const doneReport: JdResearchReport = { ...report, resume: parseData.resume };
+    fetch('/api/ai-interview-records', {
+     method: 'POST',
+     headers: { 'content-type': 'application/json' },
+     body: JSON.stringify({
+      id: activeId,
+      kind: 'jd-research',
+      patch: true,
+      payload: { report: doneReport },
+     }),
+    }).catch(() => {});
+    setReport(doneReport);
+    void refreshRecords();
+    return;
+   }
    const r = await fetch('/api/jd-research/resume', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -1658,6 +1788,237 @@ export default function JdResearchClient({
   };
 
   try {
+   if (isLocalDeepReady(localCfg)) {
+    const localLabel = `${LOCAL_PROVIDER_LABEL[localCfg.provider]} · ${localCfg.model.trim() || 'default'}`;
+    setStreamModel(localLabel);
+    setConnState('connected');
+    if (resolvedSrc.length < 15 && (resolvedUrl || resolvedImages.length > 0)) {
+     const exRes = await fetch('/api/jd-research/extract', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+       ...(resolvedUrl ? { url: resolvedUrl } : {}),
+       ...(resolvedImages.length ? { images: resolvedImages } : {}),
+       geminiProxy,
+      }),
+      signal: ctl.signal,
+     });
+     const exData = (await exRes.json()) as { text?: string; error?: string };
+     if (!exRes.ok || !exData.text?.trim()) {
+      throw new Error(exData.error || L('未能提取 JD 内容，请直接粘贴文本', 'Failed to extract JD text'));
+     }
+     resolvedSrc = exData.text.trim();
+     setSource(resolvedSrc);
+     setJdUrl('');
+     setImages([]);
+    }
+    if (resolvedSrc.length < 15) {
+     throw new Error(L('请先输入岗位 JD 或面经内容（至少 15 字）', 'Please enter at least 15 characters'));
+    }
+
+    const callHelper = async <T extends Record<string, unknown>>(payload: Record<string, unknown>): Promise<T> => {
+     const hr = await fetch('/api/jd-research/local-helper', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: ctl.signal,
+     });
+     const hd = (await hr.json()) as T & { error?: string };
+     if (!hr.ok) throw new Error(hd.error || L('本地辅助处理失败', 'Local helper failed'));
+     return hd;
+    };
+
+    const localRecId = curRecordId || 'jdr-' + crypto.randomUUID();
+    curRecordId = localRecId;
+    streamingRecordIdRef.current = localRecId;
+    setActiveId(localRecId);
+
+    // Stage 1 via Local Bridge
+    let runningChars = 0;
+    let finalModel = localLabel;
+    const s1Prompts = await callHelper<{ system: string; user: string }>({
+     action: 'prompts',
+     task: 'stage1',
+     kind,
+     source: resolvedSrc,
+    });
+    const s1Out = await streamDeepViaBridge({
+     cfg: localCfg,
+     system: s1Prompts.system,
+     messages: [{ role: 'user', content: s1Prompts.user }],
+     jsonMode: true,
+     onModel: m => {
+      finalModel = m;
+      setStreamModel(m);
+     },
+     onThink: d => appendThought(d),
+     onDelta: d => {
+      runningChars += d.length;
+      setStreamChars(runningChars);
+      setConnState('streaming');
+      accTail = (accTail + d).replace(/\s+/g, ' ').slice(-220);
+      setStreamTail(accTail);
+     },
+     signal: ctl.signal,
+    });
+    const s1Parsed = await callHelper<{ report: JdResearchReport }>({
+     action: 'parse',
+     task: 'stage1',
+     rawText: s1Out.text,
+    });
+    const s1Report = s1Parsed.report;
+    setPartialReport(s1Report);
+    curTitle = s1Report.roleTitle || curTitle;
+
+    const totalPhases = s1Report.roadmap.length;
+    const phaseQuizLists: (AiQuiz[] | null)[] = Array.from({ length: totalPhases }, () => null);
+    const updateLocalProg = (activeKey: JdStageKey) => {
+     setLiveProgress({
+      stage: 2,
+      activeKey,
+      roleTitle: s1Report.roleTitle,
+      inferredLevel: s1Report.inferredLevel,
+      prepDays: s1Report.prepDays,
+      companyStyle: s1Report.companyStyle,
+      dimCount: s1Report.dimensions.length,
+      stageCount: totalPhases,
+      quizCount: phaseQuizLists.reduce((n, list) => n + (list?.length ?? 0), 0),
+      questionCount: 0,
+      qTitles: [],
+     });
+    };
+    updateLocalProg('quizzes');
+
+    // Stage 2A: per-phase study quizzes sequentially on local client
+    for (let pi = 0; pi < totalPhases; pi++) {
+     if (ctl.signal.aborted) return;
+     const step = s1Report.roadmap[pi];
+     accTail = '';
+     setStreamTail('');
+     appendThought(`\n\n── 路径 ${pi + 1}/${totalPhases}：${step.phase} · ${step.title} ──\n`);
+     try {
+      const pzPrompts = await callHelper<{ system: string; user: string; reusedQuizzes?: AiQuiz[] }>({
+       action: 'prompts',
+       task: 'phase-quizzes',
+       kind,
+       source: resolvedSrc,
+       stage1: s1Report,
+       phaseIndex: pi,
+      });
+      const pzOut = await streamDeepViaBridge({
+       cfg: localCfg,
+       system: pzPrompts.system,
+       messages: [{ role: 'user', content: pzPrompts.user }],
+       jsonMode: true,
+       onModel: m => {
+        finalModel = m;
+        setStreamModel(m);
+       },
+       onThink: d => appendThought(d),
+       onDelta: d => {
+        runningChars += d.length;
+        setStreamChars(runningChars);
+        accTail = (accTail + d).replace(/\s+/g, ' ').slice(-220);
+        setStreamTail(accTail);
+       },
+       signal: ctl.signal,
+      });
+      const pzParsed = await callHelper<{ quizzes: AiQuiz[] }>({
+       action: 'parse',
+       task: 'phase-quizzes',
+       rawText: pzOut.text,
+       phaseIndex: pi,
+       reusedQuizzes: pzPrompts.reusedQuizzes || [],
+      });
+      phaseQuizLists[pi] = pzParsed.quizzes;
+      appendThought(L(`✓ 完成 ${pzParsed.quizzes.length} 题\n`, `✓ ${pzParsed.quizzes.length} quizzes\n`));
+      updateLocalProg('quizzes');
+     } catch (e) {
+      if (ctl.signal.aborted) throw e;
+      appendThought(L(`! 路径 ${pi + 1} 跳过，可稍后点击「AI 补题」\n`, `! Phase ${pi + 1} skipped\n`));
+     }
+    }
+
+    // Stage 2B: interview questions
+    updateLocalProg('questions');
+    accTail = '';
+    setStreamTail('');
+    appendThought(L('\n\n── 生成高频面试专题题库 ──\n', '\n\n── Generating interview questions ──\n'));
+    let questionsRawText = '';
+    try {
+     const qPrompts = await callHelper<{ system: string; user: string }>({
+      action: 'prompts',
+      task: 'questions',
+      kind,
+      source: resolvedSrc,
+      stage1: s1Report,
+     });
+     const qOut = await streamDeepViaBridge({
+      cfg: localCfg,
+      system: qPrompts.system,
+      messages: [{ role: 'user', content: qPrompts.user }],
+      jsonMode: true,
+      onModel: m => {
+       finalModel = m;
+       setStreamModel(m);
+      },
+      onThink: d => appendThought(d),
+      onDelta: d => {
+       runningChars += d.length;
+       setStreamChars(runningChars);
+       accTail = (accTail + d).replace(/\s+/g, ' ').slice(-220);
+       setStreamTail(accTail);
+      },
+      signal: ctl.signal,
+     });
+     questionsRawText = qOut.text;
+    } catch (e) {
+     if (ctl.signal.aborted) throw e;
+    }
+
+    const merged = await callHelper<{ report: JdResearchReport }>({
+     action: 'parse',
+     task: 'merge-stage2',
+     stage1: s1Report,
+     phaseQuizLists,
+     questionsRawText,
+    });
+    const finalReport = merged.report;
+    const durationMs = Math.max(1000, Date.now() - t0);
+    const subtitle = [finalReport.inferredLevel, finalReport.prepDays].filter(Boolean).join(' · ') || L('本地客户端调研', 'Local Client');
+
+    await fetch('/api/ai-interview-records', {
+     method: 'POST',
+     headers: { 'content-type': 'application/json' },
+     body: JSON.stringify({
+      id: localRecId,
+      kind: 'jd-research',
+      title: finalReport.roleTitle || curTitle,
+      subtitle,
+      status: 'completed',
+      payload: {
+       kind,
+       source: resolvedSrc,
+       pipeline: 'local-bridge',
+       startedAt: t0,
+       durationMs,
+       model: finalModel,
+       report: finalReport,
+       thoughts: accThoughts,
+      },
+     }),
+    }).catch(() => {});
+
+    streamingRecordIdRef.current = '';
+    applyReportView(localRecId, finalReport, '', accThoughts, finalModel, null, resolvedSrc, {
+     durationMs,
+     kind,
+    });
+    void refreshRecords();
+    stopActive();
+    return;
+   }
+
    // ---- Step 1: Stage 1 (Competency Profile + Roadmap) ----
    let immediateDoneData: Record<string, unknown> | null = null;
    const s1Ok = await runAntigravityStep({
@@ -2054,6 +2415,7 @@ export default function JdResearchClient({
    if (doneId) removeJdBgTask(doneId);
    const finalThoughts = finalRes.thoughts || accThoughts;
    if (!bgModeRef.current) {
+    if (!finalRes.cached) setUsedToday(u => u + 1);
     applyReportView(
      doneId,
      finalRes.report ?? null,
@@ -2526,6 +2888,22 @@ export default function JdResearchClient({
           <span>{L('登录后开始调研', 'Sign in to Research')}</span>
          </a>
         )}
+        {useLocal ? (
+         <span className="jdr-quota-pill local">
+          {L(`本地 · ${LOCAL_PROVIDER_LABEL[localCfg.provider]} · 不消耗站内额度`, `Local · ${LOCAL_PROVIDER_LABEL[localCfg.provider]}`)}
+         </span>
+        ) : member ? (
+         dailyLimit === null ? (
+          <span className="jdr-quota-pill">{L('站内额度：不限', 'Quota: Unlimited')}</span>
+         ) : (
+          <span className={'jdr-quota-pill' + (Math.max(0, (dailyLimit ?? 1) - usedToday) === 0 ? ' empty' : '')}>
+           {L(
+            `今日剩余 ${Math.max(0, (dailyLimit ?? 1) - usedToday)}/${dailyLimit ?? 1} 次`,
+            `${Math.max(0, (dailyLimit ?? 1) - usedToday)}/${dailyLimit ?? 1} left today`,
+           )}
+          </span>
+         )
+        ) : null}
         {(source.trim() || jdUrl.trim() || images.length > 0) && (
          <button
           type="button"

@@ -1,4 +1,5 @@
 import {sessionUser,assertSameOrigin,AuthError} from '@/lib/site-auth';
+import {consumeSiteAiQuota,getSiteAiRemaining} from '@/lib/site-ai-quota';
 import {studyDb,dayNow} from '@/db/study';
 import {getUserAiSettings,prepareCustomAi} from '@/db/ai-config';
 import {gradeStream,standardAnswerStream} from '@/lib/gemini';
@@ -29,7 +30,10 @@ export async function GET(req:Request){const user=await sessionUser(req.headers)
    return Response.json({remaining:rem,limit:s.dailyLimit||999,custom:true,isGuest:false,provider:s.provider,model:s.model});
   }
  }
- const limit=limitOf(user.is_guest);return Response.json({remaining:Math.max(0,limit-await used(user.id)),limit,custom:false,isGuest:Boolean(user.is_guest)})}
+ const limit=limitOf(user.is_guest);
+ const [bucketUsed,siteRem]=await Promise.all([used(user.id),getSiteAiRemaining(req,user,'deepseek')]);
+ const remaining=siteRem.limit===999?999:Math.min(Math.max(0,limit-bucketUsed),siteRem.remaining);
+ return Response.json({remaining,limit:siteRem.limit===999?999:limit,custom:false,isGuest:Boolean(user.is_guest)})}
 
 // 一次请求评一道题或一整份试卷的主观题，计一次额度；评分失败时退回这次额度。
 // 扣完额度后改为流式返回（NDJSON，见 GradeEvent）：模型写出的文字实时转发给页面，最后一行是校正过分数的结果。
@@ -43,22 +47,23 @@ export async function POST(req:Request){try{assertSameOrigin(req);const user=awa
  if(user.is_guest&&gradeModel==='gemini')return fail('auth','游客不支持调用 Gemini 模型，请登录后使用或切换 DeepSeek。',403);
  const items=list.map(parseItem);if(items.some(x=>!x))return fail('invalid','请求内容无效。');
 
- const streamResponse=(remaining:number,onRefund:()=>Promise<unknown>,errMsg:string,customCfg?:RuntimeAiConfig)=>{
+ const streamResponse=(remaining:number,onRefund:()=>Promise<unknown>,errMsg:string,customCfg?:RuntimeAiConfig,allowGeminiOverride?:boolean)=>{
   const enc=new TextEncoder();
   let closed=false,wrote=false;
   const ctl=new AbortController();
   const abort=()=>{closed=true;ctl.abort()};
   req.signal?.addEventListener('abort',abort,{once:true});
+  const canGemini=allowGeminiOverride??(!user.is_guest);
   const out=new ReadableStream<Uint8Array>({
    async start(c){
     const send=(e:GradeEvent)=>{if(closed)return;try{c.enqueue(enc.encode(JSON.stringify(e)+'\n'))}catch{abort()}};
     send({t:'start'});
     try{
      if(mode==='standard'){
-      const {text,model}=await standardAnswerStream(items[0]!,text=>{wrote=true;send({t:'delta',text})},()=>{wrote=false;send({t:'reset'})},customCfg,gradeModel,text=>{wrote=true;send({t:'think',text})},geminiProxy,ctl.signal,thinkingLevel,!user.is_guest);
+      const {text,model}=await standardAnswerStream(items[0]!,text=>{wrote=true;send({t:'delta',text})},()=>{wrote=false;send({t:'reset'})},customCfg,gradeModel,text=>{wrote=true;send({t:'think',text})},geminiProxy,ctl.signal,thinkingLevel,canGemini);
       send({t:'done',results:[],text,model,remaining});
      }else{
-      const {results,model}=await gradeStream(items as GradeItem[],text=>{wrote=true;send({t:'delta',text})},()=>{wrote=false;send({t:'reset'})},customCfg,gradeModel,text=>{wrote=true;send({t:'think',text})},geminiProxy,ctl.signal,thinkingLevel,!user.is_guest);
+      const {results,model}=await gradeStream(items as GradeItem[],text=>{wrote=true;send({t:'delta',text})},()=>{wrote=false;send({t:'reset'})},customCfg,gradeModel,text=>{wrote=true;send({t:'think',text})},geminiProxy,ctl.signal,thinkingLevel,canGemini);
       send({t:'done',results,model,remaining});
      }
     }catch(e){
@@ -88,9 +93,38 @@ export async function POST(req:Request){try{assertSameOrigin(req);const user=awa
   }
  }
 
+ let allowGemini=!user.is_guest;
+ const refunds:Array<()=>Promise<unknown>>=[];
+ let effectiveSiteRemaining=999;
+ let isUnlimitedAdmin=false;
+ if(gradeModel==='gemini'){
+  const gmQ=await consumeSiteAiQuota(req,user,'gemini');
+  if(!gmQ.ok)return fail(gmQ.error,gmQ.message,gmQ.status,{remaining:0});
+  refunds.push(gmQ.refund);
+  effectiveSiteRemaining=gmQ.remaining;
+  isUnlimitedAdmin=gmQ.limit===999;
+ }else{
+  const dsQ=await consumeSiteAiQuota(req,user,'deepseek');
+  if(!dsQ.ok)return fail(dsQ.error,dsQ.message,dsQ.status,{remaining:0});
+  refunds.push(dsQ.refund);
+  effectiveSiteRemaining=dsQ.remaining;
+  isUnlimitedAdmin=dsQ.limit===999;
+  if(gradeModel==='auto'&&allowGemini){
+   const gmQ=await consumeSiteAiQuota(req,user,'gemini');
+   if(gmQ.ok){refunds.push(gmQ.refund)}
+   else{allowGemini=false}
+  }
+ }
+ const refundAll=async()=>{await Promise.all(refunds.map(fn=>fn().catch(()=>{})))};
+ if(isUnlimitedAdmin){
+  return streamResponse(999,refundAll,mode==='standard'?'AI 规范回答暂时不可用，这次没有扣次数，请稍后再试。':'AI 评分暂时不可用，这次没有扣次数。可以稍后再试，或先对照得分点自评。',undefined,allowGemini);
+ }
  const db=studyDb(),day=dayNow(),limit=limitOf(user.is_guest);
  const row=await db.prepare('INSERT INTO ai_grade_quota(user_id,day,count) VALUES(?,?,1) ON CONFLICT(user_id,day) DO UPDATE SET count=count+1 WHERE count<? RETURNING count').bind(user.id,day,limit).first<{count:number}>();
- if(!row)return fail('quota',user.is_guest?`游客每天可以用 ${limit} 次 AI 评分/规范回答，今天的次数已用完。登录后每天有 ${GRADE_QUOTA.user} 次，还可配置自己的专属 API，或先对照得分点自评。`: `今天的 ${limit} 次站点默认 AI 评分/规范回答已用完，明天再来、在「AI 设置」中绑定自己的 API Key，或先对照得分点自评。`.trim(),429,{remaining:0});
- const refund=()=>db.prepare('UPDATE ai_grade_quota SET count=MAX(count-1,0) WHERE user_id=? AND day=?').bind(user.id,day).run();
- return streamResponse(Math.max(0,limit-row.count),refund,mode==='standard'?'AI 规范回答暂时不可用，这次没有扣次数，请稍后再试。':'AI 评分暂时不可用，这次没有扣次数。可以稍后再试，或先对照得分点自评。')}
+ if(!row){
+  await refundAll();
+  return fail('quota',user.is_guest?`游客每天可以用 ${limit} 次 AI 评分/规范回答，今天的次数已用完。登录后每天有 ${GRADE_QUOTA.user} 次，还可接入本地客户端或配置专属 API。`: `今天的 ${limit} 次站点默认 AI 评分/规范回答已用完，明天再来、在「AI 设置」接入本地客户端或绑定专属 API Key，或先对照得分点自评。`.trim(),429,{remaining:0});
+ }
+ refunds.push(()=>db.prepare('UPDATE ai_grade_quota SET count=MAX(count-1,0) WHERE user_id=? AND day=?').bind(user.id,day).run());
+ return streamResponse(Math.min(Math.max(0,limit-row.count),effectiveSiteRemaining),refundAll,mode==='standard'?'AI 规范回答暂时不可用，这次没有扣次数，请稍后再试。':'AI 评分暂时不可用，这次没有扣次数。可以稍后再试，或先对照得分点自评。',undefined,allowGemini)}
  catch(e){if(e instanceof AuthError)return fail('auth',e.message,e.status);return fail('failed','AI 评分暂时不可用。',500)}}

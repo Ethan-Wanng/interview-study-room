@@ -193,7 +193,26 @@ export function LocalBridgeSection({L,hideGuideBtn}:{L:(zh:string,en:string)=>st
      <input type="checkbox" checked={localCfg.allowGrade} onChange={e=>updateLocal({allowGrade:e.target.checked})}/>
      <span>{L('AI 评分','AI Grading')}</span>
     </label>
+    <label>
+     <input type="checkbox" checked={localCfg.allowDeep} onChange={e=>updateLocal({allowDeep:e.target.checked})}/>
+     <span>{L('JD 调研 / 深度面试','JD Research / Deep Interview')}</span>
+    </label>
+    <label>
+     <input type="checkbox" checked={localCfg.allowWebSearch} onChange={e=>updateLocal({allowWebSearch:e.target.checked})}/>
+     <span>{L('允许联网搜索','Allow web search')}</span>
+    </label>
    </div>
+
+   {activeProvider?.quota&&(activeProvider.quota.windows.length>0||activeProvider.quota.planType)?(
+    <div className="ai-cfg-quota">
+     {activeProvider.quota.planType&&<span className="ai-cfg-quota-plan">{activeProvider.quota.planType}</span>}
+     {activeProvider.quota.windows.map(w=>(
+      <span key={w.label} className="ai-cfg-quota-item">
+       {w.label} {L(`剩余 ${Math.max(0,100-w.usedPercent)}%`,`${Math.max(0,100-w.usedPercent)}% left`)}
+      </span>
+     ))}
+    </div>
+   ):null}
 
    <div className="ai-cfg-actions">
     <button type="button" className="button primary" disabled={probing} onClick={()=>void runProbe(false,localCfg.provider,true)}>

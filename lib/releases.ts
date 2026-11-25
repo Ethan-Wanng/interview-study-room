@@ -10,6 +10,12 @@ export function groupReleasesByDay(releases:Release[]):ReleaseDay[]{
 }
 
 export const RELEASES:Release[]=[
+ {version:'2026.11.25-5',date:'2026-11-25',title:'本地客户端全面接入 JD 调研与深度面试、新增额度展示并修复 Codex 思考流',changes:[
+  '高阶模拟面试 / 系统设计深度点评（/interview/architect）、JD / 面经深度调研（/interview/jd-research）、参考简历生成、单阶段补题与简历项目深挖预判（/interview/project-drill）全面支持本地客户端直连，命中时零消耗站内额度并实时流式输出',
+  '新增站内每日调研剩余额度展示与 Codex 本地客户端账号额度（5h / 7d 剩余百分比）读取展示，「本地客户端」面板新增「JD 调研 / 深度面试」与「允许联网搜索」（默认关闭，仅放行只读搜索）开关',
+  '全站上线统一站点 AI 防刷配额保护：普通登录用户站点 DeepSeek 共享限额收紧至每日 50 次、站点 Gemini 每日 15 次，游客限每日 5 次且叠加同 IP 每日上限并禁用代码操场补全与 Gemini，本地客户端与专属 API Key 均不消耗站内额度',
+  '本地客户端连接教程与 AI 老师提示词均已补全 Antigravity（agy）、Codex 与 WorkBuddy 官方 CLI 安装和排障指导',
+ ]},
  {version:'2026.11.25-4',date:'2026-11-25',title:'本地客户端桥接工具发布至 npm（interview-study-bridge）并上线连接教程',changes:[
   '官方本地桥接 CLI 包正式发布至 npm（interview-study-bridge），「复制启动命令」更新为 npx -y interview-study-bridge 一键启动',
   '「本地客户端」设置面板新增「连接教程」弹窗，提供 Antigravity / Codex / WorkBuddy 登录指令一键复制、启动参数说明与常见排障',

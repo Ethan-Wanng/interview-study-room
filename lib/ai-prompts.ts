@@ -283,12 +283,53 @@ function contextText(c: TutorContext): string {
  );
 }
 
+const LOCAL_BRIDGE_TOPIC_RE = /\bagy\b|antigravity|\bcodex\b|workbuddy|codebuddy|interview-study-bridge|interview-bridge|本地客户端|本地桥接|桥接|配对码|43180/i;
+
+const LOCAL_BRIDGE_GUIDE_KNOWLEDGE = `【本站「本地客户端桥接」权威安装与连接手册（仅当用户询问相关安装、登录、连接、报错或桥接使用时参考）】
+1. 简介：本站支持通过本地回环桥接工具 \`interview-study-bridge\`（端口默认 43180）直连用户本机已登录的官方 CLI，零消耗站内 AI 额度，覆盖 AI 问答、AI 评分、JD 调研、参考简历、项目深挖与高阶架构面试。不会退出桌面端账号，运行在只读空临时目录并自动拒绝任何本地文件写入与命令执行。教程与配对页：[本地客户端连接教程](/ai/local-bridge)。
+2. 安装与登录各官方 CLI（任选其一，装完可重启终端后验证版本）：
+   - **Google Antigravity（命令：\`agy\`）**：
+     - Windows（PowerShell）：\`irm https://antigravity.google/cli/install.ps1 | iex\`
+     - Windows（CMD，若 PowerShell 下载断流推荐用此方式）：\`curl -fsSL https://antigravity.google/cli/install.cmd -o install.cmd && install.cmd && del install.cmd\`
+     - macOS / Linux：\`curl -fsSL https://antigravity.google/cli/install.sh | bash\`
+     - 验证与登录：\`agy --version\`；登录执行 \`agy acp --login\`
+   - **OpenAI Codex（命令：\`codex\`）**：
+     - 全平台 npm（需 Node.js >= 20）：\`npm i -g @openai/codex\`
+     - macOS Homebrew：\`brew install --cask codex\`
+     - 验证与登录：\`codex --version\`；登录执行 \`codex login\`
+   - **WorkBuddy / CodeBuddy（命令：\`codebuddy\`）**：
+     - 全平台 npm：\`npm i -g @tencent-ai/codebuddy-code\`
+     - 登录执行：\`codebuddy login\`
+3. 启动本机桥接服务（需 Node.js >= 20，保持终端窗口开启）：
+   - 命令：\`npx -y interview-study-bridge\`
+   - 终端会输出监听地址 \`http://127.0.0.1:43180\` 与配对码 \`brg_...\`（保存在 \`~/.interview-study-bridge/config.json\`，下次启动不变）。
+   - 常用参数：\`--port 43180\`（换端口）、\`--print-token\`（查看配对码）、\`--reset-token\`（重置配对码）。
+4. 网页配对连接步骤：
+   - 打开 [本地客户端连接教程](/ai/local-bridge) 或「AI 问答 → 右上角设置 → 本地客户端」；
+   - 选择已安装的客户端、端口填 \`43180\`、粘贴完整 \`brg_...\` 配对码，点击「连接并保存」；
+   - 浏览器首次弹出「本地网络设备访问权限」时点「允许」；右上角变绿显示「已连接」并勾选「启用本地客户端」即可。
+5. 常见排障：
+   - PowerShell 安装 \`agy\` 提示 EOF / 下载失败：改用 CMD 的 \`curl\` 安装方式或开启代理后重试；安装后若提示找不到 \`agy\`，重开终端或把 \`%LOCALAPPDATA%\\agy\\bin\` 加入系统 PATH。
+   - 提示「未连接」：确认运行 \`npx -y interview-study-bridge\` 的终端未关闭、端口一致，且浏览器已允许本地网络访问权限。
+   - 提示「未登录 / 未安装」：先在终端跑对应客户端的安装与登录命令，再回网页点「刷新」。`;
+
+function needsLocalBridgeKnowledge(context: TutorContext, messages: TutorMessage[]): boolean {
+ if (context.kind === 'site' && /local-bridge|本地客户端/i.test(context.page || '')) return true;
+ return messages.some(m => LOCAL_BRIDGE_TOPIC_RE.test(m.text || ''));
+}
+
 export function buildTutorPrompts(
  context: TutorContext,
  messages: TutorMessage[],
  foundLinks = '',
 ): { system: string; messages: PromptChatMessage[] } {
- const system = (context.kind === 'support' ? '' : TUTOR_BASE + '\n\n') + MODE_RULE[context.kind] + '\n\n' + contextText(context);
+ const extraBridge = needsLocalBridgeKnowledge(context, messages) ? '\n\n' + LOCAL_BRIDGE_GUIDE_KNOWLEDGE : '';
+ const system =
+  (context.kind === 'support' ? '' : TUTOR_BASE + '\n\n') +
+  MODE_RULE[context.kind] +
+  '\n\n' +
+  contextText(context) +
+  extraBridge;
  const chatMsgs: PromptChatMessage[] = messages.map((m, idx) => ({
   role: m.role === 'model' ? 'assistant' : 'user',
   content: foundLinks && idx === messages.length - 1 && m.role === 'user' ? `${m.text}\n\n${LINK_RULE}\n${foundLinks}` : m.text,

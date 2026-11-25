@@ -21,6 +21,17 @@ export type LocalModelOption = {
  thinkingLevels?: string[];
 };
 
+export type LocalQuotaWindow = {
+ label: string;
+ usedPercent: number;
+ resetsAt?: number;
+};
+
+export type LocalProviderQuota = {
+ planType?: string;
+ windows: LocalQuotaWindow[];
+};
+
 export type LocalProviderInfo = {
  id: LocalBridgeProvider;
  name: string;
@@ -29,6 +40,7 @@ export type LocalProviderInfo = {
  version?: string;
  defaultModel?: string;
  models: LocalModelOption[];
+ quota?: LocalProviderQuota;
  loginHint?: string;
  errorMessage?: string;
 };
@@ -197,6 +209,7 @@ async function streamBridgeNdjson(opts: {
     messages: opts.messages,
     ...(opts.thinkingLevel ? { thinkingLevel: opts.thinkingLevel } : {}),
     jsonMode: Boolean(opts.jsonMode),
+    allowWebSearch: Boolean(cfg.allowWebSearch),
    }),
    signal: opts.signal,
   });
@@ -381,4 +394,22 @@ export async function streamStandardViaBridge(opts: {
   throw new Error('本地客户端未返回规范回答，请重试。');
  }
  return { ...out, text: clean };
+}
+
+export async function streamDeepViaBridge(opts: {
+ cfg: LocalBridgeConfig;
+ system: string;
+ messages: PromptChatMessage[];
+ thinkingLevel?: ThinkingLevel;
+ jsonMode?: boolean;
+ onModel?: (model: string) => void;
+ onThink?: (delta: string) => void;
+ onDelta: (delta: string) => void;
+ signal?: AbortSignal;
+}): Promise<{ text: string; think: string; model: string }> {
+ const out = await streamBridgeNdjson(opts);
+ if (!out.text.trim()) {
+  throw new Error('本地客户端未返回内容，请检查客户端登录状态后重试。');
+ }
+ return out;
 }

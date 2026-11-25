@@ -1,4 +1,5 @@
 import { AuthError, assertSameOrigin, rateLimit, sessionUser } from '@/lib/site-auth';
+import { consumeSiteAiQuota } from '@/lib/site-ai-quota';
 import { getAiInterviewRecord, saveAiInterviewRecord } from '@/lib/ai-interview-records';
 import { readPromptCache, sha256Hex, writePromptCache } from '@/lib/prompt-cache';
 import {
@@ -149,6 +150,11 @@ export async function POST(req: Request) {
      }
 
      if (!resume) {
+      const siteQ = await consumeSiteAiQuota(req, user, 'gemini');
+      if (!siteQ.ok) {
+       send({ type: 'error', error: siteQ.message });
+       return;
+      }
       const systemPrompt = getJdResumeSystemPrompt();
       const userInput = buildJdResumeInput({ kind, source, report });
       const validate = (txt: string) => Boolean(parseJdReferenceResume(txt, report.roleTitle));

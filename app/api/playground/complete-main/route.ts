@@ -1,4 +1,5 @@
 import {assertSameOrigin,AuthError,rateLimit,sessionUser} from '@/lib/site-auth';
+import {consumeSiteAiQuota} from '@/lib/site-ai-quota';
 import {prepareCustomAi} from '@/db/ai-config';
 import {completePlaygroundCode} from '@/lib/gemini';
 import type {RuntimeAiConfig} from '@/lib/ai-config';
@@ -14,8 +15,9 @@ export async function POST(req:Request){
   assertSameOrigin(req);
   const user=await sessionUser(req.headers);
   if(!user)return fail('请先登录后再使用 AI 自动补全。',401);
+  if(user.is_guest)return fail('游客暂不支持代码操场 AI 自动补全，请登录正式账号后使用。',403);
   try{
-   await rateLimit(`pg-ai-main:${user.id}`,60);
+   await rateLimit(`pg-ai-main:${user.id}`,30);
   }catch(e){
    if(e instanceof AuthError)return fail(e.message,e.status);
   }
@@ -37,12 +39,25 @@ export async function POST(req:Request){
 
   let customCfg:RuntimeAiConfig|undefined;
   let refund:(()=>Promise<unknown>)|undefined;
+  let allowGemini=!user.is_guest;
   if(!user.is_guest){
    const custom=await prepareCustomAi(user.id,'tutor');
+   if(custom.mode==='blocked')return fail(custom.message,429);
    if(custom.mode==='custom'){
     customCfg=custom.config;
     refund=()=>custom.refund();
    }
+  }
+  if(!customCfg){
+   const dsQ=await consumeSiteAiQuota(req,user,'deepseek');
+   if(!dsQ.ok)return fail(dsQ.message,dsQ.status);
+   const rList=[dsQ.refund];
+   if(allowGemini){
+    const gmQ=await consumeSiteAiQuota(req,user,'gemini');
+    if(gmQ.ok)rList.push(gmQ.refund);
+    else allowGemini=false;
+   }
+   refund=async()=>{await Promise.all(rList.map(fn=>fn().catch(()=>{})))};
   }
 
   try{
@@ -55,7 +70,7 @@ export async function POST(req:Request){
     questionId,
     custom:customCfg,
     geminiProxy,
-    allowGemini:!user.is_guest,
+    allowGemini,
    });
    return Response.json({ok:true,code:completed},{headers:noCache});
   }catch(e){

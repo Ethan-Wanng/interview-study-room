@@ -2,6 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {studyDb,dayNow} from '@/db/study';
 import {catalog} from '@/db/catalog';
 import {sessionUser,assertSameOrigin,AuthError} from '@/lib/site-auth';
+import {consumeSiteAiQuota} from '@/lib/site-ai-quota';
 import {prepareCustomAi} from '@/db/ai-config';
 import {generateQuestions} from '@/lib/gemini';
 import {TUTOR_QUOTA} from '@/lib/tutor-types';
@@ -45,17 +46,24 @@ export async function POST(req:Request){try{assertSameOrigin(req);const u=await 
  if(p.action==='delete'){const id=typeof p.id==='string'?p.id:'';
   await db.batch([db.prepare('DELETE FROM user_questions WHERE id=? AND user_id=?').bind(id,u.id),db.prepare('DELETE FROM progress WHERE user_id=? AND question_id=?').bind(u.id,id),db.prepare('DELETE FROM activity WHERE user_id=? AND question_id=?').bind(u.id,id)]);
   return Response.json({items:await list(u.id)},{headers})}
- if(p.action==='generate')return await generate(u.id,p);
+ if(p.action==='generate')return await generate(req,u,p);
  throw new AuthError('操作无效。')}catch(e){return fail(e)}}
 
-// AI 出题：根据粘贴的面经、岗位要求或知识点生成题目和参考答案，只返回给页面预览，用户确认后再走 import 保存。算一次 AI 老师额度。
-async function generate(user:string,p:Record<string,unknown>){
+// AI 出题：根据粘贴的面经、岗位要求或知识点生成题目和参考答案，只返回给页面预览，用户确认后再走 import 保存。算一次站点 DeepSeek 额度。
+async function generate(req:Request,u:{id:string;is_guest:number},p:Record<string,unknown>){
+ const user=u.id;
  const source=typeof p.source==='string'?p.source.trim():'',want=Math.min(MY_LIMITS.generate,Math.max(1,Number(p.count)||8));
  if(source.length<10||source.length>MY_LIMITS.source)throw new AuthError(`请粘贴 10～${MY_LIMITS.source} 字的面经、岗位要求或知识点。`);
  const custom=await prepareCustomAi(user,'tutor');if(custom.mode==='blocked')throw new AuthError(custom.message,429);
  if(custom.mode==='custom'){try{return Response.json({drafts:await generateQuestions(source,want,custom.config)},{headers})}catch{await custom.refund().catch(()=>{});throw new AuthError('专属 API 调用失败，请检查「AI 设置」（本次未计入次数）。',502)}}
+ const siteQ=await consumeSiteAiQuota(req,u,'deepseek');
+ if(!siteQ.ok)throw new AuthError(siteQ.message,siteQ.status);
  const db=studyDb(),day=dayNow(),limit=TUTOR_QUOTA.user;
- const row=await db.prepare('INSERT INTO ai_tutor_quota(user_id,day,count) VALUES(?,?,1) ON CONFLICT(user_id,day) DO UPDATE SET count=count+1 WHERE count<? RETURNING count').bind(user,day,limit).first();
- if(!row)throw new AuthError(`今天的 ${limit} 次 AI 次数已用完，明天再来，或在「AI 设置」里配置自己的 API Key。`,429);
+ let usedBucket=false;
+ if(siteQ.limit!==999){
+  const row=await db.prepare('INSERT INTO ai_tutor_quota(user_id,day,count) VALUES(?,?,1) ON CONFLICT(user_id,day) DO UPDATE SET count=count+1 WHERE count<? RETURNING count').bind(user,day,limit).first();
+  if(!row){await siteQ.refund();throw new AuthError(`今天的 ${limit} 次 AI 次数已用完，明天再来，或在「AI 设置」接入本地客户端 / 配置自己的 API Key。`,429)}
+  usedBucket=true;
+ }
  try{return Response.json({drafts:await generateQuestions(source,want)},{headers})}
- catch{await db.prepare('UPDATE ai_tutor_quota SET count=MAX(count-1,0) WHERE user_id=? AND day=?').bind(user,day).run().catch(()=>{});throw new AuthError('AI 暂时连不上，这次没有扣次数，请稍后再试。',502)}}
+ catch{await Promise.all([siteQ.refund(),usedBucket?db.prepare('UPDATE ai_tutor_quota SET count=MAX(count-1,0) WHERE user_id=? AND day=?').bind(user,day).run().catch(()=>{}):Promise.resolve()]);throw new AuthError('AI 暂时连不上，这次没有扣次数，请稍后再试。',502)}}
