@@ -10,6 +10,11 @@ export function groupReleasesByDay(releases:Release[]):ReleaseDay[]{
 }
 
 export const RELEASES:Release[]=[
+ {version:'2026.11.25-4',date:'2026-11-25',title:'本地客户端桥接工具发布至 npm（interview-study-bridge）并上线连接教程',changes:[
+  '官方本地桥接 CLI 包正式发布至 npm（interview-study-bridge），「复制启动命令」更新为 npx -y interview-study-bridge 一键启动',
+  '「本地客户端」设置面板新增「连接教程」弹窗，提供 Antigravity / Codex / WorkBuddy 登录指令一键复制、启动参数说明与常见排障',
+  '新增独立连接教程与在线配对页（/ai/local-bridge），支持对照步骤在同一页面直接完成本机配对连接与模型探测',
+ ]},
  {version:'2026.11.25-3',date:'2026-11-25',title:'新增本地客户端桥接模式（支持直连本机 Antigravity / Codex / WorkBuddy）',changes:[
   '新增 AI 提示词同构拆分（lib/ai-prompts.ts）与只读站内推荐链接检索接口（POST /api/tutor/links），零扣额、不调用云端大模型即可为本地直连模式补全站内知识点跳转',
   '在 AI 设置中新增「本地客户端桥接」配置面板（游客与登录用户均可用，地址与令牌仅保存在浏览器本地 localStorage，永不上传云端），支持通过本机桥接直连 Antigravity / Codex / WorkBuddy 官方协议并动态探测可用模型与思考强度',

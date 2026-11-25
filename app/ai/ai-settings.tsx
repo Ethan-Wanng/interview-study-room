@@ -39,33 +39,16 @@ import {useI18n} from '../components/i18n';
 import {AI_CONFIG_EVENT,AI_PROVIDERS,DEFAULT_USER_AI_SETTINGS,notifyAiConfigChanged,providerMeta,type AiProviderId,type UserAiSettings} from '@/lib/ai-config';
 import {LOCAL_BRIDGE_PROVIDERS,LOCAL_PROVIDER_LABEL,useLocalBridgeConfig,type LocalBridgeProvider} from '@/lib/local-bridge-config';
 import {pingBridge,probeBridgeProviders,refreshBridgeProvider,type LocalProviderInfo,type ProbeProvidersOutcome} from '@/lib/local-bridge-client';
+import {BRIDGE_LAUNCH_CMD,copyTextToClipboard,LocalBridgeGuideModal} from './local-bridge-guide';
 
-function copyLocalCommand(cmd:string):Promise<boolean>{
- try{
-  if(navigator.clipboard?.writeText)return navigator.clipboard.writeText(cmd).then(()=>true,()=>false);
- }catch{}
- try{
-  const ta=document.createElement('textarea');
-  ta.value=cmd;
-  ta.style.position='fixed';
-  ta.style.opacity='0';
-  document.body.appendChild(ta);
-  ta.select();
-  const ok=document.execCommand('copy');
-  document.body.removeChild(ta);
-  return Promise.resolve(ok);
- }catch{
-  return Promise.resolve(false);
- }
-}
-
-function LocalBridgeSection({L}:{L:(zh:string,en:string)=>string}){
+export function LocalBridgeSection({L,hideGuideBtn}:{L:(zh:string,en:string)=>string;hideGuideBtn?:boolean}){
  const [localCfg,updateLocal]=useLocalBridgeConfig();
  const [providers,setProviders]=useState<LocalProviderInfo[]>([]);
  const [probing,setProbing]=useState(false);
  const [probeState,setProbeState]=useState<'idle'|'ready'|'warn'|'err'>('idle');
  const [probeLabel,setProbeLabel]=useState('');
  const [copiedCmd,setCopiedCmd]=useState(false);
+ const [guideOpen,setGuideOpen]=useState(false);
 
  const activeProvider=providers.find(p=>p.id===localCfg.provider);
 
@@ -139,7 +122,7 @@ function LocalBridgeSection({L}:{L:(zh:string,en:string)=>string}){
  };
 
  const copyLaunchCmd=async()=>{
-  if(await copyLocalCommand('npx @interview-study/local-bridge')){
+  if(await copyTextToClipboard(BRIDGE_LAUNCH_CMD)){
    setCopiedCmd(true);
    setTimeout(()=>setCopiedCmd(false),1800);
   }
@@ -149,7 +132,10 @@ function LocalBridgeSection({L}:{L:(zh:string,en:string)=>string}){
   <section className="ai-cfg-local">
    <div className="ai-cfg-head">
     <strong>{L('本地客户端','Local Client')}</strong>
-    {probeState!=='idle'&&<span className={`ai-cfg-status ${probeState}`}>{probeLabel}</span>}
+    <div className="ai-cfg-head-actions">
+     {probeState!=='idle'&&<span className={`ai-cfg-status ${probeState}`}>{probeLabel}</span>}
+     {!hideGuideBtn&&<button type="button" className="ai-cfg-chip" onClick={()=>setGuideOpen(true)}>{L('连接教程','Guide')}</button>}
+    </div>
    </div>
 
    <label className="ai-cfg-toggle">
@@ -217,6 +203,7 @@ function LocalBridgeSection({L}:{L:(zh:string,en:string)=>string}){
      {copiedCmd?L('已复制','Copied'):L('复制启动命令','Copy command')}
     </button>
    </div>
+   {!hideGuideBtn&&<LocalBridgeGuideModal open={guideOpen} onClose={()=>setGuideOpen(false)} L={L}/>}
   </section>
  );
 }

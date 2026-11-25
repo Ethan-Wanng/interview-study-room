@@ -29,7 +29,7 @@ Cloudflare Workers 运行在无服务器边缘沙箱中，无法调用操作系�
 flowchart LR
     U["浏览器前端 (site HTTPS / localhost)"] -->|"1. 仅站内找课时按需请求 (只读无LLM)"| CF["Cloudflare Worker (/api/tutor/links)"]
     CF -->|"返回站内课程/题库链接文本"| U
-    U -->|"2. CORS + PNA + Bearer Token 直连 127.0.0.1:43180"| B["本地桥接器 (@interview-study/local-bridge)"]
+    U -->|"2. CORS + PNA + Bearer Token 直连 127.0.0.1:43180"| B["本地桥接器 (interview-study-bridge)"]
     B -->|"3a. JSON-RPC over stdio (agy acp)"| AGY["Antigravity 官方 CLI (agy)"]
     B -->|"3b. JSON-RPC over stdio (codebuddy --acp)"| WB["WorkBuddy / CodeBuddy 官方 CLI (codebuddy)"]
     B -->|"3c. JSON-RPC over stdio (codex app-server)"| CDX["Codex 官方 CLI (codex)"]
@@ -562,7 +562,7 @@ export type LocalBridgeConfig = {
 
 **严禁出现以下反例**：
 - ❌ `<p className="muted">通过本地桥接器直连您电脑上的 Antigravity/Codex/WorkBuddy，不经过站点服务器...</p>`
-- ❌ `<small>请在终端运行 npx @interview-study/local-bridge 后粘贴配对码，我们绝不上传您的凭证</small>`
+- ❌ `<small>请在终端运行 npx -y interview-study-bridge 后粘贴配对码，我们绝不上传您的凭证</small>`
 - ❌ 按钮旁边的 `ⓘ` 气泡、折叠教程步骤卡片、或者长 placeholder（如 `"请输入终端打印的 64 位 brg_ 开头配对码"`）。
 
 ---
@@ -752,7 +752,7 @@ export type LocalBridgeConfig = {
 4. 更新设置面板 `site/app/ai/ai-settings.tsx`：
    - 抽出 `<LocalBridgeSection L={L} />` 并在**游客视图与登录视图**中均渲染（游客也可在本机启用本地桥接）；
    - 仅保留第 5.3 节正例中的极简控件（标题、开关、客户端切换、`端口`/`配对码`/`模型`+`刷新`、场景勾选、`连接并保存`/`复制启动命令` 按钮、单行状态徽章）；
-   - 「复制启动命令」写入剪贴板：`npx @interview-study/local-bridge`。
+   - 「复制启动命令」写入剪贴板：`npx -y interview-study-bridge`。
 5. 更新调用入口路由：
    - `site/app/ai/ai-dock.tsx`：在 `modelPicker` 中当 `localCfg.enabled` 时支持 `'local'` 模型选项与默认路由；在 `ask()` 中当走本地模式时直接调用 `streamTutorViaBridge`（不扣 `ai_tutor_quota`，不显示剩余次数限制错误）；同时保持未启用时原 `/api/tutor` 路径 100% 不变。
    - `site/app/ai/grade-client.ts`：在 `runGradeNdjson` 中当 `localCfg.enabled && localCfg.allowGrade && localCfg.token` 且当前所选评分模型为 `auto` 或 `local` 时走 `streamGradeViaBridge` / `streamStandardViaBridge`，保留原有打字节奏与 `partialResults` 实时划词批注预览。
