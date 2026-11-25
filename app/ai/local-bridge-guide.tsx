@@ -46,10 +46,30 @@ function CopyCmdRow({cmd,label,L}:{cmd:string;label?:string;L:(zh:string,en:stri
  );
 }
 
-const CLIENT_CMDS:Record<LocalBridgeProvider,{install?:string;login:string;bin:string}>={
- antigravity:{bin:'agy',login:'agy acp --login'},
- codex:{bin:'codex',login:'codex login'},
- workbuddy:{bin:'codebuddy',install:'npm i -g @tencent-ai/codebuddy-code',login:'codebuddy login'},
+const CLIENT_CMDS:Record<LocalBridgeProvider,{installs:{labelZh:string;labelEn:string;cmd:string}[];login:string;bin:string}>={
+ antigravity:{
+  bin:'agy',
+  installs:[
+   {labelZh:'安装 CLI（Windows PowerShell）',labelEn:'Install CLI (Windows PowerShell)',cmd:'irm https://antigravity.google/cli/install.ps1 | iex'},
+   {labelZh:'安装 CLI（macOS / Linux）',labelEn:'Install CLI (macOS / Linux)',cmd:'curl -fsSL https://antigravity.google/cli/install.sh | bash'},
+  ],
+  login:'agy acp --login',
+ },
+ codex:{
+  bin:'codex',
+  installs:[
+   {labelZh:'安装 CLI（npm，全平台）',labelEn:'Install CLI (npm)',cmd:'npm i -g @openai/codex'},
+   {labelZh:'安装 CLI（macOS Homebrew）',labelEn:'Install CLI (macOS Homebrew)',cmd:'brew install --cask codex'},
+  ],
+  login:'codex login',
+ },
+ workbuddy:{
+  bin:'codebuddy',
+  installs:[
+   {labelZh:'安装 CLI（npm）',labelEn:'Install CLI (npm)',cmd:'npm i -g @tencent-ai/codebuddy-code'},
+  ],
+  login:'codebuddy login',
+ },
 };
 
 export function LocalBridgeGuideContent({L}:{L:(zh:string,en:string)=>string}){
@@ -60,7 +80,7 @@ export function LocalBridgeGuideContent({L}:{L:(zh:string,en:string)=>string}){
    <div className="lb-step">
     <div className="lb-step-head">
      <b>1</b>
-     <strong>{L('登录本机客户端（任选其一）','Sign in to local CLI (pick one)')}</strong>
+     <strong>{L('安装并登录本机客户端（任选其一）','Install & sign in to local CLI (pick one)')}</strong>
     </div>
     <div className="ai-cfg-providers">
      {LOCAL_BRIDGE_PROVIDERS.map(id=>(
@@ -69,8 +89,10 @@ export function LocalBridgeGuideContent({L}:{L:(zh:string,en:string)=>string}){
       </button>
      ))}
     </div>
-    {cur.install&&<CopyCmdRow cmd={cur.install} label={L('安装 CLI','Install CLI')} L={L}/>}
-    <CopyCmdRow cmd={cur.login} label={L(`终端登录（命令：${cur.bin}）`,`Terminal login (${cur.bin})`)} L={L}/>
+    {cur.installs.map(item=>(
+     <CopyCmdRow key={item.cmd} cmd={item.cmd} label={L(item.labelZh,item.labelEn)} L={L}/>
+    ))}
+    <CopyCmdRow cmd={cur.login} label={L(`终端登录（安装后执行，命令：${cur.bin}）`,`Terminal login (${cur.bin})`)} L={L}/>
    </div>
 
    <div className="lb-step">
