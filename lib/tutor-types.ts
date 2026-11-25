@@ -6,8 +6,9 @@ import {splitModelTag,thinkingLevelBadgeText,type ThinkingLevel} from './thinkin
 // 对话历史由页面保存，每次请求都带上完整历史（模型本身不记得上一次请求）。
 export type TutorRole='user'|'model';
 // images：学习者附带的图片（data:image/...;base64 URL，页面已压缩到长边 1280 像素以内）。只有学习者的消息能带图。
-// think：这条回复的思考过程（只在页面上显示，不会再发回接口）；secs：思考用了几秒；model：生成这条回复的模型标识；remaining：完成后今日剩余次数。
-export type TutorMessage={role:TutorRole;text:string;images?:string[];think?:string;secs?:number;model?:string;remaining?:number};
+export type TutorSegment={kind:'think';text:string;secs?:number}|{kind:'text';text:string};
+// think：这条回复的思考过程（只在页面上显示，不会再发回接口）；secs：思考用了几秒；segments：交错思考/输出分段；model：生成这条回复的模型标识；remaining：完成后今日剩余次数。
+export type TutorMessage={role:TutorRole;text:string;images?:string[];think?:string;secs?:number;segments?:TutorSegment[];model?:string;remaining?:number};
 // 图片限制：每条消息最多 3 张、一次请求最多 4 张（更早消息里的图片由页面换成“[图片]”文字），每张 data URL 不超过约 1.5MB。
 export const TUTOR_IMAGES={perMessage:3,perRequest:4,size:1_500_000} as const;
 export const IMAGE_URL=/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/;

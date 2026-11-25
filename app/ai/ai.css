@@ -421,7 +421,8 @@ ol.tutor-md-list{list-style:decimal}
 /* AI 评分折叠 */
 .ai-grade-head small+.ai-grade-fold{margin-left:0}.ai-grade-fold{margin-left:auto;display:inline-flex;align-items:center;gap:3px;padding:3px 9px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--quiet);font:inherit;font-size:12.5px;cursor:pointer}.ai-grade-fold:hover{color:var(--primary);border-color:var(--primary)}
 /* AI 老师：思考过程小框、站内链接 */
-.tutor-think{margin:0 0 8px;padding:7px 10px;border:1px dashed var(--line);border-radius:9px;background:var(--surface);font-size:12.5px;line-height:1.65;color:var(--quiet)}
+.tutor-think{margin:8px 0;padding:7px 10px;border:1px dashed var(--line);border-radius:9px;background:var(--surface);font-size:12.5px;line-height:1.65;color:var(--quiet)}
+.tutor-think:first-child,.tutor-msg-head+.tutor-think{margin-top:0}
 .tutor-think summary,.tutor-think-head{display:flex;align-items:center;gap:5px;cursor:pointer;font-weight:600;list-style:none}.tutor-think summary::-webkit-details-marker{display:none}.tutor-think-head{cursor:default}
 .tutor-think-tail{max-height:4.95em;margin-top:4px;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere;-webkit-mask-image:linear-gradient(#0000,#000 40%);mask-image:linear-gradient(#0000,#000 40%)}
 .tutor-think ol{max-height:132px;margin:6px 0 0;padding-left:20px;overflow:auto}.tutor-think li{margin:2px 0}

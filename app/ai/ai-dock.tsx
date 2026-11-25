@@ -5,7 +5,7 @@ import {ArrowLeftRight,ArrowUpRight,BookPlus,Bot,Brain,Check,ChevronDown,Chevron
 import {clearChats,latestChat,loadChats,newChatId,onChatsChange,removeChat,saveChat,type SavedChat} from './tutor-history';
 import {useI18n} from '../components/i18n';
 import VoiceButton from '../components/voice-input';
-import {TUTOR_IMAGES,TUTOR_MODELS,tutorModelBadge,type TutorContext,type TutorEvent,type TutorMessage} from '@/lib/tutor-types';
+import {TUTOR_IMAGES,TUTOR_MODELS,tutorModelBadge,type TutorContext,type TutorEvent,type TutorMessage,type TutorSegment} from '@/lib/tutor-types';
 
 // 图片先在浏览器里压缩：长边不超过 1280 像素、转成 JPEG，太大就再缩一档。
 async function compress(file:File):Promise<string|null>{
@@ -69,8 +69,9 @@ export function HeaderAiButton(){
 // Markdown 显示：规范解析围栏代码块（带语言标签与一键复制，横向滚动不折行破坏缩进）、标题、列表、行内代码、**加粗**、[文字](/站内链接)。
 // 链接只认站内地址（以 / 开头），AI 给出的外部网址按普通文字显示。
 const linkRe=/\[([^\]\n]+)\]\((\/[^)\s]*)\)/;
+function inlineCode(s:string){return s.split(/(`[^`\n]+`)/g).map((p,i)=>p.startsWith('`')&&p.endsWith('`')&&p.length>2?<code key={i}>{p.slice(1,-1)}</code>:<Fragment key={i}>{p}</Fragment>)}
 function inline(s:string){return s.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(\/[^)\s]*\))/g).map((p,i)=>{const link=p.match(linkRe);
- return p.startsWith('`')&&p.endsWith('`')&&p.length>2?<code key={i}>{p.slice(1,-1)}</code>:p.startsWith('**')&&p.endsWith('**')&&p.length>4?<b key={i}>{p.slice(2,-2)}</b>:link&&link[0]===p?<a key={i} className="tutor-link" href={link[2]}>{link[1]}</a>:<Fragment key={i}>{p}</Fragment>})}
+ return p.startsWith('`')&&p.endsWith('`')&&p.length>2?<code key={i}>{p.slice(1,-1)}</code>:p.startsWith('**')&&p.endsWith('**')&&p.length>4?<b key={i}>{inlineCode(p.slice(2,-2))}</b>:link&&link[0]===p?<a key={i} className="tutor-link" href={link[2]}>{link[1]}</a>:<Fragment key={i}>{p}</Fragment>})}
 
 type MdBlock={kind:'code';lang:string;code:string}|{kind:'text';text:string};
 function parseMdBlocks(src:string):MdBlock[]{
@@ -216,13 +217,53 @@ function Md({text,caret,onApplyPlayground}:{text:string;caret?:boolean;onApplyPl
   :<ProseBlock key={i} text={b.text} caret={caret&&i===blocks.length-1}/>)}</>;
 }
 
-// 读 /api/tutor 的流：边收边按打字节奏显示（至少每秒约 60 个字，最多落后约 3 秒），写完返回整段回复与实际响应的模型标识；支持手动中止并保留已显示内容。
-async function ask(context:TutorContext,messages:TutorMessage[],onLive:(t:string)=>void,model:string,onThink:(t:string)=>void,onModel?:(m:string)=>void,signal?:AbortSignal,thinkingLevel?:ThinkingLevel):Promise<{ok:true;text:string;think:string;secs:number;remaining?:number;model?:string}|{ok:false;aborted?:boolean;partial?:string;think?:string;secs?:number;model?:string;message:string}>{
+// 交错思考/输出分段累积器：完整保留「思考1 -> 输出1 -> 思考2 -> 输出2」的真实时间顺序。
+function createSegmentStream(onUpdate:(segs:TutorSegment[])=>void){
+ const segs:TutorSegment[]=[];
+ let thinkStart=0;
+ const emit=()=>onUpdate(segs.map(s=>({...s})));
+ const pushThink=(d:string)=>{
+  if(!d)return;
+  const last=segs[segs.length-1];
+  if(last&&last.kind==='think'){last.text+=d}
+  else{thinkStart=Date.now();segs.push({kind:'think',text:d})}
+  emit();
+ };
+ const pushText=(d:string)=>{
+  if(!d)return;
+  const last=segs[segs.length-1];
+  if(last&&last.kind==='think'){
+   last.secs=Math.max(1,Math.round((Date.now()-(thinkStart||Date.now()))/1000));
+   segs.push({kind:'text',text:d});
+  }else if(last&&last.kind==='text'){
+   last.text+=d;
+  }else{
+   segs.push({kind:'text',text:d});
+  }
+  emit();
+ };
+ const reset=()=>{segs.length=0;thinkStart=0;emit()};
+ const finalize=()=>{
+  const last=segs[segs.length-1];
+  if(last&&last.kind==='think'&&!last.secs){
+   last.secs=Math.max(1,Math.round((Date.now()-(thinkStart||Date.now()))/1000));
+  }
+  const clean=segs.map(s=>({...s,text:s.kind==='text'?s.text.trim():s.text})).filter(s=>s.text);
+  const text=clean.filter(s=>s.kind==='text').map(s=>s.text).join('\n\n');
+  const think=clean.filter(s=>s.kind==='think').map(s=>s.text).join('\n\n');
+  const secs=clean.filter(s=>s.kind==='think').reduce((n,s)=>n+(s.secs??0),0);
+  return {segments:clean,text,think,secs};
+ };
+ return {pushThink,pushText,reset,finalize};
+}
+
+// 读 /api/tutor 或本地桥接的流：保留交错思考/输出分段，写完返回整段回复与实际响应的模型标识；支持手动中止并保留已显示内容。
+async function ask(context:TutorContext,messages:TutorMessage[],onSegments:(segs:TutorSegment[])=>void,model:string,onModel?:(m:string)=>void,signal?:AbortSignal,thinkingLevel?:ThinkingLevel):Promise<{ok:true;text:string;think:string;secs:number;segments:TutorSegment[];remaining?:number;model?:string}|{ok:false;aborted?:boolean;partial?:string;think?:string;secs?:number;segments?:TutorSegment[];model?:string;message:string}>{
  const NET='网络连接失败，这次没有扣次数，请重试。';
+ const acc=createSegmentStream(onSegments);
  const localCfg=getLocalBridgeConfig();
  if(isLocalTutorReady(localCfg)&&(model==='auto'||model==='local')){
-  let got='',shown=0,think='',secs=0,modelName='';const began=Date.now();
-  const tick=setInterval(()=>{if(shown>=got.length)return;shown=Math.min(got.length,shown+Math.max(3,Math.ceil((got.length-shown)/60)));onLive(got.slice(0,shown))},50);
+  let modelName='';
   try{
    const out=await streamTutorViaBridge({
     cfg:localCfg,
@@ -231,23 +272,18 @@ async function ask(context:TutorContext,messages:TutorMessage[],onLive:(t:string
     thinkingLevel:thinkingLevel??'auto',
     signal,
     onModel:m=>{modelName=m;onModel?.(m)},
-    onThink:d=>{think+=d;onThink(think)},
-    onDelta:d=>{if(!got&&think)secs=Math.max(1,Math.round((Date.now()-began)/1000));got+=d},
+    onThink:d=>acc.pushThink(d),
+    onDelta:d=>acc.pushText(d),
    });
-   while(shown<got.length&&!signal?.aborted)await new Promise(r=>setTimeout(r,60));
-   clearInterval(tick);
+   const fin=acc.finalize();
    if(signal?.aborted){
-    const visible=shown>0?got.slice(0,shown):'';
-    const thinkSecs=secs||(think?Math.max(1,Math.round((Date.now()-began)/1000)):0);
-    return {ok:false,aborted:true,partial:visible,think:think||undefined,secs:thinkSecs||undefined,model:modelName||undefined,message:''};
+    return {ok:false,aborted:true,partial:fin.text,think:fin.think||undefined,secs:fin.secs||undefined,segments:fin.segments.length?fin.segments:undefined,model:modelName||undefined,message:''};
    }
-   return {ok:true,text:got,think,secs,model:out.model||modelName||undefined};
+   return {ok:true,text:fin.text,think:fin.think,secs:fin.secs,segments:fin.segments,model:out.model||modelName||undefined};
   }catch(e){
-   clearInterval(tick);
+   const fin=acc.finalize();
    if(signal?.aborted){
-    const visible=shown>0?got.slice(0,shown):'';
-    const thinkSecs=secs||(think?Math.max(1,Math.round((Date.now()-began)/1000)):0);
-    return {ok:false,aborted:true,partial:visible,think:think||undefined,secs:thinkSecs||undefined,model:modelName||undefined,message:''};
+    return {ok:false,aborted:true,partial:fin.text,think:fin.think||undefined,secs:fin.secs||undefined,segments:fin.segments.length?fin.segments:undefined,model:modelName||undefined,message:''};
    }
    return {ok:false,message:e instanceof Error&&e.message?e.message:NET};
   }
@@ -255,24 +291,20 @@ async function ask(context:TutorContext,messages:TutorMessage[],onLive:(t:string
  let res:Response;
  try{res=await fetch('/api/tutor',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({context,messages,model,geminiProxy:getGeminiAutoProxy(),thinkingLevel:thinkingLevel??'auto'}),signal})}catch{if(signal?.aborted)return {ok:false,aborted:true,message:''};return {ok:false,message:NET}}
  if(!(res.headers.get('content-type')??'').includes('ndjson')){try{const j=await res.json() as {message?:string};return {ok:false,message:j.message??NET}}catch{return {ok:false,message:NET}}}
- let got='',shown=0,done:{remaining:number;model?:string}|null=null,err='',think='',secs=0,modelName='';const began=Date.now();
- const tick=setInterval(()=>{if(shown>=got.length)return;shown=Math.min(got.length,shown+Math.max(3,Math.ceil((got.length-shown)/60)));onLive(got.slice(0,shown))},50);
+ let done:{remaining:number;model?:string}|null=null,err='',modelName='';
  const reader=res.body!.getReader(),onAbort=()=>{void reader.cancel().catch(()=>{})};
  signal?.addEventListener('abort',onAbort,{once:true});
  try{const dec=new TextDecoder();let buf='';
   for(;;){if(signal?.aborted)break;const {done:end,value}=await reader.read();if(end)break;buf+=dec.decode(value,{stream:true});let i;
    while((i=buf.indexOf('\n'))>=0){const line=buf.slice(0,i).trim();buf=buf.slice(i+1);if(!line)continue;const e=JSON.parse(line) as TutorEvent;
-    if(e.t==='model'){modelName=e.model;onModel?.(e.model)}else if(e.t==='delta'){if(!got&&think)secs=Math.max(1,Math.round((Date.now()-began)/1000));got+=e.text}else if(e.t==='think'){think+=e.text;onThink(think)}else if(e.t==='reset'){got='';shown=0;think='';secs=0;modelName='';onLive('');onThink('');onModel?.('')}else if(e.t==='done')done={remaining:e.remaining,model:e.model||modelName||undefined};else if(e.t==='error')err=e.message}}}
+    if(e.t==='model'){modelName=e.model;onModel?.(e.model)}else if(e.t==='delta'){acc.pushText(e.text)}else if(e.t==='think'){acc.pushThink(e.text)}else if(e.t==='reset'){modelName='';acc.reset();onModel?.('')}else if(e.t==='done')done={remaining:e.remaining,model:e.model||modelName||undefined};else if(e.t==='error')err=e.message}}}
  catch{err||=NET}
  finally{signal?.removeEventListener('abort',onAbort)}
- if(done&&!err&&!signal?.aborted)while(shown<got.length&&!signal?.aborted)await new Promise(r=>setTimeout(r,60));
- clearInterval(tick);
+ const fin=acc.finalize();
  if(signal?.aborted){
-  const visible=shown>0?got.slice(0,shown):'';
-  const thinkSecs=secs||(think?Math.max(1,Math.round((Date.now()-began)/1000)):0);
-  return {ok:false,aborted:true,partial:visible,think:think||undefined,secs:thinkSecs||undefined,model:modelName||undefined,message:''};
+  return {ok:false,aborted:true,partial:fin.text,think:fin.think||undefined,secs:fin.secs||undefined,segments:fin.segments.length?fin.segments:undefined,model:modelName||undefined,message:''};
  }
- return done&&!err?{ok:true,text:got,think,secs,remaining:done.remaining,model:done.model}:{ok:false,message:err||NET}}
+ return done&&!err?{ok:true,text:fin.text,think:fin.think,secs:fin.secs,segments:fin.segments,remaining:done.remaining,model:done.model}:{ok:false,message:err||NET}}
 
 async function copyText(text:string):Promise<boolean>{
  try{if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(text);return true}}catch{}
@@ -287,7 +319,7 @@ export type DockRequest={text:string;n:number};
 export default function AiDock({context,prompts,request,title,chatKey,site,hello,onApplyPlaygroundCode,noteBackHref,onBeforeNoteLeave}:{context:TutorContext;prompts:string[];request?:DockRequest;title?:string;chatKey?:string;site?:boolean;hello?:string;onApplyPlaygroundCode?:(code:string,runAfter?:boolean)=>void;noteBackHref?:string;onBeforeNoteLeave?:()=>void}){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
  useDockPresence(!site);
  const sessionKey=chatKey??('quiz' in context?'quiz:'+context.quiz.q:'lesson' in context?'lesson:'+context.lesson.title:'playground' in context?'playground:'+context.playground.lang:'site');
- const [liveThink,setLiveThink]=useState(''),[liveModel,setLiveModel]=useState(''),[copiedAt,setCopiedAt]=useState<number|null>(null);
+ const [liveSegs,setLiveSegs]=useState<TutorSegment[]>([]),[liveModel,setLiveModel]=useState(''),[copiedAt,setCopiedAt]=useState<number|null>(null);
  const [selPop,setSelPop]=useState<{text:string;x:number;y:number}|null>(null);
  const [selNote,setSelNote]=useState<{n:number;title:string;text:string}>({n:0,title:'',text:''});
  const copyTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
@@ -369,7 +401,7 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
  const setMsgs=(next:TutorMessage[])=>{msgsRef.current=next;setMsgsState(next);if(next.length)chatCache.set(sessionKey,next);else chatCache.delete(sessionKey);
   if(next.length&&!chatId.current)chatId.current=newChatId(sessionKey);
   if(chatId.current)saveChat({id:chatId.current,key:sessionKey,title:sessionKey==='site'?(next.find(m=>m.role==='user')?.text||chatTitle):chatTitle,msgs:next})};
- useEffect(()=>{sessionGen.current++;running.current=false;retrySnapshotRef.current=null;abortRef.current=null;const saved=latestChat(sessionKey),m=chatCache.get(sessionKey)??saved?.msgs??[];chatId.current=saved?.id??'';msgsRef.current=m;setMsgsState(m);setLive(null);setLiveThink('');setLiveModel('');setAnswerAt(-1);setError('');setViewing(null);setCopiedAt(null)},[sessionKey]);
+ useEffect(()=>{sessionGen.current++;running.current=false;retrySnapshotRef.current=null;abortRef.current=null;const saved=latestChat(sessionKey),m=chatCache.get(sessionKey)??saved?.msgs??[];chatId.current=saved?.id??'';msgsRef.current=m;setMsgsState(m);setLive(null);setLiveSegs([]);setLiveModel('');setAnswerAt(-1);setError('');setViewing(null);setCopiedAt(null)},[sessionKey]);
  useEffect(()=>{const sync=()=>setChats(loadChats());sync();return onChatsChange(sync)},[]);
  const newChat=()=>{abortRef.current?.abort();abortRef.current=null;retrySnapshotRef.current=null;chatId.current='';chatCache.delete(sessionKey);msgsRef.current=[];setMsgsState([]);setError('');setViewing(null);setShowHistory(false);setCopiedAt(null)};
  // 打开一段历史对话：就是这里的对话就直接接着聊；别处的对话先只读查看，可以选择“接着这段继续问”（之后的提问按当前页面的内容回答）。
@@ -408,7 +440,7 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
   };
  },[open,full,setFull]);
  // 只有停在底部时才跟着新内容滚到底；往上翻看时不打扰，翻回底部后继续跟随。
- useEffect(()=>{const el=box.current;if(el&&stick.current)el.scrollTop=el.scrollHeight},[msgs,live,open]);
+ useEffect(()=>{const el=box.current;if(el&&stick.current)el.scrollTop=el.scrollHeight},[msgs,live,liveSegs,open]);
  useEffect(()=>{if(open)stick.current=true},[open]);
  const onScroll=()=>{const el=box.current;if(el)stick.current=el.scrollHeight-el.scrollTop-el.clientHeight<40};
  // 输入框随内容长高（最多约 6 行），空着或只有一行时和发送按钮一样高。
@@ -454,25 +486,25 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
    const all=msgsRef.current;if(!all.length||all[all.length-1].role!=='user')break;
    const at=all.length;let sent=prepare(all).slice(-KEEP);while(sent[0]?.role!=='user')sent=sent.slice(1); // 对话太长时只带最近的部分，第一条必须是学习者发的
    const ctl=new AbortController();abortRef.current=ctl;
-   setAnswerAt(at);setLive('');setLiveThink('');setLiveModel('');
+   setAnswerAt(at);setLive('');setLiveSegs([]);setLiveModel('');
    const curSpec=getTutorThinkingSpec(modelRef.current,customRef.current,localRef.current);
    const curThinking=curSpec.spec.locked?'auto':getModelThinkingLevel(curSpec.scopeKey,curSpec.spec);
-   const r=await ask(context,sent,t=>{if(sessionGen.current===gen)setLive(t)},modelRef.current,t=>{if(sessionGen.current===gen)setLiveThink(t)},m=>{if(sessionGen.current===gen)setLiveModel(m)},ctl.signal,curThinking);
+   const r=await ask(context,sent,segs=>{if(sessionGen.current===gen){setLiveSegs(segs);setLive(segs.filter(s=>s.kind==='text').map(s=>s.text).join('\n\n'))}},modelRef.current,m=>{if(sessionGen.current===gen)setLiveModel(m)},ctl.signal,curThinking);
    if(abortRef.current===ctl)abortRef.current=null;
    if(sessionGen.current!==gen){
     if(retrySnapshotRef.current?.gen===gen)retrySnapshotRef.current=null;
-    if(r.ok){const prev=chatCache.get(reqKey)??[];const next=[...prev,{role:'model' as const,text:r.text,...(r.think?{think:r.think,secs:r.secs}:{}),...(r.model?{model:r.model}:{}),...(typeof r.remaining==='number'?{remaining:r.remaining}:{})}];chatCache.set(reqKey,next);saveChat({id:reqChatId,key:reqKey,title:reqKey==='site'?(prev.find(m=>m.role==='user')?.text||reqTitle):reqTitle,msgs:next})}
+    if(r.ok){const prev=chatCache.get(reqKey)??[];const next=[...prev,{role:'model' as const,text:r.text,...(r.think?{think:r.think,secs:r.secs}:{}),...(r.segments.length?{segments:r.segments}:{}),...(r.model?{model:r.model}:{}),...(typeof r.remaining==='number'?{remaining:r.remaining}:{})}];chatCache.set(reqKey,next);saveChat({id:reqChatId,key:reqKey,title:reqKey==='site'?(prev.find(m=>m.role==='user')?.text||reqTitle):reqTitle,msgs:next})}
     break;
    }
-   setLive(null);setLiveThink('');setLiveModel('');setAnswerAt(-1);
+   setLive(null);setLiveSegs([]);setLiveModel('');setAnswerAt(-1);
    const now=msgsRef.current;
-   if(r.ok){retrySnapshotRef.current=null;setMsgs([...now.slice(0,at),{role:'model',text:r.text,...(r.think?{think:r.think,secs:r.secs}:{}),...(r.model?{model:r.model}:{}),...(typeof r.remaining==='number'?{remaining:r.remaining}:{})},...now.slice(at)]);if(typeof r.remaining==='number')setLeft(r.remaining)}
+   if(r.ok){retrySnapshotRef.current=null;setMsgs([...now.slice(0,at),{role:'model',text:r.text,...(r.think?{think:r.think,secs:r.secs}:{}),...(r.segments.length?{segments:r.segments}:{}),...(r.model?{model:r.model}:{}),...(typeof r.remaining==='number'?{remaining:r.remaining}:{})},...now.slice(at)]);if(typeof r.remaining==='number')setLeft(r.remaining)}
    else if(r.aborted){
     const partial=r.partial?.trim()?r.partial:'';
     if(partial){
      retrySnapshotRef.current=null;
      const extra=now.slice(at);
-     setMsgs([...now.slice(0,at),{role:'model',text:partial,...(r.think?{think:r.think,secs:r.secs}:{}),...(r.model?{model:r.model}:{})},]);
+     setMsgs([...now.slice(0,at),{role:'model',text:partial,...(r.think?{think:r.think,secs:r.secs}:{}),...(r.segments?.length?{segments:r.segments}:{}),...(r.model?{model:r.model}:{})},]);
      if(extra.length)restoreDraft(extra);
     }else if(retrySnapshotRef.current?.gen===gen){
      const snap=retrySnapshotRef.current.msgs;retrySnapshotRef.current=null;
@@ -544,7 +576,7 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
  };
  const name=title??L('AI 老师','AI tutor'),lang=locale==='en'?'en':'zh';
  const liveModelLabel=tutorModelBadge(liveModel,lang);
- const liveBubble=<div className="tutor-msg model live">{liveModelLabel&&<div className="tutor-msg-head"><span className="tutor-model-badge"><Bot size={12}/>{liveModelLabel}</span></div>}{liveThink&&<ThinkBox text={liveThink} live={!live} L={L}/>}{live?<Md text={live} caret onApplyPlayground={onApplyPlaygroundCode}/>:!liveThink&&<p className="tutor-wait"><Loader2 size={15} className="ai-spin"/>{L('AI 老师正在思考…','Thinking…')}</p>}<div className="tutor-msg-actions"><button type="button" className="tutor-msg-btn stop" onClick={stopAnswering} title={L('停止当前回答','Stop generating')}><Square size={11} fill="currentColor"/><span>{L('停止','Stop')}</span></button></div></div>;
+ const liveBubble=<div className="tutor-msg model live">{liveModelLabel&&<div className="tutor-msg-head"><span className="tutor-model-badge"><Bot size={12}/>{liveModelLabel}</span></div>}{liveSegs.length?liveSegs.map((seg,si)=>seg.kind==='think'?<ThinkBox key={si} text={seg.text} live={si===liveSegs.length-1} secs={seg.secs} L={L}/>:<Md key={si} text={seg.text} caret={si===liveSegs.length-1} onApplyPlayground={onApplyPlaygroundCode}/>):<p className="tutor-wait"><Loader2 size={15} className="ai-spin"/>{L('AI 老师正在思考…','Thinking…')}</p>}<div className="tutor-msg-actions"><button type="button" className="tutor-msg-btn stop" onClick={stopAnswering} title={L('停止当前回答','Stop generating')}><Square size={11} fill="currentColor"/><span>{L('停止','Stop')}</span></button></div></div>;
  return <>
   {open&&<aside className={'ai-dock'+(full?' is-full':'')} aria-label={name}>
    <header><Bot size={18}/><strong>{name}</strong>{modelPicker}
@@ -584,7 +616,7 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
     {shown.map((m,i)=>{const modelLabel=m.role==='model'?tutorModelBadge(m.model,lang):'';let prevQ='';if(m.role==='model'){for(let k=i-1;k>=0;k--){if(shown[k]?.role==='user'&&shown[k].text.trim()){prevQ=shown[k].text.trim();break}}}const noteTitle=(prevQ||chatTitle).slice(0,56);const noteQOnly=`### ${prevQ||chatTitle}`;const noteQAndA=[`### ${prevQ||chatTitle}`,`**${L('AI 老师解答','AI Tutor Answer')}**：\n\n${m.text}`].join('\n\n');return <Fragment key={i}>{busy&&i===answerAt&&liveBubble}<div className={'tutor-msg '+m.role+(busy&&answerAt>=0&&i>=answerAt?' queued':'')}>
      {modelLabel&&<div className="tutor-msg-head"><span className="tutor-model-badge"><Bot size={12}/>{modelLabel}</span></div>}
      {m.images?.length?<div className="tutor-imgs">{m.images.map((u,j)=><img key={j} src={u} alt={L('附图','Attached image')} onClick={e=>e.currentTarget.classList.toggle('big')}/>)}</div>:null}
-     {m.role==='model'&&m.think&&<ThinkBox text={m.think} secs={m.secs} L={L}/>}{m.role==='model'?<Md text={m.text} onApplyPlayground={onApplyPlaygroundCode}/>:m.text&&<p>{m.text}</p>}
+     {m.role==='model'?(m.segments?.length?m.segments.map((seg,si)=>seg.kind==='think'?<ThinkBox key={si} text={seg.text} secs={seg.secs} L={L}/>:<Md key={si} text={seg.text} onApplyPlayground={onApplyPlaygroundCode}/>):<>{m.think&&<ThinkBox text={m.think} secs={m.secs} L={L}/>}<Md text={m.text} onApplyPlayground={onApplyPlaygroundCode}/></>):m.text&&<p>{m.text}</p>}
      {m.role==='model'&&m.text&&<div className="tutor-msg-actions">
       <button type="button" className={'tutor-msg-btn'+(copiedAt===i?' copied':'')} onClick={()=>void copyMsg(i,m.text)} title={L('复制这段回答','Copy this response')}>{copiedAt===i?<><Check size={12}/><span>{L('已复制','Copied')}</span></>:<><Copy size={12}/><span>{L('复制','Copy')}</span></>}</button>
       {!viewing&&i>0&&shown[i-1]?.role==='user'&&<button type="button" className="tutor-msg-btn" disabled={busy} onClick={()=>retryAt(i)} title={L('用当前所选模型重新生成这段回答','Retry this response with the selected model')}><RotateCcw size={12}/><span>{L('重试','Retry')}</span></button>}
