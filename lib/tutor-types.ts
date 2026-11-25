@@ -38,6 +38,12 @@ export function tutorModelBadge(model:string|undefined,lang:'zh'|'en'='zh'):stri
  const {base:m,level}=splitModelTag(model);
  if(!m)return '';
  const lvTag=level?(lang==='en'?` (${thinkingLevelBadgeText(level,lang)})`:`（${thinkingLevelBadgeText(level,lang)}）`):'';
+ if(m.startsWith('local:')){
+  const rest=m.slice(6),slash=rest.indexOf('/');
+  const prov=slash>0?rest.slice(0,slash):rest,name=slash>0?rest.slice(slash+1):'default';
+  const labels:Record<string,string>={antigravity:'Antigravity',codex:'Codex',workbuddy:'WorkBuddy'};
+  return `${labels[prov]??prov} · ${name}${lvTag}`;
+ }
  if(m==='gemini-4-hydrogen')return `Gemini 4 Hydrogen${lvTag}`;
  if(m==='gemini-3.8-flash')return (lang==='en'?'Gemini 3.8 Flash (fallback)':'Gemini 3.8 Flash（降级）')+(level?` · ${thinkingLevelBadgeText(level,lang)}`:'');
  if(m==='gemini-3.6-flash')return (lang==='en'?'Gemini 3.6 Flash (fallback)':'Gemini 3.6 Flash（降级）')+(level?` · ${thinkingLevelBadgeText(level,lang)}`:'');

@@ -27,6 +27,8 @@ import ThinkBox from './think-box';
 import {getGeminiAutoProxy} from './gemini-proxy-pref';
 import {getModelThinkingLevel,notifyTutorModelChanged,useModelThinkingLevel} from './thinking-pref';
 import {getTutorThinkingSpec,THINKING_META,type ThinkingLevel} from '@/lib/thinking';
+import {getLocalBridgeConfig,isLocalTutorReady,LOCAL_PROVIDER_LABEL,useLocalBridgeConfig} from '@/lib/local-bridge-config';
+import {streamTutorViaBridge} from '@/lib/local-bridge-client';
 import {markdownEditing} from './code-input';
 import AddToNoteButton from '../components/add-to-note';
 import {detectPlaygroundLang,normalizePlaygroundLang,type PlaygroundLang} from '@/lib/playground-bridge';
@@ -215,8 +217,42 @@ function Md({text,caret,onApplyPlayground}:{text:string;caret?:boolean;onApplyPl
 }
 
 // 读 /api/tutor 的流：边收边按打字节奏显示（至少每秒约 60 个字，最多落后约 3 秒），写完返回整段回复与实际响应的模型标识；支持手动中止并保留已显示内容。
-async function ask(context:TutorContext,messages:TutorMessage[],onLive:(t:string)=>void,model:string,onThink:(t:string)=>void,onModel?:(m:string)=>void,signal?:AbortSignal,thinkingLevel?:ThinkingLevel):Promise<{ok:true;text:string;think:string;secs:number;remaining:number;model?:string}|{ok:false;aborted?:boolean;partial?:string;think?:string;secs?:number;model?:string;message:string}>{
- const NET='网络连接失败，这次没有扣次数，请重试。';let res:Response;
+async function ask(context:TutorContext,messages:TutorMessage[],onLive:(t:string)=>void,model:string,onThink:(t:string)=>void,onModel?:(m:string)=>void,signal?:AbortSignal,thinkingLevel?:ThinkingLevel):Promise<{ok:true;text:string;think:string;secs:number;remaining?:number;model?:string}|{ok:false;aborted?:boolean;partial?:string;think?:string;secs?:number;model?:string;message:string}>{
+ const NET='网络连接失败，这次没有扣次数，请重试。';
+ const localCfg=getLocalBridgeConfig();
+ if(isLocalTutorReady(localCfg)&&(model==='auto'||model==='local')){
+  let got='',shown=0,think='',secs=0,modelName='';const began=Date.now();
+  const tick=setInterval(()=>{if(shown>=got.length)return;shown=Math.min(got.length,shown+Math.max(3,Math.ceil((got.length-shown)/60)));onLive(got.slice(0,shown))},50);
+  try{
+   const out=await streamTutorViaBridge({
+    cfg:localCfg,
+    context,
+    messages,
+    thinkingLevel:thinkingLevel??'auto',
+    signal,
+    onModel:m=>{modelName=m;onModel?.(m)},
+    onThink:d=>{think+=d;onThink(think)},
+    onDelta:d=>{if(!got&&think)secs=Math.max(1,Math.round((Date.now()-began)/1000));got+=d},
+   });
+   while(shown<got.length&&!signal?.aborted)await new Promise(r=>setTimeout(r,60));
+   clearInterval(tick);
+   if(signal?.aborted){
+    const visible=shown>0?got.slice(0,shown):'';
+    const thinkSecs=secs||(think?Math.max(1,Math.round((Date.now()-began)/1000)):0);
+    return {ok:false,aborted:true,partial:visible,think:think||undefined,secs:thinkSecs||undefined,model:modelName||undefined,message:''};
+   }
+   return {ok:true,text:got,think,secs,model:out.model||modelName||undefined};
+  }catch(e){
+   clearInterval(tick);
+   if(signal?.aborted){
+    const visible=shown>0?got.slice(0,shown):'';
+    const thinkSecs=secs||(think?Math.max(1,Math.round((Date.now()-began)/1000)):0);
+    return {ok:false,aborted:true,partial:visible,think:think||undefined,secs:thinkSecs||undefined,model:modelName||undefined,message:''};
+   }
+   return {ok:false,message:e instanceof Error&&e.message?e.message:NET};
+  }
+ }
+ let res:Response;
  try{res=await fetch('/api/tutor',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({context,messages,model,geminiProxy:getGeminiAutoProxy(),thinkingLevel:thinkingLevel??'auto'}),signal})}catch{if(signal?.aborted)return {ok:false,aborted:true,message:''};return {ok:false,message:NET}}
  if(!(res.headers.get('content-type')??'').includes('ndjson')){try{const j=await res.json() as {message?:string};return {ok:false,message:j.message??NET}}catch{return {ok:false,message:NET}}}
  let got='',shown=0,done:{remaining:number;model?:string}|null=null,err='',think='',secs=0,modelName='';const began=Date.now();
@@ -289,20 +325,36 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
   };
  },[site,setOpen]);
  const {status:aiStatus}=useAiConfigStatus();
+ const [localCfg]=useLocalBridgeConfig();
+ const localTutorActive=isLocalTutorReady(localCfg);
+ const localSpecCfg=localTutorActive?localCfg:null;
  const isGuest=Boolean(aiStatus?.isGuest);
  const hasCustom=!isGuest&&!!aiStatus?.settings?.enabled&&!!aiStatus?.settings?.hasKey,customBadge=hasCustom?providerMeta(aiStatus!.settings!.provider).badge:'';
- // 选模型：默认（开了专属 API 用专属的，否则 DeepSeek V4.1 Flash）、站点提供的几个模型、自己的专属 API。选择记在浏览器里。
- const customSpecCfg=hasCustom&&aiStatus?.settings?{provider:aiStatus.settings.provider,model:aiStatus.settings.model}:null;
- const [model,setModelState]=useState<string>(()=>{try{const raw=localStorage.getItem(MODEL_KEY)||'auto',v=raw==='gemini-flash'?'gemini-4':raw;return v==='auto'||v==='custom'||TUTOR_MODELS.some(m=>m.id===v)?v:'auto'}catch{return 'auto'}}),modelRef=useRef(model); // 以前存的旧模型名（deepseek-chat 等）已经没有了，回到默认
+ // 选模型：默认（本地客户端或专属 API 优先，否则 DeepSeek V4.1 Flash）、站点提供的几个模型、自己的专属 API。选择记在浏览器里。
+ const customSpecCfg=useMemo(()=>(hasCustom&&aiStatus?.settings?{provider:aiStatus.settings.provider,model:aiStatus.settings.model}:null),[hasCustom,aiStatus?.settings]);
+ const [model,setModelState]=useState<string>(()=>{try{const raw=localStorage.getItem(MODEL_KEY)||'auto',v=raw==='gemini-flash'?'gemini-4':raw;return v==='auto'||v==='custom'||v==='local'||TUTOR_MODELS.some(m=>m.id===v)?v:'auto'}catch{return 'auto'}}),modelRef=useRef(model); // 以前存的旧模型名（deepseek-chat 等）已经没有了，回到默认
  const visibleTutorModels=useMemo(()=>isGuest?TUTOR_MODELS.filter(m=>m.provider!=='gemini'):TUTOR_MODELS,[isGuest]);
- const effectiveModel=isGuest&&TUTOR_MODELS.find(m=>m.id===model)?.provider==='gemini'?'auto':model;
- const {scopeKey:thinkScope,spec:thinkSpec}=getTutorThinkingSpec(effectiveModel,customSpecCfg);
+ const effectiveModel=
+  !localTutorActive&&model==='local'?'auto'
+  :(isGuest&&TUTOR_MODELS.find(m=>m.id===model)?.provider==='gemini'?'auto':model);
+ const isUsingLocalTutor=localTutorActive&&(effectiveModel==='auto'||effectiveModel==='local');
+ const {scopeKey:thinkScope,spec:thinkSpec}=getTutorThinkingSpec(effectiveModel,customSpecCfg,localSpecCfg);
  const [thinking,setThinking]=useModelThinkingLevel(thinkScope,thinkSpec);
  const customRef=useRef(customSpecCfg);useEffect(()=>{customRef.current=customSpecCfg},[customSpecCfg]);
+ const localRef=useRef(localSpecCfg);useEffect(()=>{localRef.current=localSpecCfg},[localSpecCfg]);
  const setModel=(v:string)=>{modelRef.current=v;setModelState(v);try{localStorage.setItem(MODEL_KEY,v)}catch{};notifyTutorModelChanged()};
  useEffect(()=>{if(model==='custom'&&aiStatus&&!hasCustom)setModel('auto');if(isGuest&&TUTOR_MODELS.find(m=>m.id===model)?.provider==='gemini')setModel('auto')},[aiStatus,hasCustom,isGuest,model]); // eslint-disable-line react-hooks/exhaustive-deps
  const modelPicker=<select className="ai-dock-model" value={effectiveModel} onChange={e=>setModel(e.target.value)} title={L('选择 AI 模型','Choose the AI model')} aria-label={L('选择 AI 模型','Choose the AI model')}>
-  <option value="auto">{hasCustom?L(`默认（我的 ${customBadge}）`,`Default (my ${customBadge})`):isGuest?L('默认（DeepSeek）','Default (DeepSeek)'):L('默认（自动 · DeepSeek / Gemini 4）','Default (Auto · DeepSeek / Gemini 4)')}</option>
+  <option value="auto">
+   {localTutorActive
+    ?L(`默认（本地 ${LOCAL_PROVIDER_LABEL[localCfg.provider]}）`,`Default (Local ${LOCAL_PROVIDER_LABEL[localCfg.provider]})`)
+    :hasCustom
+     ?L(`默认（我的 ${customBadge}）`,`Default (my ${customBadge})`)
+     :isGuest
+      ?L('默认（DeepSeek）','Default (DeepSeek)')
+      :L('默认（自动 · DeepSeek / Gemini 4）','Default (Auto · DeepSeek / Gemini 4)')}
+  </option>
+  {localTutorActive&&<option value="local">{L(`本地：${LOCAL_PROVIDER_LABEL[localCfg.provider]}`,`Local: ${LOCAL_PROVIDER_LABEL[localCfg.provider]}`)}</option>}
   {visibleTutorModels.map(m=><option key={m.id} value={m.id} title={L(m.note[0],m.note[1])}>{L(m.label[0],m.label[1])}{m.vision?L(' · 识图',' · images'):''}</option>)}
   {hasCustom&&<option value="custom">{L(`我的 API：${customBadge}`,`My API: ${customBadge}`)}</option>}</select>;
  const box=useRef<HTMLDivElement>(null),busy=live!==null,handled=useRef(request?.n??0);
@@ -403,18 +455,18 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
    const at=all.length;let sent=prepare(all).slice(-KEEP);while(sent[0]?.role!=='user')sent=sent.slice(1); // 对话太长时只带最近的部分，第一条必须是学习者发的
    const ctl=new AbortController();abortRef.current=ctl;
    setAnswerAt(at);setLive('');setLiveThink('');setLiveModel('');
-   const curSpec=getTutorThinkingSpec(modelRef.current,customRef.current);
+   const curSpec=getTutorThinkingSpec(modelRef.current,customRef.current,localRef.current);
    const curThinking=curSpec.spec.locked?'auto':getModelThinkingLevel(curSpec.scopeKey,curSpec.spec);
    const r=await ask(context,sent,t=>{if(sessionGen.current===gen)setLive(t)},modelRef.current,t=>{if(sessionGen.current===gen)setLiveThink(t)},m=>{if(sessionGen.current===gen)setLiveModel(m)},ctl.signal,curThinking);
    if(abortRef.current===ctl)abortRef.current=null;
    if(sessionGen.current!==gen){
     if(retrySnapshotRef.current?.gen===gen)retrySnapshotRef.current=null;
-    if(r.ok){const prev=chatCache.get(reqKey)??[];const next=[...prev,{role:'model' as const,text:r.text,...(r.think?{think:r.think,secs:r.secs}:{}),...(r.model?{model:r.model}:{}),remaining:r.remaining}];chatCache.set(reqKey,next);saveChat({id:reqChatId,key:reqKey,title:reqKey==='site'?(prev.find(m=>m.role==='user')?.text||reqTitle):reqTitle,msgs:next})}
+    if(r.ok){const prev=chatCache.get(reqKey)??[];const next=[...prev,{role:'model' as const,text:r.text,...(r.think?{think:r.think,secs:r.secs}:{}),...(r.model?{model:r.model}:{}),...(typeof r.remaining==='number'?{remaining:r.remaining}:{})}];chatCache.set(reqKey,next);saveChat({id:reqChatId,key:reqKey,title:reqKey==='site'?(prev.find(m=>m.role==='user')?.text||reqTitle):reqTitle,msgs:next})}
     break;
    }
    setLive(null);setLiveThink('');setLiveModel('');setAnswerAt(-1);
    const now=msgsRef.current;
-   if(r.ok){retrySnapshotRef.current=null;setMsgs([...now.slice(0,at),{role:'model',text:r.text,...(r.think?{think:r.think,secs:r.secs}:{}),...(r.model?{model:r.model}:{}),remaining:r.remaining},...now.slice(at)]);setLeft(r.remaining)}
+   if(r.ok){retrySnapshotRef.current=null;setMsgs([...now.slice(0,at),{role:'model',text:r.text,...(r.think?{think:r.think,secs:r.secs}:{}),...(r.model?{model:r.model}:{}),...(typeof r.remaining==='number'?{remaining:r.remaining}:{})},...now.slice(at)]);if(typeof r.remaining==='number')setLeft(r.remaining)}
    else if(r.aborted){
     const partial=r.partial?.trim()?r.partial:'';
     if(partial){
@@ -554,7 +606,7 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
      onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();send(input,images)}}}/>
     {busy&&<button type="button" className="button tutor-stop" onClick={stopAnswering} title={L('停止当前回答','Stop generating')} aria-label={L('停止回答','Stop generating')}><Square size={14} fill="currentColor"/></button>}
     {(!busy||input.trim()||images.length>0)&&<button className="button primary tutor-send" disabled={!input.trim()&&!images.length} aria-label={L('发送','Send')}><Send size={15}/></button>}</form>
-   {left!==null&&<p className="tutor-left">{L(`今天还可以问 ${left} 次`,`${left} messages left today`)}</p>}
+   {left!==null&&!isUsingLocalTutor&&<p className="tutor-left">{L(`今天还可以问 ${left} 次`,`${left} messages left today`)}</p>}
    </>}
   </aside>}
   {selPop&&typeof document!=='undefined'&&createPortal(

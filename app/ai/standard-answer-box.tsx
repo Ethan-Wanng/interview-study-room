@@ -96,7 +96,7 @@ export function useStandardAnswer({keyId,item,initial,onSaved,onRemaining,onQuot
    }
    const rec:StandardRecord={text:out.text,model:out.model,think:out.think,secs:out.thinkSecs,remaining:out.remaining};
    patchSlot(targetKey,()=>({loading:false,live:'',think:null,error:'',record:rec}));
-   onRemaining?.(out.remaining);
+   if(typeof out.remaining==='number')onRemaining?.(out.remaining);
    onSaved?.(rec,targetKey);
   }catch{
    if(abortRef.current[targetKey]===ctl)delete abortRef.current[targetKey];

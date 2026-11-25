@@ -5,6 +5,7 @@ import {useGradeModel} from '../ai/grade-client';
 import {useAiConfigStatus} from '../ai/ai-settings';
 import {providerMeta} from '@/lib/ai-config';
 import {getGradeThinkingSpec,getTutorThinkingSpec,THINKING_META,type ModelThinkingSpec} from '@/lib/thinking';
+import {isLocalGradeReady,isLocalTutorReady,LOCAL_PROVIDER_LABEL,useLocalBridgeConfig} from '@/lib/local-bridge-config';
 import {TUTOR_MODELS} from '@/lib/tutor-types';
 import {GRADE_MODELS} from '@/lib/grade-types';
 type ProxyCheckItem={
@@ -126,13 +127,18 @@ function GeminiProxyRow({L}:{L:(zh:string,en:string)=>string}){
 function NoteModelRow({L,isGuest}:{L:(zh:string,en:string)=>string;isGuest:boolean}){
  const [noteModel,setNoteModel]=useStoredNoteModel();
  const {status}=useAiConfigStatus();
+ const [localCfg]=useLocalBridgeConfig();
+ const localTutorActive=isLocalTutorReady(localCfg);
  const guest=isGuest||Boolean(status?.isGuest);
  const customOn=Boolean(!guest&&status?.settings?.enabled&&status?.settings?.hasKey&&status?.settings?.allowTutor);
  const customLabel=customOn&&status?.settings
   ?`${providerMeta(status.settings.provider).badge} · ${status.settings.model||providerMeta(status.settings.provider).defaultModel}`
   :'';
  const visibleModels=guest?TUTOR_MODELS.filter(m=>m.provider!=='gemini'):TUTOR_MODELS;
- const value=noteModel==='custom'&&!customOn?'auto':(guest&&TUTOR_MODELS.find(m=>m.id===noteModel)?.provider==='gemini'?'auto':noteModel);
+ const value=
+  (noteModel==='custom'&&!customOn)||(noteModel==='local'&&!localTutorActive)
+   ?'auto'
+   :(guest&&TUTOR_MODELS.find(m=>m.id===noteModel)?.provider==='gemini'?'auto':noteModel);
  return (
   <div className="settings-row">
    <span className="settings-label">{L('笔记 AI 模型','Note AI model')}</span>
@@ -142,7 +148,12 @@ function NoteModelRow({L,isGuest}:{L:(zh:string,en:string)=>string;isGuest:boole
     onChange={e=>setNoteModel(e.target.value)}
     aria-label={L('笔记 AI 模型','Note AI model')}
    >
-    <option value="auto">{L('默认（自动）','Default (Auto)')}</option>
+    <option value="auto">
+     {localTutorActive
+      ?L(`默认（本地 ${LOCAL_PROVIDER_LABEL[localCfg.provider]}）`,`Default (Local ${LOCAL_PROVIDER_LABEL[localCfg.provider]})`)
+      :L('默认（自动）','Default (Auto)')}
+    </option>
+    {localTutorActive&&<option value="local">{L(`本地：${LOCAL_PROVIDER_LABEL[localCfg.provider]}`,`Local: ${LOCAL_PROVIDER_LABEL[localCfg.provider]}`)}</option>}
     {customOn&&<option value="custom">{L(`专属 API（${customLabel}）`,`Custom (${customLabel})`)}</option>}
     {visibleModels.map(m=>(
      <option key={m.id} value={m.id}>{L(m.label[0],m.label[1])}</option>
@@ -174,14 +185,17 @@ function ThinkingLevelRow({L,isGuest}:{L:(zh:string,en:string)=>string;isGuest:b
  const tutorModel=useStoredTutorModel();
  const [gradeModel]=useGradeModel();
  const [noteModel]=useStoredNoteModel();
+ const [localCfg]=useLocalBridgeConfig();
+ const localTutor=isLocalTutorReady(localCfg)?localCfg:null;
+ const localGrade=isLocalGradeReady(localCfg)?localCfg:null;
  const effTutor=isGuest&&TUTOR_MODELS.find(m=>m.id===tutorModel)?.provider==='gemini'?'auto':tutorModel;
  const effNote=isGuest&&TUTOR_MODELS.find(m=>m.id===noteModel)?.provider==='gemini'?'auto':noteModel;
- const tutor=getTutorThinkingSpec(effTutor,null);
- const grade=getGradeThinkingSpec(gradeModel,null,isGuest);
- const note=getTutorThinkingSpec(effNote,null);
- const tutorName=TUTOR_MODELS.find(m=>m.id===effTutor)?.label[0]??'DeepSeek V4.1 Flash';
- const gradeName=isGuest?'DeepSeek V4.1 Flash（思考）':(GRADE_MODELS.find(m=>m.id===gradeModel)?.name??'Gemini 4 Hydrogen');
- const noteName=TUTOR_MODELS.find(m=>m.id===effNote)?.label[0]??'DeepSeek V4.1 Flash';
+ const tutor=getTutorThinkingSpec(effTutor,null,localTutor);
+ const grade=getGradeThinkingSpec(gradeModel,null,isGuest,localGrade);
+ const note=getTutorThinkingSpec(effNote,null,localTutor);
+ const tutorName=(effTutor==='local'||(effTutor==='auto'&&localTutor))?LOCAL_PROVIDER_LABEL[localCfg.provider]:(TUTOR_MODELS.find(m=>m.id===effTutor)?.label[0]??'DeepSeek V4.1 Flash');
+ const gradeName=(gradeModel==='local'||(gradeModel==='auto'&&localGrade))?LOCAL_PROVIDER_LABEL[localCfg.provider]:(isGuest?'DeepSeek V4.1 Flash（思考）':(GRADE_MODELS.find(m=>m.id===gradeModel)?.name??'Gemini 4 Hydrogen'));
+ const noteName=(effNote==='local'||(effNote==='auto'&&localTutor))?LOCAL_PROVIDER_LABEL[localCfg.provider]:(TUTOR_MODELS.find(m=>m.id===effNote)?.label[0]??'DeepSeek V4.1 Flash');
  const showTutor=!tutor.spec.locked;
  const showGrade=!grade.spec.locked;
  const showNoteSeg=!note.spec.locked&&effNote!=='auto'&&effNote!=='custom'&&note.scopeKey!==tutor.scopeKey&&note.scopeKey!==grade.scopeKey;

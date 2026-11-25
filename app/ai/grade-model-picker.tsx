@@ -4,6 +4,7 @@ import {Brain,Cpu} from 'lucide-react';
 import {useI18n} from '../components/i18n';
 import {GRADE_MODELS,parseGradeModel,type GradeModelId} from '@/lib/grade-types';
 import {getGradeThinkingSpec,parseThinkingLevel,THINKING_META} from '@/lib/thinking';
+import {isLocalGradeReady,LOCAL_PROVIDER_LABEL,useLocalBridgeConfig} from '@/lib/local-bridge-config';
 import {gradeInfo,setGradeCustomCache,useGradeModel,type GradeQuotaInfo} from './grade-client';
 import {useModelThinkingLevel} from './thinking-pref';
 
@@ -13,7 +14,7 @@ function loadCustomInfo():Promise<GradeQuotaInfo|null>{
  return cachedCustom;
 }
 
-const PICKER_MODEL_LABEL:Record<Exclude<GradeModelId,'custom'>,[string,string]>={
+const PICKER_MODEL_LABEL:Record<Exclude<GradeModelId,'custom'|'local'>,[string,string]>={
  auto:['自动','Auto'],
  gemini:['Gemini 4','Gemini 4'],
  deepseek:['DeepSeek','DeepSeek'],
@@ -24,6 +25,8 @@ export default function GradeModelPicker({disabled=false}:{disabled?:boolean}){
  const L=(zh:string,en:string)=>locale==='en'?en:zh;
  const lang=locale==='en'?'en':'zh';
  const [model,setModel]=useGradeModel();
+ const [localCfg]=useLocalBridgeConfig();
+ const localGradeActive=isLocalGradeReady(localCfg);
  const [customInfo,setCustomInfo]=useState<{hasCustom:boolean;isGuest:boolean;label:string;provider:string;model?:string}>({hasCustom:false,isGuest:false,label:'',provider:''});
 
  useEffect(()=>{
@@ -43,15 +46,21 @@ export default function GradeModelPicker({disabled=false}:{disabled?:boolean}){
   return ()=>{alive=false};
  },[]);
 
- const effective:GradeModelId=model==='custom'&&!customInfo.hasCustom?'auto':(customInfo.isGuest&&model==='gemini'?'deepseek':model);
- const {scopeKey,spec}=getGradeThinkingSpec(effective,customInfo.hasCustom?{provider:customInfo.provider,model:customInfo.model}:null,customInfo.isGuest);
+ const effective:GradeModelId=
+  model==='custom'&&!customInfo.hasCustom?'auto'
+  :model==='local'&&!localGradeActive?'auto'
+  :(customInfo.isGuest&&model==='gemini'?'deepseek':model);
+ const {scopeKey,spec}=getGradeThinkingSpec(effective,customInfo.hasCustom?{provider:customInfo.provider,model:customInfo.model}:null,customInfo.isGuest,localGradeActive?localCfg:null);
  const [thinking,setThinking]=useModelThinkingLevel(scopeKey,spec);
  const visibleModels=customInfo.isGuest?GRADE_MODELS.filter(m=>m.id!=='gemini'):GRADE_MODELS;
- const currentHint=effective==='custom'
-  ?L(`使用你在「AI 设置」里绑定的专属模型（${customInfo.label||'自定义'}）进行评分`,`Grade with your custom model (${customInfo.label||'custom'})`)
-  :(lang==='en'
-   ?GRADE_MODELS.find(m=>m.id===effective)?.hintEn
-   :GRADE_MODELS.find(m=>m.id===effective)?.hint)??'';
+ const currentHint=
+  effective==='local'||(effective==='auto'&&localGradeActive)
+   ?L(`使用本地客户端 ${LOCAL_PROVIDER_LABEL[localCfg.provider]} 评分`,`Grade with local ${LOCAL_PROVIDER_LABEL[localCfg.provider]}`)
+   :effective==='custom'
+    ?L(`使用你在「AI 设置」里绑定的专属模型（${customInfo.label||'自定义'}）进行评分`,`Grade with your custom model (${customInfo.label||'custom'})`)
+    :(lang==='en'
+     ?GRADE_MODELS.find(m=>m.id===effective)?.hintEn
+     :GRADE_MODELS.find(m=>m.id===effective)?.hint)??'';
  const curMeta=THINKING_META[thinking];
 
  return (
@@ -66,8 +75,13 @@ export default function GradeModelPicker({disabled=false}:{disabled?:boolean}){
      onChange={e=>setModel(parseGradeModel(e.target.value))}
     >
      {visibleModels.map(m=>(
-      <option key={m.id} value={m.id}>{customInfo.isGuest&&m.id==='auto'?L('自动 (DeepSeek)','Auto (DeepSeek)'):(lang==='en'?PICKER_MODEL_LABEL[m.id][1]:PICKER_MODEL_LABEL[m.id][0])}</option>
+      <option key={m.id} value={m.id}>
+       {m.id==='auto'&&localGradeActive
+        ?L(`自动（本地 ${LOCAL_PROVIDER_LABEL[localCfg.provider]}）`,`Auto (Local ${LOCAL_PROVIDER_LABEL[localCfg.provider]})`)
+        :(customInfo.isGuest&&m.id==='auto'?L('自动 (DeepSeek)','Auto (DeepSeek)'):(lang==='en'?PICKER_MODEL_LABEL[m.id][1]:PICKER_MODEL_LABEL[m.id][0]))}
+      </option>
      ))}
+     {localGradeActive&&<option value="local">{L(`本地：${LOCAL_PROVIDER_LABEL[localCfg.provider]}`,`Local: ${LOCAL_PROVIDER_LABEL[localCfg.provider]}`)}</option>}
      {customInfo.hasCustom&&<option value="custom">{L('我的 API','My API')}</option>}
     </select>
    </label>

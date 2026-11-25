@@ -66,7 +66,7 @@ export default function QuestionCard({item,label,result,last,onAnswer,onNext,onP
   draftCb.current?.(clean);
  },[text,done,item.id,q.type,codeStarters]);
  const [live,setLive]=useState<GradeResult|null>(null),[retryLive,setRetryLive]=useState<GradeResult|null>(null),[liveThink,setLiveThink]=useState<GradeThinkState|null>(null),[retryThink,setRetryThink]=useState<GradeThinkState|null>(null); // AI 正在流式写出的评分
- const [grading,setGrading]=useState(false),[graded,setGraded]=useState<{result:GradeResult;remaining:number;model?:string;think?:string;thinkSecs?:number}|null>(null),[gradeError,setGradeError]=useState('');
+ const [grading,setGrading]=useState(false),[graded,setGraded]=useState<{result:GradeResult;remaining?:number;model?:string;think?:string;thinkSecs?:number}|null>(null),[gradeError,setGradeError]=useState('');
  const [editing,setEditing]=useState(false),[refOpen,setRefOpen]=useState(false),[explainOpen,setExplainOpen]=useState(false);
  // 今天剩余的 AI 评分次数，显示在提交按钮旁边，让人一眼知道写完可以交给 AI 评分。
  const [left,setLeft]=useState<number|null>(null);
@@ -79,7 +79,7 @@ export default function QuestionCard({item,label,result,last,onAnswer,onNext,onP
   const ctl=new AbortController();gradeAbortRef.current=ctl;
   setEditing(false);setGrading(true);setLive(null);setLiveThink(null);setGradeError('');const r=await requestGrade([toGradeItem(q,text)],p=>setLive(p[0]),undefined,setLiveThink,ctl.signal);if(gradeAbortRef.current===ctl)gradeAbortRef.current=null;setGrading(false);setLive(null);setLiveThink(null);
   if(ctl.signal.aborted||(!r.ok&&r.aborted)){void gradeQuota().then(setLeft);return}
-  if(r.ok){setRevealed(true);const result=r.results[0];setGraded({result,remaining:r.remaining,model:r.model,think:r.think,thinkSecs:r.thinkSecs});setLeft(r.remaining);onAnswer({correct:result.score>=0.6*result.max,given:text.trim()})}else{setGradeError(r.message);if(r.quota)setLeft(0)}};
+  if(r.ok){setRevealed(true);const result=r.results[0];setGraded({result,remaining:r.remaining,model:r.model,think:r.think,thinkSecs:r.thinkSecs});if(typeof r.remaining==='number')setLeft(r.remaining);onAnswer({correct:result.score>=0.6*result.max,given:text.trim()})}else{setGradeError(r.message);if(r.quota)setLeft(0)}};
  // 简答 / 代码题没答好之后，可以遮住参考答案再写一遍巩固，写完同样交给 AI 评分（不改变本题记分，题目仍留在错题本）。
  const [practising,setPractising]=useState(false),[retry,setRetry]=useState(''),[hideRef,setHideRef]=useState(true),[checked,setChecked]=useState(false);
  const [retryGrading,setRetryGrading]=useState(false),[retryGraded,setRetryGraded]=useState<GradeResult|null>(null),[retryGradedThink,setRetryGradedThink]=useState<{think?:string;secs?:number}|null>(null),[retryModel,setRetryModel]=useState(''),[retryError,setRetryError]=useState('');
@@ -87,7 +87,7 @@ export default function QuestionCard({item,label,result,last,onAnswer,onNext,onP
   const ctl=new AbortController();retryAbortRef.current=ctl;
   setRetryGrading(true);setRetryLive(null);setRetryThink(null);setRetryError('');const r=await requestGrade([toGradeItem(q,retry)],p=>setRetryLive(p[0]),undefined,setRetryThink,ctl.signal);if(retryAbortRef.current===ctl)retryAbortRef.current=null;setRetryGrading(false);setRetryLive(null);setRetryThink(null);
   if(ctl.signal.aborted||(!r.ok&&r.aborted)){void gradeQuota().then(setLeft);return}
-  if(r.ok){setChecked(true);setRetryGraded(r.results[0]);setRetryGradedThink({think:r.think,secs:r.thinkSecs});setRetryModel(r.model??'');setLeft(r.remaining)}else{setRetryError(r.message);if(r.quota)setLeft(0)}};
+  if(r.ok){setChecked(true);setRetryGraded(r.results[0]);setRetryGradedThink({think:r.think,secs:r.thinkSecs});setRetryModel(r.model??'');if(typeof r.remaining==='number')setLeft(r.remaining)}else{setRetryError(r.message);if(r.quota)setLeft(0)}};
  const mainStd=useStandardAnswer({
   keyId:`main:${item.id}`,
   item:isWritten(q)?toStandardItem(q,untouchedStarter(item.id,text,codeStarters)?'':text):undefined,

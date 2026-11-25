@@ -141,7 +141,7 @@ export function buildReciteItems(levels:AiLevel[],baseItems:BankEntry[],subjectI
  return out;
 }
 
-type GradeRecord={result:GradeResult;remaining:number;answer?:string;model?:string;think?:string;secs?:number};
+type GradeRecord={result:GradeResult;remaining?:number;answer?:string;model?:string;think?:string;secs?:number};
 type ReciteSession={
  source?:string;
  kindFilter?:'all'|'qa'|'term';
@@ -288,7 +288,7 @@ export default function ReciteView({items,storageKey,sourceName,backHref,onOpenS
   if(ctl.signal.aborted||(!r.ok&&r.aborted)){void gradeQuota().then(setLeft);return}
   if(r.ok){
    const rec:GradeRecord={result:r.results[0],remaining:r.remaining,answer:targetDraft,model:r.model,think:r.think,secs:r.thinkSecs};
-   setLeft(r.remaining);
+   if(typeof r.remaining==='number')setLeft(r.remaining);
    const prev=savedRef.current,grades={...(prev.grades??{}),[targetId]:rec};
    save({...prev,grades});
    if(currentIdRef.current===targetId)setGraded(rec);

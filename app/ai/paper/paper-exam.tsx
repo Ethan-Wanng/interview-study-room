@@ -81,7 +81,7 @@ function PaperExamInner({examId,title,passRate,storageKey,onScored,pool=NO_POOL}
    setRecord({...done,written:nextWritten,gradeNote:hasPending?L('已停止 AI 评分，可切换模型或点击「重新请求 AI 评分」，也可以在下方逐题对照得分点自评。','AI grading stopped. Switch models, retry AI grading, or self-check below.'):done.gradeNote});
    return;
   }
-  if(res.ok){if(res.model)setGradeModel(res.model);setGradeRemaining(res.remaining)}
+  if(res.ok){if(res.model)setGradeModel(res.model);if(typeof res.remaining==='number')setGradeRemaining(res.remaining)}
   const next:PaperRecord=res.ok?{...done,gradeNote:undefined,gradeThink:res.think,gradeThinkSecs:res.thinkSecs,written:{...done.written,...blank,...Object.fromEntries(res.results.map(g=>[g.id,{kind:'ai' as const,result:qMap[g.id]?fixFillGrade(qMap[g.id],done.answers[g.id],g):g}]))}}:{...done,written:{...done.written,...blank},gradeNote:res.message};
   setRecord(next);if(res.ok)scored.current(paperScore(paper,next).total)}
  // 已有交卷记录但还有未评分的题（例如此前提交的试卷未对填空题做 AI 评分），打开试卷时自动补评。

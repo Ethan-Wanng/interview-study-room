@@ -10,6 +10,11 @@ export function groupReleasesByDay(releases:Release[]):ReleaseDay[]{
 }
 
 export const RELEASES:Release[]=[
+ {version:'2026.11.25-3',date:'2026-11-25',title:'新增本地客户端桥接模式（支持直连本机 Antigravity / Codex / WorkBuddy）',changes:[
+  '新增 AI 提示词同构拆分（lib/ai-prompts.ts）与只读站内推荐链接检索接口（POST /api/tutor/links），零扣额、不调用云端大模型即可为本地直连模式补全站内知识点跳转',
+  '在 AI 设置中新增「本地客户端桥接」配置面板（游客与登录用户均可用，地址与令牌仅保存在浏览器本地 localStorage，永不上传云端），支持通过本机桥接直连 Antigravity / Codex / WorkBuddy 官方协议并动态探测可用模型与思考强度',
+  '全站 AI 老师流式对话、笔记 AI 润色/问答、主观题 AI 批改评分与规范回答生成全面接入本地客户端桥接路由，命中桥接时零消耗站内 AI 额度并保留原有流式输出、思考过程展示与错误兜底体验',
+ ]},
  {version:'2026.11.25-2',date:'2026-11-25',title:'参考简历项目深挖升级为面试题预判、引导教学与闯关作答',changes:[
   '新增参考简历项目深挖预判页（/interview/project-drill）与流式生成接口（POST /api/jd-research/project-drill），展示当前简历项目摘要并移除无关系统设计预设题',
   '针对单个简历项目结合目标岗位 JD 生成「预判教学」卡片（考察意图、核心拆解、递进式引导作答框架与避坑要点）并接入专属 AI 问答与笔记收藏',

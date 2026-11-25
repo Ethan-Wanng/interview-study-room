@@ -4,6 +4,8 @@ import {useSyncExternalStore} from 'react';
 import {DEFAULT_GRADE_MODEL,GRADE_LIMITS,parseGradeModel,pointScores,type GradeEvent,type GradeItem,type GradeMark,type GradeMarkKind,type GradeModelId,type GradeResponse,type GradeResult} from '@/lib/grade-types';
 import {getGradeThinkingSpec} from '@/lib/thinking';
 import {filterStarterMarks} from '@/lib/starter-diff';
+import {getLocalBridgeConfig,isLocalGradeReady} from '@/lib/local-bridge-config';
+import {streamGradeViaBridge,streamStandardViaBridge} from '@/lib/local-bridge-client';
 import {getGeminiAutoProxy} from './gemini-proxy-pref';
 import {getModelThinkingLevel} from './thinking-pref';
 
@@ -74,11 +76,11 @@ export function partialResults(items:GradeItem[],text:string):GradeResult[]{cons
 // onLive：评分过程中不断收到“写到一半的结果”。显示按打字的节奏推进：至少每秒约 80 个字符，
 // 落后收到的内容太多时自动加快，最多落后约 3 秒；收到最终结果后先把剩下的文字打完再返回。
 export type GradeThinkState={text:string;secs?:number;live:boolean};
-export type GradeOutcome={ok:true;results:GradeResult[];model?:string;remaining:number;think?:string;thinkSecs?:number}|{ok:false;quota:boolean;aborted?:boolean;message:string};
-export type StandardAnswerOutcome={ok:true;text:string;model?:string;remaining:number;think?:string;thinkSecs?:number}|{ok:false;quota:boolean;aborted?:boolean;message:string};
+export type GradeOutcome={ok:true;results:GradeResult[];model?:string;remaining?:number;think?:string;thinkSecs?:number}|{ok:false;quota:boolean;aborted?:boolean;message:string};
+export type StandardAnswerOutcome={ok:true;text:string;model?:string;remaining?:number;think?:string;thinkSecs?:number}|{ok:false;quota:boolean;aborted?:boolean;message:string};
 const NET='网络连接失败，这次没有扣次数。可以稍后再试，或先对照得分点自评。';
 
-type NdjsonOutcome<T>={ok:true;data:T;model?:string;remaining:number;think?:string;thinkSecs?:number}|{ok:false;quota:boolean;aborted?:boolean;message:string};
+type NdjsonOutcome<T>={ok:true;data:T;model?:string;remaining?:number;think?:string;thinkSecs?:number}|{ok:false;quota:boolean;aborted?:boolean;message:string};
 const ABORTED={ok:false as const,quota:false,aborted:true,message:''};
 async function runGradeNdjson<T>(
  body:Record<string,unknown>,
@@ -89,7 +91,53 @@ async function runGradeNdjson<T>(
 ):Promise<NdjsonOutcome<T>>{
  if(signal?.aborted)return ABORTED;
  const rawGm=parseGradeModel(body.model);
- const gm=cachedGradeIsGuest&&rawGm==='gemini'?'deepseek':rawGm;
+ const localCfg=getLocalBridgeConfig();
+ const useLocal=isLocalGradeReady(localCfg)&&(rawGm==='auto'||rawGm==='local');
+ if(useLocal){
+  const {scopeKey,spec}=getGradeThinkingSpec('local',cachedGradeCustom,cachedGradeIsGuest,localCfg);
+  const thinkingLevel=spec.locked?'auto':getModelThinkingLevel(scopeKey,spec);
+  let got='',shown=0,think='',thinkStart=0,thinkSecs:number|undefined;
+  const tick=setInterval(()=>{if(signal?.aborted||shown>=got.length)return;shown=Math.min(got.length,shown+Math.max(4,Math.ceil((got.length-shown)/60)));onProgress(got.slice(0,shown))},50);
+  try{
+   const items=(body.items as GradeItem[])??[];
+   if(body.mode==='standard'){
+    const out=await streamStandardViaBridge({
+     cfg:localCfg,
+     item:items[0],
+     thinkingLevel,
+     signal,
+     onThink:d=>{if(!thinkStart)thinkStart=Date.now();think+=d;onThink?.({text:think,live:true})},
+     onDelta:d=>{if(thinkStart&&thinkSecs===undefined){thinkSecs=Math.max(1,Math.round((Date.now()-thinkStart)/1000));onThink?.({text:think,secs:thinkSecs,live:false})}got+=d},
+    });
+    if(signal?.aborted){clearInterval(tick);return ABORTED}
+    if(think&&thinkSecs===undefined&&thinkStart){thinkSecs=Math.max(1,Math.round((Date.now()-thinkStart)/1000))}
+    onThink?.(think?{text:think,secs:thinkSecs,live:false}:null);
+    while(shown<got.length){if(signal?.aborted){clearInterval(tick);return ABORTED}await new Promise(r=>setTimeout(r,60))}
+    clearInterval(tick);
+    return {ok:true,data:extract(got,{t:'done',results:[],text:out.text,model:out.model,remaining:0}),model:out.model,think:think||undefined,thinkSecs};
+   }
+   const out=await streamGradeViaBridge({
+    cfg:localCfg,
+    items,
+    thinkingLevel,
+    signal,
+    onThink:d=>{if(!thinkStart)thinkStart=Date.now();think+=d;onThink?.({text:think,live:true})},
+    onDelta:d=>{if(thinkStart&&thinkSecs===undefined){thinkSecs=Math.max(1,Math.round((Date.now()-thinkStart)/1000));onThink?.({text:think,secs:thinkSecs,live:false})}got+=d},
+    onReset:()=>{got='';shown=0;think='';thinkStart=0;thinkSecs=undefined;onThink?.(null);onProgress('')},
+   });
+   if(signal?.aborted){clearInterval(tick);return ABORTED}
+   if(think&&thinkSecs===undefined&&thinkStart){thinkSecs=Math.max(1,Math.round((Date.now()-thinkStart)/1000))}
+   onThink?.(think?{text:think,secs:thinkSecs,live:false}:null);
+   while(shown<got.length){if(signal?.aborted){clearInterval(tick);return ABORTED}await new Promise(r=>setTimeout(r,60))}
+   clearInterval(tick);
+   return {ok:true,data:extract(got,{t:'done',results:out.results,model:out.model,remaining:0}),model:out.model,think:think||undefined,thinkSecs};
+  }catch(err){
+   clearInterval(tick);
+   if(signal?.aborted)return ABORTED;
+   return {ok:false,quota:false,message:err instanceof Error&&err.message?err.message:NET};
+  }
+ }
+ const gm=(cachedGradeIsGuest&&rawGm==='gemini')||(rawGm==='local')?'deepseek':rawGm;
  const {scopeKey,spec}=getGradeThinkingSpec(gm,cachedGradeCustom,cachedGradeIsGuest);
  const thinkingLevel=spec.locked?'auto':getModelThinkingLevel(scopeKey,spec);
  let res:Response;

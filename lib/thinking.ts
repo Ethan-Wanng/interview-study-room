@@ -103,8 +103,21 @@ export function getCustomThinkingSpec(provider:string,model?:string):ModelThinki
  return SPEC_DS_OFF;
 }
 
+// 本地客户端对应的思考强度规格（Codex 支持 low/medium/high effort，ACP 驱动锁定默认思考模式）。
+export function getLocalThinkingSpec(provider:string,model?:string):ModelThinkingSpec{
+ if(provider==='codex'){
+  return {levels:['low','medium','high'],defaultLevel:'medium'};
+ }
+ return {levels:[SPEC_GM_HYDROGEN.defaultLevel],defaultLevel:SPEC_GM_HYDROGEN.defaultLevel,locked:true};
+ void model;
+}
+
 // AI 问答模型与自定义配置对应的思考规格与作用域键。
-export function getTutorThinkingSpec(siteModel:string,custom?:{provider:string;model?:string}|null):{scopeKey:string;spec:ModelThinkingSpec}{
+export function getTutorThinkingSpec(siteModel:string,custom?:{provider:string;model?:string}|null,local?:{enabled?:boolean;provider:string;model?:string}|null):{scopeKey:string;spec:ModelThinkingSpec}{
+ if((siteModel==='local'||(siteModel==='auto'&&local?.enabled))&&local?.enabled){
+  const m=local.model?.trim()||'default';
+  return {scopeKey:`local:${local.provider}/${m}`,spec:getLocalThinkingSpec(local.provider,local.model)};
+ }
  if((siteModel==='auto'||siteModel==='custom')&&custom){
   const m=custom.model?.trim()||custom.provider;
   return {scopeKey:`custom:${custom.provider}/${m}`,spec:getCustomThinkingSpec(custom.provider,custom.model)};
@@ -116,7 +129,11 @@ export function getTutorThinkingSpec(siteModel:string,custom?:{provider:string;m
 }
 
 // AI 评分模型与自定义配置对应的思考规格与作用域键。
-export function getGradeThinkingSpec(gradeModel:string,custom?:{provider:string;model?:string}|null,isGuest=false):{scopeKey:string;spec:ModelThinkingSpec}{
+export function getGradeThinkingSpec(gradeModel:string,custom?:{provider:string;model?:string}|null,isGuest=false,local?:{enabled?:boolean;provider:string;model?:string}|null):{scopeKey:string;spec:ModelThinkingSpec}{
+ if((gradeModel==='local'||(gradeModel==='auto'&&local?.enabled))&&local?.enabled){
+  const m=local.model?.trim()||'default';
+  return {scopeKey:`local:${local.provider}/${m}`,spec:getLocalThinkingSpec(local.provider,local.model)};
+ }
  if((gradeModel==='auto'||gradeModel==='custom')&&custom){
   const m=custom.model?.trim()||custom.provider;
   return {scopeKey:`custom:${custom.provider}/${m}`,spec:getCustomThinkingSpec(custom.provider,custom.model)};

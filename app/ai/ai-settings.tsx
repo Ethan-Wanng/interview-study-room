@@ -37,6 +37,189 @@ import {useCallback,useEffect,useState} from 'react';
 import {Check,KeyRound,Lock,ShieldCheck,SlidersHorizontal,Trash2,X} from 'lucide-react';
 import {useI18n} from '../components/i18n';
 import {AI_CONFIG_EVENT,AI_PROVIDERS,DEFAULT_USER_AI_SETTINGS,notifyAiConfigChanged,providerMeta,type AiProviderId,type UserAiSettings} from '@/lib/ai-config';
+import {LOCAL_BRIDGE_PROVIDERS,LOCAL_PROVIDER_LABEL,useLocalBridgeConfig,type LocalBridgeProvider} from '@/lib/local-bridge-config';
+import {pingBridge,probeBridgeProviders,refreshBridgeProvider,type LocalProviderInfo,type ProbeProvidersOutcome} from '@/lib/local-bridge-client';
+
+function copyLocalCommand(cmd:string):Promise<boolean>{
+ try{
+  if(navigator.clipboard?.writeText)return navigator.clipboard.writeText(cmd).then(()=>true,()=>false);
+ }catch{}
+ try{
+  const ta=document.createElement('textarea');
+  ta.value=cmd;
+  ta.style.position='fixed';
+  ta.style.opacity='0';
+  document.body.appendChild(ta);
+  ta.select();
+  const ok=document.execCommand('copy');
+  document.body.removeChild(ta);
+  return Promise.resolve(ok);
+ }catch{
+  return Promise.resolve(false);
+ }
+}
+
+function LocalBridgeSection({L}:{L:(zh:string,en:string)=>string}){
+ const [localCfg,updateLocal]=useLocalBridgeConfig();
+ const [providers,setProviders]=useState<LocalProviderInfo[]>([]);
+ const [probing,setProbing]=useState(false);
+ const [probeState,setProbeState]=useState<'idle'|'ready'|'warn'|'err'>('idle');
+ const [probeLabel,setProbeLabel]=useState('');
+ const [copiedCmd,setCopiedCmd]=useState(false);
+
+ const activeProvider=providers.find(p=>p.id===localCfg.provider);
+
+ const applyProviderStatus=(list:LocalProviderInfo[],target:LocalBridgeProvider)=>{
+  setProviders(list);
+  const found=list.find(p=>p.id===target);
+  if(!found){
+   setProbeState('err');
+   setProbeLabel(L('未检测到客户端','Client unavailable'));
+   return;
+  }
+  if(found.status==='ready'){
+   setProbeState('ready');
+   setProbeLabel(L('已连接','Connected'));
+   return;
+  }
+  if(found.status==='auth_required'){
+   setProbeState('warn');
+   setProbeLabel(found.loginHint?L(`未登录：${found.loginHint}`,`Login: ${found.loginHint}`):L('未登录','Login required'));
+   return;
+  }
+  if(found.status==='missing_binary'){
+   setProbeState('err');
+   setProbeLabel(found.loginHint?L(`未安装：${found.loginHint}`,`Missing: ${found.loginHint}`):L('未安装','Not installed'));
+   return;
+  }
+  setProbeState('err');
+  setProbeLabel(found.errorMessage||L('连接异常','Error'));
+ };
+
+ const runProbe=async(refreshActive=false,targetProvider=localCfg.provider,enableOnReady=false)=>{
+  setProbing(true);
+  try{
+   if(!localCfg.token.trim()){
+    const alive=await pingBridge(localCfg.port);
+    setProbeState(alive?'warn':'err');
+    setProbeLabel(alive?L('需填写配对码','Token required'):L('未连接','Offline'));
+    return;
+   }
+   if(refreshActive&&providers.length>0){
+    const res=await refreshBridgeProvider(localCfg.port,localCfg.token,targetProvider);
+    if(!res.ok){
+     setProbeState('err');
+     setProbeLabel(res.message);
+     return;
+    }
+    const nextList=providers.some(p=>p.id===targetProvider)
+     ?providers.map(p=>p.id===targetProvider?res.provider:p)
+     :[...providers,res.provider];
+    applyProviderStatus(nextList,targetProvider);
+    if(enableOnReady&&res.provider.status==='ready')updateLocal({enabled:true});
+    return;
+   }
+   const out:ProbeProvidersOutcome=await probeBridgeProviders(localCfg.port,localCfg.token);
+   if(!out.ok){
+    setProbeState('err');
+    setProbeLabel(out.message);
+    return;
+   }
+   applyProviderStatus(out.providers,targetProvider);
+   const match=out.providers.find(p=>p.id===targetProvider);
+   if(enableOnReady&&match?.status==='ready')updateLocal({enabled:true});
+  }finally{
+   setProbing(false);
+  }
+ };
+
+ const pickLocalProvider=(id:LocalBridgeProvider)=>{
+  updateLocal({provider:id,model:''});
+  if(providers.length)applyProviderStatus(providers,id);
+ };
+
+ const copyLaunchCmd=async()=>{
+  if(await copyLocalCommand('npx @interview-study/local-bridge')){
+   setCopiedCmd(true);
+   setTimeout(()=>setCopiedCmd(false),1800);
+  }
+ };
+
+ return (
+  <section className="ai-cfg-local">
+   <div className="ai-cfg-head">
+    <strong>{L('本地客户端','Local Client')}</strong>
+    {probeState!=='idle'&&<span className={`ai-cfg-status ${probeState}`}>{probeLabel}</span>}
+   </div>
+
+   <label className="ai-cfg-toggle">
+    <input type="checkbox" checked={localCfg.enabled} onChange={e=>updateLocal({enabled:e.target.checked})}/>
+    <span>{L('启用本地客户端','Enable local client')}</span>
+   </label>
+
+   <div className="ai-cfg-field">
+    <span className="ai-cfg-label">{L('客户端','Client')}</span>
+    <div className="ai-cfg-providers">
+     {LOCAL_BRIDGE_PROVIDERS.map(id=>(
+      <button key={id} type="button" className={'ai-cfg-prov'+(localCfg.provider===id?' on':'')} onClick={()=>pickLocalProvider(id)}>
+       {LOCAL_PROVIDER_LABEL[id]}
+      </button>
+     ))}
+    </div>
+   </div>
+
+   <div className="ai-cfg-grid">
+    <label>
+     <span className="ai-cfg-label">{L('端口','Port')}</span>
+     <input type="number" min={1} max={65535} className="ai-cfg-input" value={localCfg.port} placeholder="43180" onChange={e=>updateLocal({port:Number(e.target.value)||43180})}/>
+    </label>
+    <label>
+     <span className="ai-cfg-label">{L('配对码','Pairing Token')}</span>
+     <input type="password" className="ai-cfg-input" value={localCfg.token} placeholder="brg_..." onChange={e=>updateLocal({token:e.target.value})}/>
+    </label>
+   </div>
+
+   <div className="ai-cfg-field">
+    <div className="ai-cfg-row-head">
+     <span className="ai-cfg-label">{L('模型','Model')}</span>
+     <button type="button" className="ai-cfg-chip" disabled={probing} onClick={()=>void runProbe(true)}>
+      {probing?L('刷新中…','Refreshing…'):L('刷新','Refresh')}
+     </button>
+    </div>
+    {activeProvider?.models.length?(
+     <div className="ai-cfg-models">
+      {activeProvider.models.map(m=>(
+       <button key={m.id} type="button" className={'ai-cfg-chip'+(localCfg.model===m.id?' on':'')} onClick={()=>updateLocal({model:m.id})}>
+        {m.label}
+       </button>
+      ))}
+     </div>
+    ):null}
+    <input className="ai-cfg-input" value={localCfg.model} placeholder={activeProvider?.defaultModel||'default'} onChange={e=>updateLocal({model:e.target.value})}/>
+   </div>
+
+   <div className="ai-cfg-scenes">
+    <label>
+     <input type="checkbox" checked={localCfg.allowTutor} onChange={e=>updateLocal({allowTutor:e.target.checked})}/>
+     <span>{L('AI 问答','AI Tutor')}</span>
+    </label>
+    <label>
+     <input type="checkbox" checked={localCfg.allowGrade} onChange={e=>updateLocal({allowGrade:e.target.checked})}/>
+     <span>{L('AI 评分','AI Grading')}</span>
+    </label>
+   </div>
+
+   <div className="ai-cfg-actions">
+    <button type="button" className="button primary" disabled={probing} onClick={()=>void runProbe(false,localCfg.provider,true)}>
+     {probing?L('连接中…','Connecting…'):L('连接并保存','Connect & Save')}
+    </button>
+    <button type="button" className="button secondary" onClick={()=>void copyLaunchCmd()}>
+     {copiedCmd?L('已复制','Copied'):L('复制启动命令','Copy command')}
+    </button>
+   </div>
+  </section>
+ );
+}
 
 type ConfigResponse={
  isGuest:boolean;
@@ -172,6 +355,7 @@ export function AiSettingsPanel({onClose}:{onClose?:()=>void}){
     <a href="/login" className="button primary" style={{marginTop:6,display:'inline-flex'}}><KeyRound size={15}/> {L('去登录 / 注册账号','Sign in / Register')}</a>
    </div>
    <ThinkingLevelCfg L={L}/>
+   <LocalBridgeSection L={L}/>
   </div>;
  }
 
@@ -239,5 +423,6 @@ export function AiSettingsPanel({onClose}:{onClose?:()=>void}){
    <button type="button" className="button primary" disabled={saving} onClick={()=>void save(false)}><Check size={15}/> {saving?L('保存中…','Saving…'):L('保存 AI 设置','Save settings')}</button>
    {settings.hasKey&&<button type="button" className="button secondary" disabled={saving} onClick={()=>void save(true)}><Trash2 size={15}/> {L('清除 Key 并恢复默认','Clear key & reset')}</button>}
   </div>
+  <LocalBridgeSection L={L}/>
  </div>;
 }

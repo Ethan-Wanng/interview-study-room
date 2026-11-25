@@ -3,20 +3,26 @@ import {splitModelTag,thinkingLevelBadgeText,type ThinkingLevel} from './thinkin
 // 一次请求算一次额度：练习时一次评一道题，试卷交卷时把所有主观题放在一次请求里。
 export type GradeKind='fill'|'short'|'code'|'design';
 export type GradeItem={id:string;kind:GradeKind;q:string;code?:string;reference:string;points:string[];scores?:number[];max:number;answer:string};
-export type GradeModelId='auto'|'gemini'|'deepseek'|'custom';
-export type GradeModelOption={id:Exclude<GradeModelId,'custom'>;name:string;nameEn:string;hint:string;hintEn:string};
+export type GradeModelId='auto'|'gemini'|'deepseek'|'custom'|'local';
+export type GradeModelOption={id:Exclude<GradeModelId,'custom'|'local'>;name:string;nameEn:string;hint:string;hintEn:string};
 export const GRADE_MODELS:GradeModelOption[]=[
  {id:'auto',name:'自动（Gemini 4 优先）',nameEn:'Auto (Gemini 4 first)',hint:'优先 Gemini 4 Hydrogen（依次降级 3.8 Flash / 3.6 Flash），失败时自动使用 DeepSeek V4.1 Flash（思考模式）保底',hintEn:'Prefer Gemini 4 Hydrogen (fallback 3.8 / 3.6 Flash), auto fallback to DeepSeek V4.1 Flash (thinking)'},
  {id:'gemini',name:'Gemini 4 Hydrogen',nameEn:'Gemini 4 Hydrogen',hint:'默认 Gemini 4 Hydrogen，不可用时依次降级 Gemini 3.8 Flash / 3.6 Flash（仅 Gemini 走代理模式）',hintEn:'Default Gemini 4 Hydrogen with fallback to Gemini 3.8 / 3.6 Flash via Gemini-only proxy'},
  {id:'deepseek',name:'DeepSeek V4.1 Flash（思考）',nameEn:'DeepSeek V4.1 Flash (Thinking)',hint:'使用 DeepSeek V4.1 Flash 深度思考模式评分，与 AI 对话模型独立选择',hintEn:'DeepSeek V4.1 Flash with thinking mode enabled (independent from tutor model)'},
 ];
 export const DEFAULT_GRADE_MODEL:GradeModelId='auto';
-export const isGradeModelId=(v:unknown):v is GradeModelId=>v==='auto'||v==='gemini'||v==='deepseek'||v==='custom';
+export const isGradeModelId=(v:unknown):v is GradeModelId=>v==='auto'||v==='gemini'||v==='deepseek'||v==='custom'||v==='local';
 export const parseGradeModel=(v:unknown):GradeModelId=>isGradeModelId(v)?v:DEFAULT_GRADE_MODEL;
 export function gradeModelBadge(model:string|undefined,lang:'zh'|'en'='zh'):string{
  const {base:m,level}=splitModelTag(model);
  if(!m)return '';
  const lvTag=level?(lang==='en'?` (${thinkingLevelBadgeText(level,lang)})`:`（${thinkingLevelBadgeText(level,lang)}）`):'';
+ if(m.startsWith('local:')){
+  const rest=m.slice(6),slash=rest.indexOf('/');
+  const prov=slash>0?rest.slice(0,slash):rest,name=slash>0?rest.slice(slash+1):'default';
+  const labels:Record<string,string>={antigravity:'Antigravity',codex:'Codex',workbuddy:'WorkBuddy'};
+  return `${labels[prov]??prov} · ${name}${lvTag}`;
+ }
  if(m==='gemini-4-hydrogen')return `Gemini 4 Hydrogen${lvTag}`;
  if(m==='gemini-3.8-flash')return (lang==='en'?'Gemini 3.8 Flash (fallback)':'Gemini 3.8 Flash（降级）')+(level?` · ${thinkingLevelBadgeText(level,lang)}`:'');
  if(m==='gemini-3.6-flash')return (lang==='en'?'Gemini 3.6 Flash (fallback)':'Gemini 3.6 Flash（降级）')+(level?` · ${thinkingLevelBadgeText(level,lang)}`:'');
