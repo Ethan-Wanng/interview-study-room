@@ -301,8 +301,9 @@ const LOCAL_BRIDGE_GUIDE_KNOWLEDGE = `【本站「本地客户端桥接」权威
    - **WorkBuddy / CodeBuddy（命令：\`codebuddy\`）**：
      - 全平台 npm：\`npm i -g @tencent-ai/codebuddy-code\`
      - 登录执行：\`codebuddy login\`
-3. 启动本机桥接服务（需 Node.js >= 20，保持终端窗口开启）：
-   - 命令：\`npx -y interview-study-bridge\`
+3. 安装与启动本机桥接服务（需 Node.js >= 20，保持终端窗口开启，npm 包主页 \`https://www.npmjs.com/package/interview-study-bridge\`）：
+   - 全局安装（推荐）：\`npm i -g interview-study-bridge\`，安装后直接运行 \`interview-study-bridge\`（或 \`interview-bridge\`）启动；升级同样再运行一次 \`npm i -g interview-study-bridge@latest\`。
+   - 免安装直接运行最新版：\`npx -y interview-study-bridge@latest\`。
    - 终端会输出监听地址 \`http://127.0.0.1:43180\` 与配对码 \`brg_...\`（保存在 \`~/.interview-study-bridge/config.json\`，下次启动不变）。
    - 常用参数：\`--port 43180\`（换端口）、\`--print-token\`（查看配对码）、\`--reset-token\`（重置配对码）。
 4. 网页配对连接步骤：
