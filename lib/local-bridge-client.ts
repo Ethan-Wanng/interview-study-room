@@ -19,6 +19,7 @@ export type LocalModelOption = {
  id: string;
  label: string;
  thinkingLevels?: string[];
+ defaultThinkingLevel?: string;
 };
 
 export type LocalQuotaWindow = {

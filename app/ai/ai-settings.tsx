@@ -6,14 +6,20 @@ import {TUTOR_MODELS} from '@/lib/tutor-types';
 function GeminiProxyCfg({L}:{L:(zh:string,en:string)=>string}){const [auto,setAuto]=useGeminiAutoProxy();return <label className="ai-cfg-toggle"><input type="checkbox" checked={auto} onChange={e=>setAuto(e.target.checked)}/><span>{L('开启 Gemini 自动代理（关闭则直连 Gemini，便于排查速度慢来源）','Enable Gemini auto proxy (off = direct to Gemini to check latency)')}</span></label>;}
 function ThinkingLevelCfg({L,custom}:{L:(zh:string,en:string)=>string;custom?:{provider:string;model?:string}|null}){
  const tutorModel=useStoredTutorModel();
- const active=custom
-  ?{scopeKey:`custom:${custom.provider}/${custom.model?.trim()||custom.provider}`,spec:getCustomThinkingSpec(custom.provider,custom.model)}
-  :getTutorThinkingSpec(tutorModel,null);
+ const [localCfg]=useLocalBridgeConfig();
+ const localActive=isLocalTutorReady(localCfg)?localCfg:null;
+ const active=localActive
+  ?getTutorThinkingSpec('local',null,localActive)
+  :custom
+   ?{scopeKey:`custom:${custom.provider}/${custom.model?.trim()||custom.provider}`,spec:getCustomThinkingSpec(custom.provider,custom.model)}
+   :getTutorThinkingSpec(tutorModel,null);
  const [thinking,setThinking]=useModelThinkingLevel(active.scopeKey,active.spec);
  if(active.spec.locked)return null;
- const name=custom
-  ?`${providerMeta(custom.provider).badge} · ${custom.model?.trim()||providerMeta(custom.provider).defaultModel}`
-  :(TUTOR_MODELS.find(m=>m.id===tutorModel)?.label[0]??'DeepSeek V4.1 Flash');
+ const name=localActive
+  ?`${LOCAL_PROVIDER_LABEL[localActive.provider]} · ${localActive.model.trim()||'default'}`
+  :custom
+   ?`${providerMeta(custom.provider).badge} · ${custom.model?.trim()||providerMeta(custom.provider).defaultModel}`
+   :(TUTOR_MODELS.find(m=>m.id===tutorModel)?.label[0]??'DeepSeek V4.1 Flash');
  return (
   <div className="ai-cfg-field">
    <span className="ai-cfg-label">{L(`思考强度（${name}）`,`Thinking strength (${name})`)}</span>
@@ -37,7 +43,7 @@ import {useCallback,useEffect,useState} from 'react';
 import {Check,KeyRound,Lock,ShieldCheck,SlidersHorizontal,Trash2,X} from 'lucide-react';
 import {useI18n} from '../components/i18n';
 import {AI_CONFIG_EVENT,AI_PROVIDERS,DEFAULT_USER_AI_SETTINGS,notifyAiConfigChanged,providerMeta,type AiProviderId,type UserAiSettings} from '@/lib/ai-config';
-import {LOCAL_BRIDGE_PROVIDERS,LOCAL_PROVIDER_LABEL,useLocalBridgeConfig,type LocalBridgeProvider} from '@/lib/local-bridge-config';
+import {isLocalTutorReady,LOCAL_BRIDGE_PROVIDERS,LOCAL_PROVIDER_LABEL,useLocalBridgeConfig,type LocalBridgeProvider} from '@/lib/local-bridge-config';
 import {pingBridge,probeBridgeProviders,refreshBridgeProvider,type LocalProviderInfo,type ProbeProvidersOutcome} from '@/lib/local-bridge-client';
 import {BRIDGE_LAUNCH_CMD,copyTextToClipboard,LocalBridgeGuideModal} from './local-bridge-guide';
 
@@ -52,7 +58,17 @@ export function LocalBridgeSection({L,hideGuideBtn}:{L:(zh:string,en:string)=>st
 
  const activeProvider=providers.find(p=>p.id===localCfg.provider);
 
- const applyProviderStatus=(list:LocalProviderInfo[],target:LocalBridgeProvider)=>{
+ const syncModelThinking=(prov:LocalProviderInfo|undefined,modelId:string)=>{
+  if(!prov||prov.status!=='ready')return {thinkingLevels:[],defaultThinkingLevel:''};
+  const targetId=modelId.trim()||prov.defaultModel||prov.models[0]?.id||'';
+  const matched=prov.models.find(m=>m.id===targetId)??prov.models[0];
+  return {
+   thinkingLevels:matched?.thinkingLevels??[],
+   defaultThinkingLevel:matched?.defaultThinkingLevel??'',
+  };
+ };
+
+ const applyProviderStatus=(list:LocalProviderInfo[],target:LocalBridgeProvider,modelOverride?:string)=>{
   setProviders(list);
   const found=list.find(p=>p.id===target);
   if(!found){
@@ -63,6 +79,7 @@ export function LocalBridgeSection({L,hideGuideBtn}:{L:(zh:string,en:string)=>st
   if(found.status==='ready'){
    setProbeState('ready');
    setProbeLabel(L('已连接','Connected'));
+   updateLocal(syncModelThinking(found,modelOverride!==undefined?modelOverride:localCfg.model));
    return;
   }
   if(found.status==='auth_required'){
@@ -117,8 +134,9 @@ export function LocalBridgeSection({L,hideGuideBtn}:{L:(zh:string,en:string)=>st
  };
 
  const pickLocalProvider=(id:LocalBridgeProvider)=>{
-  updateLocal({provider:id,model:''});
-  if(providers.length)applyProviderStatus(providers,id);
+  const found=providers.find(p=>p.id===id);
+  updateLocal({provider:id,model:'',...syncModelThinking(found,'')});
+  if(providers.length)applyProviderStatus(providers,id,'');
  };
 
  const copyLaunchCmd=async()=>{
@@ -175,13 +193,13 @@ export function LocalBridgeSection({L,hideGuideBtn}:{L:(zh:string,en:string)=>st
     {activeProvider?.models.length?(
      <div className="ai-cfg-models">
       {activeProvider.models.map(m=>(
-       <button key={m.id} type="button" className={'ai-cfg-chip'+(localCfg.model===m.id?' on':'')} onClick={()=>updateLocal({model:m.id})}>
+       <button key={m.id} type="button" className={'ai-cfg-chip'+(localCfg.model===m.id?' on':'')} onClick={()=>updateLocal({model:m.id,thinkingLevels:m.thinkingLevels??[],defaultThinkingLevel:m.defaultThinkingLevel??''})}>
         {m.label}
        </button>
       ))}
      </div>
     ):null}
-    <input className="ai-cfg-input" value={localCfg.model} placeholder={activeProvider?.defaultModel||'default'} onChange={e=>updateLocal({model:e.target.value})}/>
+    <input className="ai-cfg-input" value={localCfg.model} placeholder={activeProvider?.defaultModel||'default'} onChange={e=>{const v=e.target.value;updateLocal({model:v,...(activeProvider?syncModelThinking(activeProvider,v):{})})}}/>
    </div>
 
    <div className="ai-cfg-scenes">

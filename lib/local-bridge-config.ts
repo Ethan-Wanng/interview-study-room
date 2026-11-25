@@ -21,6 +21,8 @@ export type LocalBridgeConfig = {
  allowGrade: boolean;
  allowDeep: boolean;
  allowWebSearch: boolean;
+ thinkingLevels?: string[];
+ defaultThinkingLevel?: string;
 };
 
 export const LOCAL_BRIDGE_KEY = 'local-agent-bridge-v1';
@@ -62,6 +64,12 @@ function normalizeConfig(raw: Partial<LocalBridgeConfig> | null | undefined): Lo
   allowGrade: raw.allowGrade !== false,
   allowDeep: raw.allowDeep !== false,
   allowWebSearch: raw.allowWebSearch === true,
+  ...(Array.isArray(raw.thinkingLevels)
+   ? { thinkingLevels: raw.thinkingLevels.filter((v): v is string => typeof v === 'string' && Boolean(v.trim())).map(v => v.trim()) }
+   : {}),
+  ...(typeof raw.defaultThinkingLevel === 'string' && raw.defaultThinkingLevel.trim()
+   ? { defaultThinkingLevel: raw.defaultThinkingLevel.trim() }
+   : {}),
  };
 }
 

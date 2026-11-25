@@ -103,20 +103,62 @@ export function getCustomThinkingSpec(provider:string,model?:string):ModelThinki
  return SPEC_DS_OFF;
 }
 
-// 本地客户端对应的思考强度规格（Antigravity / Codex / WorkBuddy 均支持按档位透传思考强度）。
-export function getLocalThinkingSpec(provider:string,model?:string):ModelThinkingSpec{
- void model;
- if(provider==='antigravity'||provider==='codex'){
-  return {levels:['low','medium','high','xhigh'],defaultLevel:'medium'};
- }
- return {levels:['low','medium','high'],defaultLevel:'medium'};
+function normalizeLocalLevel(raw?: string): ConcreteThinkingLevel | null {
+ if (!raw) return null;
+ const s = raw.trim().toLowerCase();
+ if (s === 'off' || s === 'none' || s === 'disabled') return 'off';
+ if (s === 'low' || s === 'minimal' || s === 'min') return 'low';
+ if (s === 'medium' || s === 'med' || s === 'normal' || s === 'balanced') return 'medium';
+ if (s === 'high') return 'high';
+ if (s === 'xhigh' || s === 'extra_high' || s === 'extra-high' || s === 'very_high') return 'xhigh';
+ if (s === 'max') return 'max';
+ return null;
 }
 
+// 本地客户端思考强度规格：完全依据桥接端探测到的当前模型真实支持档位动态生成，不硬编码猜测。
+export function getLocalThinkingSpec(
+ provider: string,
+ model?: string,
+ detectedLevels?: string[],
+ detectedDefault?: string,
+): ModelThinkingSpec {
+ void provider;
+ void model;
+ if (Array.isArray(detectedLevels)) {
+  const levels: ConcreteThinkingLevel[] = [];
+  for (const raw of detectedLevels) {
+   const norm = normalizeLocalLevel(raw);
+   if (norm && !levels.includes(norm)) levels.push(norm);
+  }
+  if (levels.length <= 1) {
+   const only = levels[0] ?? 'medium';
+   return { levels: [only], defaultLevel: only, locked: true };
+  }
+  const defNorm = normalizeLocalLevel(detectedDefault);
+  const defaultLevel =
+   defNorm && levels.includes(defNorm)
+    ? defNorm
+    : levels.includes('medium')
+      ? 'medium'
+      : levels[0];
+  return { levels, defaultLevel };
+ }
+ return { levels: ['medium'], defaultLevel: 'medium', locked: true };
+}
+
+type LocalThinkingInput = {
+ enabled?: boolean;
+ provider: string;
+ model?: string;
+ thinkingLevels?: string[];
+ defaultThinkingLevel?: string;
+};
+
 // AI 问答模型与自定义配置对应的思考规格与作用域键。
-export function getTutorThinkingSpec(siteModel:string,custom?:{provider:string;model?:string}|null,local?:{enabled?:boolean;provider:string;model?:string}|null):{scopeKey:string;spec:ModelThinkingSpec}{
+export function getTutorThinkingSpec(siteModel:string,custom?:{provider:string;model?:string}|null,local?:LocalThinkingInput|null):{scopeKey:string;spec:ModelThinkingSpec}{
  if((siteModel==='local'||(siteModel==='auto'&&local?.enabled))&&local?.enabled){
   const m=local.model?.trim()||'default';
-  return {scopeKey:`local:${local.provider}/${m}`,spec:getLocalThinkingSpec(local.provider,local.model)};
+  return {scopeKey:`local:${local.provider}/${m}`,spec:getLocalThinkingSpec(local.provider,local.model,local.thinkingLevels,local.defaultThinkingLevel)};
  }
  if((siteModel==='auto'||siteModel==='custom')&&custom){
   const m=custom.model?.trim()||custom.provider;
@@ -129,10 +171,10 @@ export function getTutorThinkingSpec(siteModel:string,custom?:{provider:string;m
 }
 
 // AI 评分模型与自定义配置对应的思考规格与作用域键。
-export function getGradeThinkingSpec(gradeModel:string,custom?:{provider:string;model?:string}|null,isGuest=false,local?:{enabled?:boolean;provider:string;model?:string}|null):{scopeKey:string;spec:ModelThinkingSpec}{
+export function getGradeThinkingSpec(gradeModel:string,custom?:{provider:string;model?:string}|null,isGuest=false,local?:LocalThinkingInput|null):{scopeKey:string;spec:ModelThinkingSpec}{
  if((gradeModel==='local'||(gradeModel==='auto'&&local?.enabled))&&local?.enabled){
   const m=local.model?.trim()||'default';
-  return {scopeKey:`local:${local.provider}/${m}`,spec:getLocalThinkingSpec(local.provider,local.model)};
+  return {scopeKey:`local:${local.provider}/${m}`,spec:getLocalThinkingSpec(local.provider,local.model,local.thinkingLevels,local.defaultThinkingLevel)};
  }
  if((gradeModel==='auto'||gradeModel==='custom')&&custom){
   const m=custom.model?.trim()||custom.provider;
