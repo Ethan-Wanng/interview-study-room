@@ -46,6 +46,8 @@ function CopyCmdRow({cmd,label,L}:{cmd:string;label?:string;L:(zh:string,en:stri
  );
 }
 
+const AGY_WIN_MANUAL_URL='https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.17-4823843970351104/windows-x64/cli_windows_x64.exe';
+
 const CLIENT_CMDS:Record<LocalBridgeProvider,{installs:{labelZh:string;labelEn:string;cmd:string}[];login:string;bin:string}>={
  antigravity:{
   bin:'agy',
@@ -92,6 +94,22 @@ export function LocalBridgeGuideContent({L}:{L:(zh:string,en:string)=>string}){
     {cur.installs.map(item=>(
      <CopyCmdRow key={item.cmd} cmd={item.cmd} label={L(item.labelZh,item.labelEn)} L={L}/>
     ))}
+    {tab==='antigravity'&&(
+     <div className="lb-cmd-wrap">
+      <span className="lb-cmd-label">{L('手动下载（Windows 脚本断流备用）','Manual download (Windows fallback)')}</span>
+      <div className="lb-manual-box">
+       <a href={AGY_WIN_MANUAL_URL} target="_blank" rel="noreferrer" className="tutor-link">
+        {L('下载 cli_windows_x64.exe（约 232 MB）','Download cli_windows_x64.exe (~232 MB)')} <ArrowUpRight size={12} style={{display:'inline',verticalAlign:'-1px'}}/>
+       </a>
+       <span>
+        {L(
+         '重命名为 agy.exe 放到 %LOCALAPPDATA%\\agy\\bin\\agy.exe，并将该目录加入环境变量 PATH；重开终端运行 agy --version 验证。',
+         'Rename to agy.exe, place at %LOCALAPPDATA%\\agy\\bin\\agy.exe, add that folder to PATH, reopen terminal and run agy --version.',
+        )}
+       </span>
+      </div>
+     </div>
+    )}
     <CopyCmdRow cmd={cur.login} label={L(`终端登录（安装后执行，命令：${cur.bin}）`,`Terminal login (${cur.bin})`)} L={L}/>
    </div>
 

@@ -291,6 +291,7 @@ const LOCAL_BRIDGE_GUIDE_KNOWLEDGE = `【本站「本地客户端桥接」权威
    - **Google Antigravity（命令：\`agy\`）**：
      - Windows（PowerShell）：\`irm https://antigravity.google/cli/install.ps1 | iex\`
      - Windows（CMD，若 PowerShell 下载断流推荐用此方式）：\`curl -fsSL https://antigravity.google/cli/install.cmd -o install.cmd && install.cmd && del install.cmd\`
+     - Windows 手动下载备用（浏览器/下载器）：下载 \`https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.17-4823843970351104/windows-x64/cli_windows_x64.exe\`（约 232 MB），重命名为 \`agy.exe\` 放到 \`%LOCALAPPDATA%\\agy\\bin\\agy.exe\`，并将 \`%LOCALAPPDATA%\\agy\\bin\` 加入环境变量 \`PATH\`，重开终端即可。
      - macOS / Linux：\`curl -fsSL https://antigravity.google/cli/install.sh | bash\`
      - 验证与登录：\`agy --version\`；登录执行 \`agy acp --login\`
    - **OpenAI Codex（命令：\`codex\`）**：
