@@ -1,0 +1,102 @@
+name: Release Bridge Binaries
+
+on:
+  push:
+    tags:
+      - 'bridge-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            asset: InterviewStudyBridge-win-x64.exe
+            platform: win32
+          - os: macos-14
+            asset: InterviewStudyBridge-darwin-arm64
+            platform: darwin
+          - os: macos-15-intel
+            asset: InterviewStudyBridge-darwin-x64
+            platform: darwin
+          - os: ubuntu-latest
+            asset: InterviewStudyBridge-linux-x64
+            platform: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install bridge dependencies
+        working-directory: packages/local-agent-bridge
+        run: npm install --no-audit --no-fund
+
+      - name: Bundle SEA CJS entrypoint
+        working-directory: packages/local-agent-bridge
+        run: npx --yes esbuild@0.25.0 src/sea-entry.ts --bundle --platform=node --format=cjs --target=node22 --external:node:sea --outfile=sea-bundle.cjs
+
+      - name: Generate SEA blob
+        working-directory: packages/local-agent-bridge
+        run: |
+          node -e "require('fs').writeFileSync('sea-config.json', JSON.stringify({ main: 'sea-bundle.cjs', output: 'sea-prep.blob', disableExperimentalSEAWarning: true, useSnapshot: false, useCodeCache: false }, null, 2))"
+          node --experimental-sea-config sea-config.json
+
+      - name: Build standalone binary (Windows)
+        if: matrix.platform == 'win32'
+        working-directory: packages/local-agent-bridge
+        shell: pwsh
+        run: |
+          Copy-Item (Get-Command node).Source "${{ matrix.asset }}" -Force
+          npx --yes postject@1.0.0-alpha.6 "${{ matrix.asset }}" NODE_SEA_BLOB sea-prep.blob --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
+          & ".\${{ matrix.asset }}" --help
+
+      - name: Build standalone binary (macOS)
+        if: matrix.platform == 'darwin'
+        working-directory: packages/local-agent-bridge
+        run: |
+          cp "$(command -v node)" "${{ matrix.asset }}"
+          codesign --remove-signature "${{ matrix.asset }}"
+          npx --yes postject@1.0.0-alpha.6 "${{ matrix.asset }}" NODE_SEA_BLOB sea-prep.blob --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2 --macho-segment-name NODE_SEA
+          codesign --sign - "${{ matrix.asset }}"
+          chmod +x "${{ matrix.asset }}"
+          ./"${{ matrix.asset }}" --help
+
+      - name: Build standalone binary (Linux)
+        if: matrix.platform == 'linux'
+        working-directory: packages/local-agent-bridge
+        run: |
+          cp "$(command -v node)" "${{ matrix.asset }}"
+          npx --yes postject@1.0.0-alpha.6 "${{ matrix.asset }}" NODE_SEA_BLOB sea-prep.blob --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
+          chmod +x "${{ matrix.asset }}"
+          ./"${{ matrix.asset }}" --help
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: packages/local-agent-bridge/${{ matrix.asset }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist-assets
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'bridge-v1.0.5' }}
+          name: Interview Study Bridge v1.0.5
+          files: dist-assets/*
+          make_latest: true

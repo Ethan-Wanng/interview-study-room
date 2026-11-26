@@ -133,15 +133,15 @@ export function NoticePopover({
 export function NoticeCenter(){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
  const s=useNotices(),[localCfg]=useLocalBridgeConfig();
  const [dismissed,setDismissed]=useState(''),[old,setOld]=useState(false);
- const hasBridgeUser=localCfg.enabled||Boolean(localCfg.token.trim());
+ const hasBridgeUser=localCfg.enabled||Boolean(localCfg.token.trim()||localCfg.relayLinked||localCfg.relayCode);
  useEffect(()=>{let hidden=false;try{hidden=sessionStorage.getItem('old-site-hidden')==='1'}catch{}setOld(onOldSite()&&!hidden)},[]);
  useEffect(()=>{void refresh();const t=setInterval(()=>{if(document.visibilityState==='visible')void refresh()},180000);
   const onVisible=()=>{if(document.visibilityState==='visible'&&Date.now()-state.fetchedAt>60000)void refresh()};
   document.addEventListener('visibilitychange',onVisible);return()=>{clearInterval(t);document.removeEventListener('visibilitychange',onVisible)}},[]);
  useEffect(()=>{
   if(!hasBridgeUser||!s.bridge?.version)return;
-  void checkLocalBridgeVersion({port:localCfg.port,url:localCfg.url});
- },[hasBridgeUser,localCfg.port,localCfg.url,s.bridge?.version,s.fetchedAt]);
+  void checkLocalBridgeVersion({port:localCfg.port,url:localCfg.url,relayCode:localCfg.relayCode,relayLinked:localCfg.relayLinked});
+ },[hasBridgeUser,localCfg.port,localCfg.url,localCfg.relayCode,localCfg.relayLinked,s.bridge?.version,s.fetchedAt]);
 
  const moved=old?<div className="notice-move" role="alert"><Sparkles size={17}/><span>{MOVE_TEXT}</span><a className="button primary" href={newSiteHref()}>{L('打开新网址','Open the new site')}</a><button type="button" className="notice-update-close" aria-label={L('关闭','Close')} onClick={()=>{try{sessionStorage.setItem('old-site-hidden','1')}catch{}setOld(false)}}><X size={16}/></button></div>:null;
  if(!s.version||s.version===APP_VERSION||dismissed===s.version)return moved;
@@ -171,7 +171,7 @@ export function NoticeBell(){const {locale}=useI18n(),L=(zh:string,en:string)=>l
  const s=useNotices(),[localCfg]=useLocalBridgeConfig(),[open,setOpen]=useState(false),box=useRef<HTMLDivElement>(null);
  const [oldSite,setOldSite]=useState(false),[oldSeen,setOldSeen]=useState(true);
  useEffect(()=>{const o=onOldSite();setOldSite(o);try{setOldSeen(!o||localStorage.getItem('old-site-seen')==='1')}catch{setOldSeen(!o)}},[]);
- const hasBridgeUser=localCfg.enabled||Boolean(localCfg.token.trim());
+ const hasBridgeUser=localCfg.enabled||Boolean(localCfg.token.trim()||localCfg.relayLinked||localCfg.relayCode);
  const bridge=s.bridge;
  const bridgeOutdated=Boolean(hasBridgeUser&&bridge&&s.localBridgeVersion&&compareSemver(s.localBridgeVersion,bridge.version)<0);
  const bridgeUpToDate=Boolean(hasBridgeUser&&bridge&&s.localBridgeVersion&&compareSemver(s.localBridgeVersion,bridge.version)>=0);

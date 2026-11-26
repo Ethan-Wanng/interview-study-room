@@ -14,8 +14,22 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 const managedLinux = readExecutionProfile() === "managed-linux";
 
 const localBindingConfig = {
-  main: "vinext/server/fetch-handler",
+  main: "./worker/index.ts",
   compatibility_flags: ["nodejs_compat"],
+  durable_objects: {
+    bindings: [
+      {
+        name: "BRIDGE_RELAY",
+        class_name: "BridgeRelayDO",
+      },
+    ],
+  },
+  migrations: [
+    {
+      tag: "v1",
+      new_sqlite_classes: ["BridgeRelayDO"],
+    },
+  ],
   d1_databases: d1
     ? [
         {

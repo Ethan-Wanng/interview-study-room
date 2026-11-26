@@ -2,6 +2,7 @@ declare namespace Cloudflare {
   interface Env {
     DB?: D1Database;
     BUCKET?: R2Bucket;
+    BRIDGE_RELAY?: DurableObjectNamespace;
     ADMIN_BOOTSTRAP_HASH?: string;
     AUTO_QUESTION_API_TOKEN?: string;
     DEEPSEEK_API_KEY?: string;

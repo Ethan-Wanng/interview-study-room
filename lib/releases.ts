@@ -18,12 +18,12 @@ export function compareSemver(a?:string|null,b?:string|null):number{
 
 // 本地桥接（interview-study-bridge）最新推荐版本。每次发布 bridge 新版本时同步更新此处，已配置本地客户端的用户会自动收到站内广播与铃铛提醒。
 export const BRIDGE_RELEASE:BridgeRelease={
- version:'1.0.3',
+ version:'1.0.5',
  date:'2026-11-26',
- title:'本地桥接升级至 v1.0.3',
+ title:'本地桥接升级至 v1.0.5',
  changes:[
-  '新增 --tunnel 手机扫码连接模式：自动拉起 HTTPS 隧道并在终端输出配对二维码，支持 iOS Safari / 安卓浏览器直连本机客户端',
-  'Antigravity（ACP）改为逐模型探测真实思考强度，Codex 完整透传 Max 与 Ultra 档位',
+  '新增同源云端中继（exhan.dpdns.org）、电脑端开屏自动唤醒与开机自启（零 PowerShell 依赖），以及单按钮 CLI 一键下载安装与登录（无需 npm）',
+  '提供 Windows / macOS / Linux 独立可执行程序安装包（无需预装 Node.js）',
  ],
 };
 
@@ -34,6 +34,11 @@ export function groupReleasesByDay(releases:Release[]):ReleaseDay[]{
 }
 
 export const RELEASES:Release[]=[
+ {version:'2026.11.26-3',date:'2026-11-26',title:'本地客户端升级：同源云端中继、自动唤醒、免 npm 一键安装 CLI 与独立安装包',changes:[
+  '手机与跨设备连接全面切换为同源云端中继（exhan.dpdns.org Durable Object WebSocket）：同一账号电脑与手机自动免扫码配对，游客支持 6 位连接码，彻底摆脱 trycloudflare 域名波动',
+  '新增桌面端自动唤醒（interview-bridge://）与无窗口开机自启，无需每次打开终端运行命令',
+  '精简「本地客户端」配置面板，支持免 npm / 免 PowerShell 一键下载安装 Antigravity / Codex / WorkBuddy 与一键拉起登录，并上线免 Node 独立可执行程序下载（/api/bridge-download）',
+ ]},
  {version:'2026.11.26-2',date:'2026-11-26',title:'本地桥接 v1.0.3 手机扫码隧道、专题本组结果复盘与 AI 重出本地优先',changes:[
   '本地桥接（interview-study-bridge v1.0.3）新增 --tunnel 手机扫码连接：自动开启 HTTPS 隧道并在终端打印二维码，手机相机扫码即可自动填入隧道地址与配对码（配对信息仅经 #hash 本地解析，不经过服务器）',
   'JD 专题「画像刷题 / 路径刷题」新增本组结果汇总与错题复盘（支持「只刷错题」与「进入下一维度 / 下一阶段」），修复最后一题答错时题号胶囊未即时标红及点击「查看结果」误跳下一组首题的问题',

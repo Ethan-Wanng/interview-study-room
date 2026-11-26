@@ -1,0 +1,46 @@
+{
+  "name": "interview-study-bridge",
+  "version": "1.0.5",
+  "description": "Local loopback bridge connecting Interview Study Room to official Antigravity, Codex, and WorkBuddy CLIs",
+  "type": "module",
+  "bin": {
+    "interview-study-bridge": "bin/cli.mjs",
+    "interview-bridge": "bin/cli.mjs"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "bin/",
+    "dist/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "interview-study-room",
+    "antigravity",
+    "codex",
+    "workbuddy",
+    "codebuddy",
+    "acp",
+    "local-bridge"
+  ],
+  "homepage": "https://exhan.dpdns.org/ai/local-bridge",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ethan-Wanng/interview-study-room.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "node ../site/node_modules/typescript/bin/tsc -p tsconfig.json",
+    "start": "node ./bin/cli.mjs",
+    "test": "npm run build && node --test tests/*.test.mjs"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "uqr": "0.1.3"
+  }
+}
