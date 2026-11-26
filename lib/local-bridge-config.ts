@@ -23,6 +23,7 @@ export type CachedLocalProviderCatalog = Partial<Record<LocalBridgeProvider, Cac
 export type LocalBridgeConfig = {
  enabled: boolean;
  port: number;
+ url?: string;
  token: string;
  provider: LocalBridgeProvider;
  model: string;
@@ -56,6 +57,82 @@ let parsedCache: LocalBridgeConfig = DEFAULT_LOCAL_BRIDGE_CONFIG;
 function clampPort(v: unknown): number {
  const n = Number(v);
  return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : 43180;
+}
+
+export function normalizeBridgeUrl(v: unknown): string {
+ if (typeof v !== 'string') return '';
+ const trimmed = v.trim();
+ if (!trimmed) return '';
+ try {
+  const withProto = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  const u = new URL(withProto);
+  const host = u.hostname.toLowerCase();
+  const isLoopback = host === '127.0.0.1' || host === 'localhost';
+  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && isLoopback)) {
+   return '';
+  }
+  return u.origin;
+ } catch {
+  return '';
+ }
+}
+
+export type BridgeTarget = number | string | Pick<LocalBridgeConfig, 'port' | 'url'>;
+
+export function resolveBridgeEndpoint(target: BridgeTarget): { baseUrl: string; displayHost: string } {
+ if (typeof target === 'number') {
+  const p = clampPort(target);
+  return { baseUrl: `http://127.0.0.1:${p}`, displayHost: `127.0.0.1:${p}` };
+ }
+ if (typeof target === 'string') {
+  const s = target.trim();
+  if (/^\d{1,5}$/.test(s)) {
+   const p = clampPort(Number(s));
+   return { baseUrl: `http://127.0.0.1:${p}`, displayHost: `127.0.0.1:${p}` };
+  }
+  const clean = normalizeBridgeUrl(s);
+  if (clean) {
+   return { baseUrl: clean, displayHost: clean.replace(/^https?:\/\//i, '') };
+  }
+  return { baseUrl: 'http://127.0.0.1:43180', displayHost: '127.0.0.1:43180' };
+ }
+ const clean = normalizeBridgeUrl(target.url);
+ if (clean) {
+  return { baseUrl: clean, displayHost: clean.replace(/^https?:\/\//i, '') };
+ }
+ const p = clampPort(target.port);
+ return { baseUrl: `http://127.0.0.1:${p}`, displayHost: `127.0.0.1:${p}` };
+}
+
+export function parseBridgePairPayload(raw: string): { url?: string; port?: number; token: string } | null {
+ const s = raw.trim();
+ if (!s) return null;
+ const match = s.match(/(?:^|[#?&])pair=([A-Za-z0-9_-]+)/);
+ const b64 = match?.[1] ?? '';
+ if (!b64) return null;
+ try {
+  const padded = b64.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((b64.length + 3) % 4);
+  const bin = atob(padded);
+  const bytes = Uint8Array.from(bin, ch => ch.charCodeAt(0));
+  const json = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
+  const token =
+   typeof json.t === 'string' && json.t.trim()
+    ? json.t.trim()
+    : typeof json.token === 'string' && json.token.trim()
+      ? json.token.trim()
+      : '';
+  if (!token) return null;
+  const rawUrl = typeof json.u === 'string' ? json.u : typeof json.url === 'string' ? json.url : '';
+  const url = normalizeBridgeUrl(rawUrl);
+  const port = json.p !== undefined ? clampPort(json.p) : json.port !== undefined ? clampPort(json.port) : undefined;
+  return {
+   token,
+   ...(url ? { url } : {}),
+   ...(port ? { port } : {}),
+  };
+ } catch {
+  return null;
+ }
 }
 
 function normProvider(v: unknown): LocalBridgeProvider {
@@ -99,9 +176,11 @@ function normalizeCatalog(raw: unknown): CachedLocalProviderCatalog | undefined 
 function normalizeConfig(raw: Partial<LocalBridgeConfig> | null | undefined): LocalBridgeConfig {
  if (!raw || typeof raw !== 'object') return DEFAULT_LOCAL_BRIDGE_CONFIG;
  const providerModels = normalizeCatalog(raw.providerModels);
+ const cleanUrl = normalizeBridgeUrl(raw.url);
  return {
   enabled: Boolean(raw.enabled),
   port: clampPort(raw.port),
+  ...(cleanUrl ? { url: cleanUrl } : {}),
   token: typeof raw.token === 'string' ? raw.token.trim() : '',
   provider: normProvider(raw.provider),
   model: typeof raw.model === 'string' ? raw.model.trim() : '',

@@ -368,7 +368,7 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
   if(!open||!localTutorActive||probedOnceRef.current)return;
   probedOnceRef.current=true;
   let alive=true;
-  void probeBridgeProviders(localCfg.port,localCfg.token).then(out=>{
+  void probeBridgeProviders({port:localCfg.port,url:localCfg.url},localCfg.token).then(out=>{
    if(!alive||!out.ok)return;
    const nextCatalog={...(localCfg.providerModels??{})};
    for(const p of out.providers){
@@ -396,7 +396,7 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
    }
   });
   return()=>{alive=false};
- },[open,localTutorActive,localCfg.port,localCfg.token,localCfg.provider,localCfg.model,localCfg.providerModels,updateLocal]);
+ },[open,localTutorActive,localCfg.port,localCfg.url,localCfg.token,localCfg.provider,localCfg.model,localCfg.providerModels,updateLocal]);
  // 选模型：默认（本地客户端或专属 API 优先，否则 DeepSeek V4.1 Flash）、本地客户端模型分组、站点模型、自己的专属 API。选择记在浏览器里。
  const customSpecCfg=useMemo(()=>(hasCustom&&aiStatus?.settings?{provider:aiStatus.settings.provider,model:aiStatus.settings.model}:null),[hasCustom,aiStatus?.settings]);
  const [model,setModelState]=useState<string>(()=>{try{const raw=localStorage.getItem(MODEL_KEY)||'auto',v=raw==='gemini-flash'?'gemini-4':raw;return v==='auto'||v==='custom'||v==='local'||TUTOR_MODELS.some(m=>m.id===v)?v:'auto'}catch{return 'auto'}}),modelRef=useRef(model); // 以前存的旧模型名（deepseek-chat 等）已经没有了，回到默认

@@ -9,7 +9,12 @@ import {
  type PromptChatMessage,
 } from './ai-prompts';
 import type { GradeItem, GradeResult } from './grade-types';
-import type { LocalBridgeConfig, LocalBridgeProvider } from './local-bridge-config';
+import {
+ resolveBridgeEndpoint,
+ type BridgeTarget,
+ type LocalBridgeConfig,
+ type LocalBridgeProvider,
+} from './local-bridge-config';
 import type { ThinkingLevel } from './thinking';
 import type { TutorContext, TutorMessage } from './tutor-types';
 
@@ -58,8 +63,6 @@ type BridgeNdjsonEvent =
  | { t: 'done'; model?: string }
  | { t: 'error'; code?: string; message?: string };
 
-const bridgeBase = (port: number) => `http://127.0.0.1:${port}`;
-
 function combineAbortSignals(a?: AbortSignal, b?: AbortSignal): { signal: AbortSignal; cleanup: () => void } {
  const ctl = new AbortController();
  if (a?.aborted || b?.aborted) {
@@ -79,14 +82,15 @@ function combineAbortSignals(a?: AbortSignal, b?: AbortSignal): { signal: AbortS
 }
 
 export async function pingBridgeInfo(
- port: number,
+ target: BridgeTarget,
  parentSignal?: AbortSignal,
 ): Promise<{ ok: true; version?: string } | { ok: false }> {
+ const { baseUrl } = resolveBridgeEndpoint(target);
  const timeoutCtl = new AbortController();
- const timer = setTimeout(() => timeoutCtl.abort(), 3000);
+ const timer = setTimeout(() => timeoutCtl.abort(), 4500);
  const { signal, cleanup } = combineAbortSignals(parentSignal, timeoutCtl.signal);
  try {
-  const res = await fetch(`${bridgeBase(port)}/v1/ping`, { method: 'GET', signal });
+  const res = await fetch(`${baseUrl}/v1/ping`, { method: 'GET', signal });
   if (!res.ok) return { ok: false };
   const data = (await res.json()) as { ok?: boolean; version?: string };
   if (data?.ok !== true) return { ok: false };
@@ -100,22 +104,23 @@ export async function pingBridgeInfo(
  }
 }
 
-export async function pingBridge(port: number, parentSignal?: AbortSignal): Promise<boolean> {
- const info = await pingBridgeInfo(port, parentSignal);
+export async function pingBridge(target: BridgeTarget, parentSignal?: AbortSignal): Promise<boolean> {
+ const info = await pingBridgeInfo(target, parentSignal);
  return info.ok;
 }
 
 export async function probeBridgeProviders(
- port: number,
+ target: BridgeTarget,
  token: string,
  parentSignal?: AbortSignal,
 ): Promise<ProbeProvidersOutcome> {
+ const { baseUrl, displayHost } = resolveBridgeEndpoint(target);
  const tok = token.trim();
  const timeoutCtl = new AbortController();
  const timer = setTimeout(() => timeoutCtl.abort(), 25_000);
  const { signal, cleanup } = combineAbortSignals(parentSignal, timeoutCtl.signal);
  try {
-  const res = await fetch(`${bridgeBase(port)}/v1/providers`, {
+  const res = await fetch(`${baseUrl}/v1/providers`, {
    method: 'GET',
    headers: { Authorization: `Bearer ${tok}` },
    signal,
@@ -132,7 +137,7 @@ export async function probeBridgeProviders(
   const json = (await res.json()) as { providers?: LocalProviderInfo[] };
   return { ok: true, providers: Array.isArray(json.providers) ? json.providers : [] };
  } catch {
-  return { ok: false, code: 'unreachable', message: `未检测到本地桥接（127.0.0.1:${port}）` };
+  return { ok: false, code: 'unreachable', message: `未检测到桥接服务（${displayHost}）` };
  } finally {
   clearTimeout(timer);
   cleanup();
@@ -140,16 +145,17 @@ export async function probeBridgeProviders(
 }
 
 export async function refreshBridgeProvider(
- port: number,
+ target: BridgeTarget,
  token: string,
  provider: LocalBridgeProvider,
  parentSignal?: AbortSignal,
 ): Promise<{ ok: true; provider: LocalProviderInfo } | { ok: false; message: string }> {
+ const { baseUrl, displayHost } = resolveBridgeEndpoint(target);
  const timeoutCtl = new AbortController();
  const timer = setTimeout(() => timeoutCtl.abort(), 25_000);
  const { signal, cleanup } = combineAbortSignals(parentSignal, timeoutCtl.signal);
  try {
-  const res = await fetch(`${bridgeBase(port)}/v1/providers/${provider}/refresh`, {
+  const res = await fetch(`${baseUrl}/v1/providers/${provider}/refresh`, {
    method: 'POST',
    headers: { Authorization: `Bearer ${token.trim()}` },
    signal,
@@ -159,7 +165,7 @@ export async function refreshBridgeProvider(
   const data = (await res.json()) as LocalProviderInfo;
   return { ok: true, provider: data };
  } catch {
-  return { ok: false, message: `无法连接本地桥接（127.0.0.1:${port}）` };
+  return { ok: false, message: `无法连接桥接服务（${displayHost}）` };
  } finally {
   clearTimeout(timer);
   cleanup();
@@ -205,9 +211,10 @@ async function streamBridgeNdjson(opts: {
  signal?: AbortSignal;
 }): Promise<{ text: string; think: string; model: string }> {
  const { cfg } = opts;
+ const { baseUrl, displayHost } = resolveBridgeEndpoint(cfg);
  let res: Response;
  try {
-  res = await fetch(`${bridgeBase(cfg.port)}/v1/stream`, {
+  res = await fetch(`${baseUrl}/v1/stream`, {
    method: 'POST',
    headers: {
     'Content-Type': 'application/json',
@@ -226,7 +233,7 @@ async function streamBridgeNdjson(opts: {
   });
  } catch {
   if (opts.signal?.aborted) throw new Error('aborted');
-  throw new Error(`本地桥接未启动或无法连接（127.0.0.1:${cfg.port}）。`);
+  throw new Error(`桥接服务未启动或无法连接（${displayHost}）。`);
  }
 
  if (!res.ok || !(res.headers.get('content-type') ?? '').includes('ndjson') || !res.body) {

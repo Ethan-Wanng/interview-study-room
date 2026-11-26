@@ -43,7 +43,7 @@ import {useCallback,useEffect,useState} from 'react';
 import {Check,KeyRound,Lock,ShieldCheck,SlidersHorizontal,Trash2,X} from 'lucide-react';
 import {useI18n} from '../components/i18n';
 import {AI_CONFIG_EVENT,AI_PROVIDERS,DEFAULT_USER_AI_SETTINGS,notifyAiConfigChanged,providerMeta,type AiProviderId,type UserAiSettings} from '@/lib/ai-config';
-import {isLocalTutorReady,LOCAL_BRIDGE_PROVIDERS,LOCAL_PROVIDER_LABEL,useLocalBridgeConfig,type LocalBridgeProvider} from '@/lib/local-bridge-config';
+import {isLocalTutorReady,LOCAL_BRIDGE_PROVIDERS,LOCAL_PROVIDER_LABEL,normalizeBridgeUrl,parseBridgePairPayload,useLocalBridgeConfig,type LocalBridgeProvider} from '@/lib/local-bridge-config';
 import {pingBridgeInfo,probeBridgeProviders,refreshBridgeProvider,type LocalProviderInfo,type ProbeProvidersOutcome} from '@/lib/local-bridge-client';
 import {BRIDGE_RELEASE,compareSemver} from '@/lib/releases';
 import {BRIDGE_LAUNCH_CMD,copyTextToClipboard,LocalBridgeGuideModal} from './local-bridge-guide';
@@ -55,15 +55,20 @@ export function LocalBridgeSection({L,hideGuideBtn}:{L:(zh:string,en:string)=>st
  const [probeState,setProbeState]=useState<'idle'|'ready'|'warn'|'err'>('idle');
  const [probeLabel,setProbeLabel]=useState('');
  const [bridgeVersion,setBridgeVersion]=useState<string|null>(null);
+ const [endpointDraft,setEndpointDraft]=useState(()=>localCfg.url||String(localCfg.port));
  const [copiedCmd,setCopiedCmd]=useState(false);
  const [guideOpen,setGuideOpen]=useState(false);
 
  useEffect(()=>{
+  setEndpointDraft(localCfg.url||String(localCfg.port));
+ },[localCfg.url,localCfg.port]);
+
+ useEffect(()=>{
   if(!localCfg.enabled&&!localCfg.token.trim())return;
   let alive=true;
-  void pingBridgeInfo(localCfg.port).then(p=>{if(alive)setBridgeVersion(p.ok&&p.version?p.version:null)});
+  void pingBridgeInfo({port:localCfg.port,url:localCfg.url}).then(p=>{if(alive)setBridgeVersion(p.ok&&p.version?p.version:null)});
   return()=>{alive=false};
- },[localCfg.enabled,localCfg.port,localCfg.token]);
+ },[localCfg.enabled,localCfg.port,localCfg.url,localCfg.token]);
 
  const activeProvider=providers.find(p=>p.id===localCfg.provider);
 
@@ -122,18 +127,28 @@ export function LocalBridgeSection({L,hideGuideBtn}:{L:(zh:string,en:string)=>st
   setProbeLabel(found.errorMessage||L('连接异常','Error'));
  };
 
- const runProbe=async(refreshActive=false,targetProvider=localCfg.provider,enableOnReady=false)=>{
+ const runProbe=async(
+  refreshActive=false,
+  targetProvider=localCfg.provider,
+  enableOnReady=false,
+  override?:{port?:number;url?:string;token?:string},
+ )=>{
   setProbing(true);
   try{
-   const ping=await pingBridgeInfo(localCfg.port);
+   const effTarget={
+    port:override?.port??localCfg.port,
+    url:override?.url!==undefined?override.url:localCfg.url,
+   };
+   const effToken=(override?.token!==undefined?override.token:localCfg.token).trim();
+   const ping=await pingBridgeInfo(effTarget);
    setBridgeVersion(ping.ok&&ping.version?ping.version:null);
-   if(!localCfg.token.trim()){
+   if(!effToken){
     setProbeState(ping.ok?'warn':'err');
     setProbeLabel(ping.ok?L('需填写配对码','Token required'):L('未连接','Offline'));
     return;
    }
    if(refreshActive&&providers.length>0){
-    const res=await refreshBridgeProvider(localCfg.port,localCfg.token,targetProvider);
+    const res=await refreshBridgeProvider(effTarget,effToken,targetProvider);
     if(!res.ok){
      setProbeState('err');
      setProbeLabel(res.message);
@@ -146,7 +161,7 @@ export function LocalBridgeSection({L,hideGuideBtn}:{L:(zh:string,en:string)=>st
     if(enableOnReady&&res.provider.status==='ready')updateLocal({enabled:true});
     return;
    }
-   const out:ProbeProvidersOutcome=await probeBridgeProviders(localCfg.port,localCfg.token);
+   const out:ProbeProvidersOutcome=await probeBridgeProviders(effTarget,effToken);
    if(!out.ok){
     setProbeState('err');
     setProbeLabel(out.message);
@@ -157,6 +172,50 @@ export function LocalBridgeSection({L,hideGuideBtn}:{L:(zh:string,en:string)=>st
    if(enableOnReady&&match?.status==='ready')updateLocal({enabled:true});
   }finally{
    setProbing(false);
+  }
+ };
+
+ useEffect(()=>{
+  if(typeof window==='undefined')return;
+  const parsed=parseBridgePairPayload(window.location.hash);
+  if(!parsed)return;
+  window.history.replaceState(null,'',window.location.pathname+window.location.search);
+  const nextUrl=parsed.url||'';
+  const nextPort=parsed.port??localCfg.port;
+  setEndpointDraft(nextUrl||String(nextPort));
+  updateLocal({
+   enabled:true,
+   url:nextUrl,
+   port:nextPort,
+   token:parsed.token,
+  });
+  void runProbe(false,localCfg.provider,true,{port:nextPort,url:nextUrl,token:parsed.token});
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ },[]);
+
+ const onEndpointInputChange=(rawVal:string)=>{
+  const paired=parseBridgePairPayload(rawVal);
+  if(paired){
+   const nextUrl=paired.url||'';
+   const nextPort=paired.port??localCfg.port;
+   setEndpointDraft(nextUrl||String(nextPort));
+   updateLocal({url:nextUrl,port:nextPort,token:paired.token});
+   return;
+  }
+  setEndpointDraft(rawVal);
+  const trimmed=rawVal.trim();
+  if(!trimmed){
+   updateLocal({url:'',port:43180});
+   return;
+  }
+  if(/^\d{1,5}$/.test(trimmed)){
+   const n=Number(trimmed);
+   if(n>=1&&n<=65535)updateLocal({url:'',port:n});
+   return;
+  }
+  const cleanUrl=normalizeBridgeUrl(trimmed);
+  if(cleanUrl){
+   updateLocal({url:cleanUrl});
   }
  };
 
@@ -206,12 +265,23 @@ export function LocalBridgeSection({L,hideGuideBtn}:{L:(zh:string,en:string)=>st
 
    <div className="ai-cfg-grid">
     <label>
-     <span className="ai-cfg-label">{L('端口','Port')}</span>
-     <input type="number" min={1} max={65535} className="ai-cfg-input" value={localCfg.port} placeholder="43180" onChange={e=>updateLocal({port:Number(e.target.value)||43180})}/>
+     <span className="ai-cfg-label">{L('地址 / 端口','Address / Port')}</span>
+     <input type="text" className="ai-cfg-input" value={endpointDraft} placeholder="43180 / https://..." onChange={e=>onEndpointInputChange(e.target.value)} onBlur={()=>setEndpointDraft(localCfg.url||String(localCfg.port))}/>
     </label>
     <label>
      <span className="ai-cfg-label">{L('配对码','Pairing Token')}</span>
-     <input type="password" className="ai-cfg-input" value={localCfg.token} placeholder="brg_..." onChange={e=>updateLocal({token:e.target.value})}/>
+     <input type="password" className="ai-cfg-input" value={localCfg.token} placeholder="brg_..." onChange={e=>{
+      const v=e.target.value;
+      const paired=parseBridgePairPayload(v);
+      if(paired){
+       const nextUrl=paired.url||'';
+       const nextPort=paired.port??localCfg.port;
+       setEndpointDraft(nextUrl||String(nextPort));
+       updateLocal({url:nextUrl,port:nextPort,token:paired.token});
+       return;
+      }
+      updateLocal({token:v});
+     }}/>
     </label>
    </div>
 

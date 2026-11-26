@@ -5,6 +5,7 @@ import {Dialog as DialogPrimitive} from 'radix-ui';
 import {LOCAL_BRIDGE_PROVIDERS,LOCAL_PROVIDER_LABEL,type LocalBridgeProvider} from '@/lib/local-bridge-config';
 
 export const BRIDGE_LAUNCH_CMD='npx -y interview-study-bridge@latest';
+export const BRIDGE_TUNNEL_CMD='npx -y interview-study-bridge@latest --tunnel';
 export const BRIDGE_INSTALL_CMD='npm i -g interview-study-bridge';
 const BRIDGE_NPM_URL='https://www.npmjs.com/package/interview-study-bridge';
 
@@ -124,6 +125,7 @@ export function LocalBridgeGuideContent({L}:{L:(zh:string,en:string)=>string}){
     <CopyCmdRow cmd={BRIDGE_INSTALL_CMD} label={L('全局安装（推荐）','Global install (recommended)')} L={L}/>
     <CopyCmdRow cmd="interview-study-bridge" label={L('安装后启动','Start after install')} L={L}/>
     <CopyCmdRow cmd={BRIDGE_LAUNCH_CMD} label={L('或免安装直接运行最新版','Or run latest without installing')} L={L}/>
+    <CopyCmdRow cmd={BRIDGE_TUNNEL_CMD} label={L('手机 / 平板扫码连接（自动开启 HTTPS 隧道）','Mobile QR pairing (HTTPS tunnel)')} L={L}/>
     <div className="lb-flags">
      <a href={BRIDGE_NPM_URL} target="_blank" rel="noreferrer" className="tutor-link">
       npm: interview-study-bridge <ArrowUpRight size={12} style={{display:'inline',verticalAlign:'-1px'}}/>
@@ -131,6 +133,7 @@ export function LocalBridgeGuideContent({L}:{L:(zh:string,en:string)=>string}){
     </div>
     <pre className="lb-term-pre">{'Bridge listening: http://127.0.0.1:43180\nPairing token:    brg_xxxxxxxxxxxxxxxx...'}</pre>
     <div className="lb-flags">
+     <span><code>--tunnel</code> {L('手机扫码隧道','Mobile tunnel')}</span>
      <span><code>--port 43180</code> {L('指定端口','Port')}</span>
      <span><code>--print-token</code> {L('查看配对码','Show token')}</span>
      <span><code>--reset-token</code> {L('重置配对码','Reset token')}</span>

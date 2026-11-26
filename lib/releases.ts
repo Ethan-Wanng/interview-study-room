@@ -18,12 +18,12 @@ export function compareSemver(a?:string|null,b?:string|null):number{
 
 // 本地桥接（interview-study-bridge）最新推荐版本。每次发布 bridge 新版本时同步更新此处，已配置本地客户端的用户会自动收到站内广播与铃铛提醒。
 export const BRIDGE_RELEASE:BridgeRelease={
- version:'1.0.4',
+ version:'1.0.3',
  date:'2026-11-26',
- title:'本地桥接升级至 v1.0.4',
+ title:'本地桥接升级至 v1.0.3',
  changes:[
-  'Antigravity（ACP）改为逐模型探测真实思考强度：Gemini 4 Carbon / Argon 仅保留低 / 中 / 高，Orchestrator 与 GPT-OSS 120B 自动隐藏思考条',
-  'Codex 完整透传各模型思考强度（含 GPT-6 / GPT-5.6 的 Max 与 Ultra 档位）',
+  '新增 --tunnel 手机扫码连接模式：自动拉起 HTTPS 隧道并在终端输出配对二维码，支持 iOS Safari / 安卓浏览器直连本机客户端',
+  'Antigravity（ACP）改为逐模型探测真实思考强度，Codex 完整透传 Max 与 Ultra 档位',
  ],
 };
 
@@ -34,8 +34,13 @@ export function groupReleasesByDay(releases:Release[]):ReleaseDay[]{
 }
 
 export const RELEASES:Release[]=[
- {version:'2026.11.26-1',date:'2026-11-26',title:'本地桥接升级 v1.0.4 与更新广播、专题代码题五语言参考答案、交错思考持久化',changes:[
-  '本地桥接（interview-study-bridge）发布 v1.0.4：Antigravity 逐模型探测真实思考强度（修复 Gemini 4 Carbon 误显极高、自动隐藏不支持思考的模型），Codex 完整支持 Max / Ultra 档位',
+ {version:'2026.11.26-2',date:'2026-11-26',title:'本地桥接 v1.0.3 支持手机扫码 HTTPS 隧道直连，取消桥接更新弹窗打扰',changes:[
+  '本地桥接（interview-study-bridge v1.0.3）新增 --tunnel 手机扫码连接：自动开启 HTTPS 隧道并在终端打印二维码，手机相机扫码即可自动填入隧道地址与配对码（配对信息仅经 #hash 本地解析，不经过服务器）',
+  '「本地客户端」地址栏现同时支持本机端口（43180）与远程 HTTPS 隧道地址（https://...），粘贴配对链接也可自动识别填入',
+  '移除本地桥接更新的悬浮弹窗打扰，改为仅在右上角铃铛静默记录一次已读状态',
+ ]},
+ {version:'2026.11.26-1',date:'2026-11-26',title:'本地桥接逐模型思考强度修复、专题代码题五语言参考答案、交错思考持久化',changes:[
+  '修复 Antigravity 逐模型真实思考强度探测（Gemini 4 Carbon 仅保留低/中/高、自动隐藏不支持思考的模型），Codex 完整支持 Max / Ultra 档位',
   '新增本地桥接更新自动广播与铃铛通知：每次桥接发布新版本，已启用本地客户端的用户将自动收到更新提醒与一键复制升级命令（npx -y interview-study-bridge@latest）',
   '修复 JD 专题与单题「AI 重出」中代码题参考答案只有 Python 的问题：生成、渲染、运行调试、笔记收藏与 Markdown 导出全面支持 Python / Go / Java / JS/TS / Rust 五语言切换',
   'AI 问答顶栏新增分组模型下拉框，可直接一键切换本地客户端与模型；交错思考分段结构现已持久化到历史记录，重开不揉成一团并修复思考框星号渲染',
