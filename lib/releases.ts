@@ -2,7 +2,31 @@
 // 页面和接口都从这里读版本号，已打开的旧页面轮询时发现接口返回的版本和自己的不同，就提示“有新版本，请刷新页面”并列出改动；
 // 这些更新说明显示在顶栏的「版本更新」里（有没看过的更新时亮白点）；铃铛里只放发给个人的通知（黄色未读数）。
 export type Release={version:string;date:string;title:string;changes:string[]};
+export type BridgeRelease={version:string;date:string;title:string;changes:string[]};
 export type ReleaseDay={date:string;releases:Release[]};
+
+export function compareSemver(a?:string|null,b?:string|null):number{
+ const pa=String(a||'').replace(/^v/i,'').split('.').map(n=>parseInt(n,10)||0);
+ const pb=String(b||'').replace(/^v/i,'').split('.').map(n=>parseInt(n,10)||0);
+ const len=Math.max(pa.length,pb.length,3);
+ for(let i=0;i<len;i++){
+  const da=pa[i]??0,db=pb[i]??0;
+  if(da!==db)return da>db?1:-1;
+ }
+ return 0;
+}
+
+// 本地桥接（interview-study-bridge）最新推荐版本。每次发布 bridge 新版本时同步更新此处，已配置本地客户端的用户会自动收到站内广播与铃铛提醒。
+export const BRIDGE_RELEASE:BridgeRelease={
+ version:'0.1.3',
+ date:'2026-11-26',
+ title:'本地桥接升级至 v0.1.3',
+ changes:[
+  'Antigravity（ACP）改为逐模型探测真实思考强度：Gemini 4 Carbon / Argon 仅保留低 / 中 / 高，Orchestrator 与 GPT-OSS 120B 自动隐藏思考条',
+  'Codex 完整透传各模型思考强度（含 GPT-6 / GPT-5.6 的 Max 与 Ultra 档位）',
+ ],
+};
+
 export function groupReleasesByDay(releases:Release[]):ReleaseDay[]{
  const days:ReleaseDay[]=[],byDate=new Map<string,ReleaseDay>();
  for(const r of releases){const date=r.date.trim().replace(/\./g,'-');let d=byDate.get(date);if(!d){d={date,releases:[]};byDate.set(date,d);days.push(d)}d.releases.push(r)}
@@ -10,6 +34,12 @@ export function groupReleasesByDay(releases:Release[]):ReleaseDay[]{
 }
 
 export const RELEASES:Release[]=[
+ {version:'2026.11.26-1',date:'2026-11-26',title:'本地桥接升级 v0.1.3 与更新广播、专题代码题五语言参考答案、交错思考持久化',changes:[
+  '本地桥接（interview-study-bridge）发布 v0.1.3：Antigravity 逐模型探测真实思考强度（修复 Gemini 4 Carbon 误显极高、自动隐藏不支持思考的模型），Codex 完整支持 Max / Ultra 档位',
+  '新增本地桥接更新自动广播与铃铛通知：每次桥接发布新版本，已启用本地客户端的用户将自动收到更新提醒与一键复制升级命令（npx -y interview-study-bridge@latest）',
+  '修复 JD 专题与单题「AI 重出」中代码题参考答案只有 Python 的问题：生成、渲染、运行调试、笔记收藏与 Markdown 导出全面支持 Python / Go / Java / JS/TS / Rust 五语言切换',
+  'AI 问答顶栏新增分组模型下拉框，可直接一键切换本地客户端与模型；交错思考分段结构现已持久化到历史记录，重开不揉成一团并修复思考框星号渲染',
+ ]},
  {version:'2026.11.25-5',date:'2026-11-25',title:'本地客户端全面接入 JD 调研与深度面试、新增额度展示并修复 Codex 思考流',changes:[
   '高阶模拟面试 / 系统设计深度点评（/interview/architect）、JD / 面经深度调研（/interview/jd-research）、参考简历生成、单阶段补题与简历项目深挖预判（/interview/project-drill）全面支持本地客户端直连，命中时零消耗站内额度并实时流式输出',
   '新增站内每日调研剩余额度展示与 Codex 本地客户端账号额度（5h / 7d 剩余百分比）读取展示，「本地客户端」面板新增「JD 调研 / 深度面试」与「允许联网搜索」（默认关闭，仅放行只读搜索）开关',

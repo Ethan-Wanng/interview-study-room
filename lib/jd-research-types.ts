@@ -144,7 +144,15 @@ function formatStudyQuizMarkdown(qz: AiQuiz, idx: number): string[] {
   lines.push('', `**参考答案**：${qz.accepted.join(' / ')}`);
  } else if (qz.type === 'short' || qz.type === 'code' || qz.type === 'design') {
   if (qz.type === 'code') {
-   lines.push('', '**参考代码**：', '```', qz.reference, '```');
+   const refs = qz.references ? Object.entries(qz.references).filter(([, v]) => Boolean(v?.trim())) : [];
+   if (refs.length > 1) {
+    lines.push('', '**参考代码**：');
+    for (const [lang, code] of refs) {
+     lines.push('', `\`\`\`${lang}`, code!.trim(), '```');
+    }
+   } else {
+    lines.push('', '**参考代码**：', '```', qz.reference, '```');
+   }
   } else {
    lines.push('', `**参考答案**：${qz.reference}`);
   }

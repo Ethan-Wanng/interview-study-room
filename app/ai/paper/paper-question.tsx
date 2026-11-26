@@ -59,6 +59,6 @@ export default function PaperQuestion({q,no,max,answer,order,onChange,review}:{q
    {aiGraded&&!review.written&&review.onSelfScore&&<SelfScore points={points} scores={scores} max={max} onDone={review.onSelfScore}/>}
    {aiGraded&&review.written?.kind==='self'&&<p className="paper-self">{L(`自评 ${review.written.score} / ${max} 分`,`Self-scored ${review.written.score} / ${max}`)}</p>}
    {isWritten(q)&&<StandardAnswerPanel keyId={`paper:${q.id}`} item={toStandardItem(q,untouchedStarter(q.id,a.text??'')?'':(a.text??''),max)} withPicker/>}
-   {written&&<div className="ai-reference"><strong>{L('参考答案','Reference answer')}</strong>{q.type==='short'?<p><KeywordText text={written.reference}/></p>:q.type==='code'?<CodeReference id={q.id} reference={written.reference}/>:<pre className="ref-wrap"><code>{written.reference}</code></pre>}</div>}
+   {written&&<div className="ai-reference"><strong>{L('参考答案','Reference answer')}</strong>{q.type==='short'?<p><KeywordText text={written.reference}/></p>:q.type==='code'?<CodeReference id={q.id} reference={written.reference} customRefs={q.type==='code'?q.references:undefined}/>:<pre className="ref-wrap"><code>{written.reference}</code></pre>}</div>}
    <p className="paper-explain"><strong>{L('解析：','Explanation: ')}</strong><KeywordText text={q.explain}/></p></div>}
  </article>}

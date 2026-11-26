@@ -78,21 +78,31 @@ function combineAbortSignals(a?: AbortSignal, b?: AbortSignal): { signal: AbortS
  };
 }
 
-export async function pingBridge(port: number, parentSignal?: AbortSignal): Promise<boolean> {
+export async function pingBridgeInfo(
+ port: number,
+ parentSignal?: AbortSignal,
+): Promise<{ ok: true; version?: string } | { ok: false }> {
  const timeoutCtl = new AbortController();
  const timer = setTimeout(() => timeoutCtl.abort(), 3000);
  const { signal, cleanup } = combineAbortSignals(parentSignal, timeoutCtl.signal);
  try {
   const res = await fetch(`${bridgeBase(port)}/v1/ping`, { method: 'GET', signal });
-  if (!res.ok) return false;
-  const data = (await res.json()) as { ok?: boolean };
-  return data?.ok === true;
+  if (!res.ok) return { ok: false };
+  const data = (await res.json()) as { ok?: boolean; version?: string };
+  if (data?.ok !== true) return { ok: false };
+  const version = typeof data.version === 'string' && data.version.trim() ? data.version.trim() : undefined;
+  return { ok: true, ...(version ? { version } : {}) };
  } catch {
-  return false;
+  return { ok: false };
  } finally {
   clearTimeout(timer);
   cleanup();
  }
+}
+
+export async function pingBridge(port: number, parentSignal?: AbortSignal): Promise<boolean> {
+ const info = await pingBridgeInfo(port, parentSignal);
+ return info.ok;
 }
 
 export async function probeBridgeProviders(

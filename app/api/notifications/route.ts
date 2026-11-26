@@ -1,15 +1,15 @@
 import {AuthError,assertSameOrigin,sessionUser} from '@/lib/site-auth';
 import {listNotices,markRead} from '@/lib/notify';
-import {APP_VERSION,RELEASES} from '@/lib/releases';
+import {APP_VERSION,BRIDGE_RELEASE,RELEASES} from '@/lib/releases';
 
 export const dynamic='force-dynamic';
 const noCache={'Cache-Control':'no-store'};
 
-// 当前线上版本 + 最近的更新说明（顶栏「版本更新」里显示）+ 本人的通知（铃铛里显示）。没登录时只有前两项。
+// 当前线上版本 + 最近的更新说明（顶栏「版本更新」里显示）+ 本地桥接最新版本 + 本人的通知（铃铛里显示）。没登录时只有前三项。
 export async function GET(req:Request){
  const user=await sessionUser(req.headers).catch(()=>null);
  const items=user?await listNotices(user.id).catch(()=>[]):[];
- return Response.json({version:APP_VERSION,releases:RELEASES.slice(0,40),items},{headers:noCache});
+ return Response.json({version:APP_VERSION,releases:RELEASES.slice(0,40),bridge:BRIDGE_RELEASE,items},{headers:noCache});
 }
 
 // 标记已读：ids 为空表示全部已读。

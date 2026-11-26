@@ -22,7 +22,7 @@ export type AiLesson={title:string;body:string;code?:string;explain?:CodeNote[];
 // scores：与 points 一一对应，每个得分点的分值（试卷题必填，练习题可省略，省略时按要点平均）。
 // say：听力题要朗读的英文（题干上显示播放按钮，不显示原文）；passage：阅读题的英文原文，显示在题干下面。
 // stack：只对某个技术栈显示的题（项目实战的代码题），取值同卡片 variants 的键；不写表示所有技术栈都显示。
-export type AiQuiz={id:string;q:string;explain:string;code?:string;interview?:string;say?:string;passage?:string;stack?:string;dimension?:string}&({type?:'single';options:string[];answer:number;why?:string[]}|{type:'multi';options:string[];answers:number[];why?:string[]}|{type:'judge';answer:boolean}|{type:'fill';accepted:string[];blanks?:string[][]}|{type:'short'|'code'|'design';reference:string;points:string[];scores?:number[];starters?:Partial<Record<'python'|'go'|'java'|'ts'|'rust'|'sql',string>>});
+export type AiQuiz={id:string;q:string;explain:string;code?:string;interview?:string;say?:string;passage?:string;stack?:string;dimension?:string}&({type?:'single';options:string[];answer:number;why?:string[]}|{type:'multi';options:string[];answers:number[];why?:string[]}|{type:'judge';answer:boolean}|{type:'fill';accepted:string[];blanks?:string[][]}|{type:'short'|'code'|'design';reference:string;points:string[];scores?:number[];starters?:Partial<Record<'python'|'go'|'java'|'ts'|'rust'|'sql',string>>;references?:Partial<Record<'python'|'go'|'java'|'ts'|'rust',string>>});
 export type AiQuizType=NonNullable<AiQuiz['type']>;
 export const aiQuizTypes:Record<AiQuizType,string>={single:'单选',multi:'多选',judge:'判断',fill:'填空',short:'简答',code:'代码',design:'综合'};
 // 多空填空题的空数（单空题为 1）。

@@ -31,14 +31,14 @@ const REGEN_SYSTEM = `你是顶级技术面试教研专家。当前任务：【�
 严格规则：
 1. 必须严格保持指定的题型（\`single\` / \`multi\` / \`short\` / \`code\`）与 \`dimension\` 字段不变，紧扣目标岗位 JD 与所在复习阶段目标，且与同阶段已有其他题目绝不重复。
 2. 题干 \`q\` 简洁清晰、无歧义、无语法错别字；行内代码反引号内禁止夹带真实换行（如需表达换行符请写字面量 \`\\\\n\`）。
-3. 若题型为 \`code\`，**必须附带 \`starters\` 对象，提供 \`python\`、\`go\`、\`java\`、\`ts\`、\`rust\` 共 5 种语言的简洁函数签名与 \`TODO\` 框架代码**（不要把完整答案放进 \`starters\`，完整答案放在 \`reference\` 中）。
+3. 若题型为 \`code\`，**必须同时提供 \`starters\` 与 \`references\` 两个对象，均包含 \`python\`、\`go\`、\`java\`、\`ts\`、\`rust\` 共 5 种语言**（\`starters\` 放简洁函数签名与 \`TODO\` 框架代码，\`references\` 放对应各语言的精炼完整参考代码）。
 4. 严禁调用任何工具，直接输出**一个合法 JSON 对象**（用 \`\`\`json 和 \`\`\` 包裹，不要输出代码块以外的文字），使用简体中文。
 
 示例结构（仅输出 1 道目标题型的对象）：
 - single: { "type": "single", "dimension": "...", "q": "...", "options": ["A", "B", "C", "D"], "answer": 0, "explain": "..." }
 - multi: { "type": "multi", "dimension": "...", "q": "...", "options": ["A", "B", "C", "D"], "answers": [0, 2], "explain": "..." }
 - short: { "type": "short", "dimension": "...", "q": "...", "reference": "...", "points": ["要点1", "要点2", "要点3"], "explain": "..." }
-- code: { "type": "code", "dimension": "...", "q": "...", "starters": { "python": "...", "go": "...", "java": "...", "ts": "...", "rust": "..." }, "reference": "...", "points": ["要点1", "要点2"], "explain": "..." }`;
+- code: { "type": "code", "dimension": "...", "q": "...", "starters": { "python": "...", "go": "...", "java": "...", "ts": "...", "rust": "..." }, "references": { "python": "...", "go": "...", "java": "...", "ts": "...", "rust": "..." }, "points": ["要点1", "要点2"], "explain": "..." }`;
 
 function combineUsage(a?: AntigravityUsage, b?: AntigravityUsage): AntigravityUsage | undefined {
  if (!a && !b) return undefined;

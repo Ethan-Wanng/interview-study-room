@@ -22,11 +22,34 @@ export type CodeReferencePlayground={
  backHref?:string;
 };
 
+export function resolveCodeRefs(
+ id:string,
+ reference:string,
+ customRefs?:Partial<Record<CodeLang,string>>,
+):{base:CodeLang;refs:Partial<Record<CodeLang,string>>}|undefined{
+ const builtIn=codeRefsFor(id,reference);
+ const hasCustom=Boolean(customRefs&&Object.values(customRefs).some(v=>typeof v==='string'&&v.trim()));
+ if(!hasCustom)return builtIn;
+ const merged:Partial<Record<CodeLang,string>>={...(builtIn?.refs??{})};
+ for(const l of codeLangs){
+  const v=customRefs?.[l.id];
+  if(typeof v==='string'&&v.trim())merged[l.id]=v.trim();
+ }
+ const detected=reference.trim()?detectPlaygroundLang(reference,undefined,{allowThirdParty:true}):null;
+ if(detected&&detected!=='sql'&&!merged[detected]){
+  merged[detected]=reference;
+ }
+ const first=codeLangs.find(l=>merged[l.id])?.id;
+ if(!first)return builtIn;
+ const base=(detected&&detected!=='sql'&&merged[detected])?detected:(builtIn?.base??first);
+ return {base,refs:merged};
+}
+
 // 代码题参考答案：有多语言写法时显示语言切换标签，选择会记住，下一题自动沿用；支持直接运行验证。
-export default function CodeReference({id,reference,playground}:{id:string;reference:string;playground?:CodeReferencePlayground}){
+export default function CodeReference({id,reference,customRefs,playground}:{id:string;reference:string;customRefs?:Partial<Record<CodeLang,string>>;playground?:CodeReferencePlayground}){
  const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
  const lang=useSyncExternalStore(subscribe,read,()=>null);
- const data=codeRefsFor(id,reference);
+ const data=resolveCodeRefs(id,reference,customRefs);
  const langs=data?codeLangs.filter(l=>data.refs[l.id]):[];
  const cur=data?(lang&&data.refs[lang]?lang:data.base):null;
  const curCode=data?(data.refs[cur!]??reference):reference;

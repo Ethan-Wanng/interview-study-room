@@ -3979,7 +3979,18 @@ export default function JdResearchClient({
                 ) : qz.type === 'short' || qz.type === 'code' || qz.type === 'design' ? (
                  <>
                   {qz.type === 'code' ? (
-                   <pre>{qz.reference}</pre>
+                   qz.references && Object.values(qz.references).filter(Boolean).length > 1 ? (
+                    Object.entries(qz.references)
+                     .filter(([, code]) => Boolean(code?.trim()))
+                     .map(([lang, code]) => (
+                      <div key={lang}>
+                       <strong>{lang}</strong>
+                       <pre>{code}</pre>
+                      </div>
+                     ))
+                   ) : (
+                    <pre>{qz.reference}</pre>
+                   )
                   ) : (
                    <p>
                     <strong>参考答案：</strong>

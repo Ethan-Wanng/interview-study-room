@@ -1,19 +1,23 @@
 'use client';
 import {useEffect,useRef,useState,useSyncExternalStore,type ReactNode,type RefObject} from 'react';
 import {createPortal} from 'react-dom';
-import {Bell,CheckCheck,ChevronDown,ExternalLink,History,MessageSquareReply,RefreshCw,Sparkles,X} from 'lucide-react';
+import {Bell,Check,CheckCheck,ChevronDown,Copy,ExternalLink,History,MessageSquareReply,RefreshCw,Sparkles,X} from 'lucide-react';
 import {useI18n} from './i18n';
-import {APP_VERSION,groupReleasesByDay,type Release} from '@/lib/releases';
+import {APP_VERSION,BRIDGE_RELEASE,compareSemver,groupReleasesByDay,type BridgeRelease,type Release} from '@/lib/releases';
 import type {Notice} from '@/lib/notify';
+import {useLocalBridgeConfig} from '@/lib/local-bridge-config';
+import {pingBridgeInfo} from '@/lib/local-bridge-client';
+import {BRIDGE_LAUNCH_CMD,copyTextToClipboard} from '../ai/local-bridge-guide';
 
 // 通知的共享状态：全站只有 NoticeCenter 负责定时拉取 /api/notifications，铃铛和新版本横幅都从这里读。
-type State={version:string;releases:Release[];items:Notice[];seen:string|null;fetchedAt:number};
-let state:State={version:'',releases:[],items:[],seen:null,fetchedAt:0};
+type State={version:string;releases:Release[];bridge:BridgeRelease|null;items:Notice[];seen:string|null;bridgeSeen:string|null;localBridgeVersion:string|null;fetchedAt:number};
+let state:State={version:'',releases:[],bridge:BRIDGE_RELEASE,items:[],seen:null,bridgeSeen:null,localBridgeVersion:null,fetchedAt:0};
 const listeners=new Set<()=>void>();
 const set=(patch:Partial<State>)=>{state={...state,...patch};listeners.forEach(l=>l())};
 const subscribe=(l:()=>void)=>{listeners.add(l);return()=>{listeners.delete(l)}};
 const useNotices=()=>useSyncExternalStore(subscribe,()=>state,()=>state);
 const SEEN_KEY='notice-release-seen';
+const BRIDGE_SEEN_KEY='notice-bridge-release-seen';
 // 旧网址（workers.dev）停用提醒：只在旧网址上显示，新网址上不显示。
 export const NEW_SITE='https://exhan.dpdns.org',OLD_SITE_END='2026 年 11 月 19 日';
 const onOldSite=()=>typeof window!=='undefined'&&window.location.hostname.endsWith('.workers.dev');
@@ -22,9 +26,30 @@ const MOVE_TEXT=`网站已经换到新网址 ${NEW_SITE}，旧网址将在 ${OLD
 
 async function refresh(){
  try{const r=await fetch('/api/notifications',{cache:'no-store'});if(!r.ok)return;
-  const d=await r.json() as {version:string;releases:Release[];items:Notice[]};
-  let seen:string|null=null;try{seen=localStorage.getItem(SEEN_KEY)}catch{}
-  set({version:d.version,releases:d.releases??[],items:d.items??[],seen,fetchedAt:Date.now()})}catch{}}
+  const d=await r.json() as {version:string;releases:Release[];bridge?:BridgeRelease;items:Notice[]};
+  let seen:string|null=null,bridgeSeen:string|null=null;
+  try{seen=localStorage.getItem(SEEN_KEY);bridgeSeen=localStorage.getItem(BRIDGE_SEEN_KEY)}catch{}
+  set({version:d.version,releases:d.releases??[],bridge:d.bridge??BRIDGE_RELEASE,items:d.items??[],seen,bridgeSeen,fetchedAt:Date.now()})}catch{}}
+
+function markBridgeReleaseSeen(ver?:string){
+ const v=ver||state.bridge?.version;
+ if(!v)return;
+ try{localStorage.setItem(BRIDGE_SEEN_KEY,v)}catch{}
+ set({bridgeSeen:v});
+}
+
+async function checkLocalBridgeVersion(port:number){
+ const info=await pingBridgeInfo(port);
+ if(info.ok&&info.version){
+  set({localBridgeVersion:info.version});
+  if(state.bridge?.version&&compareSemver(info.version,state.bridge.version)>=0){
+   markBridgeReleaseSeen(state.bridge.version);
+  }
+  return info.version;
+ }
+ set({localBridgeVersion:null});
+ return null;
+}
 
 // 没看过的更新说明：排在“上次看过的版本”前面的那些；从没看过时只算最新一条。
 function unreadReleases(s:State){if(!s.releases.length)return [];const i=s.seen?s.releases.findIndex(r=>r.version===s.seen):1;return s.releases.slice(0,i<0?s.releases.length:i)}
@@ -104,19 +129,70 @@ export function NoticePopover({
  );
 }
 
-// 全站挂一个：打开页面、每 3 分钟、切回标签页时检查一次。线上版本和本页代码的版本不同，就在顶部提示刷新，并列出这次改了什么。
+// 全站挂一个：打开页面、每 3 分钟、切回标签页时检查一次。线上版本和本页代码的版本不同，就在顶部提示刷新；已启用本地桥接的用户若桥接版本落后或未读最新桥接版本，也会收到更新广播。
 export function NoticeCenter(){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
- const s=useNotices(),[dismissed,setDismissed]=useState(''),[old,setOld]=useState(false);
+ const s=useNotices(),[localCfg]=useLocalBridgeConfig();
+ const [dismissed,setDismissed]=useState(''),[bridgeDismissed,setBridgeDismissed]=useState(''),[old,setOld]=useState(false);
+ const [copiedBridgeCmd,setCopiedBridgeCmd]=useState(false),[recheckingBridge,setRecheckingBridge]=useState(false);
+ const hasBridgeUser=localCfg.enabled||Boolean(localCfg.token.trim());
  useEffect(()=>{let hidden=false;try{hidden=sessionStorage.getItem('old-site-hidden')==='1'}catch{}setOld(onOldSite()&&!hidden)},[]);
  useEffect(()=>{void refresh();const t=setInterval(()=>{if(document.visibilityState==='visible')void refresh()},180000);
   const onVisible=()=>{if(document.visibilityState==='visible'&&Date.now()-state.fetchedAt>60000)void refresh()};
   document.addEventListener('visibilitychange',onVisible);return()=>{clearInterval(t);document.removeEventListener('visibilitychange',onVisible)}},[]);
+ useEffect(()=>{
+  if(!hasBridgeUser||!s.bridge?.version)return;
+  void checkLocalBridgeVersion(localCfg.port);
+ },[hasBridgeUser,localCfg.port,s.bridge?.version,s.fetchedAt]);
+
  const moved=old?<div className="notice-move" role="alert"><Sparkles size={17}/><span>{MOVE_TEXT}</span><a className="button primary" href={newSiteHref()}>{L('打开新网址','Open the new site')}</a><button type="button" className="notice-update-close" aria-label={L('关闭','Close')} onClick={()=>{try{sessionStorage.setItem('old-site-hidden','1')}catch{}setOld(false)}}><X size={16}/></button></div>:null;
- if(!s.version||s.version===APP_VERSION||dismissed===s.version)return moved;
- const mine=s.releases.findIndex(r=>r.version===APP_VERSION),fresh=s.releases.slice(0,mine<0?1:mine);
- return <>{moved}<div className="notice-update" role="alert"><div className="notice-update-head"><Sparkles size={18}/><strong>{L('有新版本，请刷新页面','A new version is available — please refresh')}</strong><button type="button" className="notice-update-close" aria-label={L('稍后再说','Later')} onClick={()=>setDismissed(s.version)}><X size={16}/></button></div>
-  {fresh.length>0&&<div className="notice-update-body">{fresh.map(r=><div key={r.version}><b>{r.title}</b><ul>{r.changes.map(c=><li key={c}>{c}</li>)}</ul></div>)}</div>}
-  <div className="notice-update-actions"><button type="button" className="button primary" onClick={()=>window.location.reload()}><RefreshCw size={15}/>{L('立即刷新','Refresh now')}</button><small>{L('正在写的答案请先保存或提交再刷新。','Save or submit any answer you are writing first.')}</small></div></div></>}
+ const hasSiteUpdate=Boolean(s.version&&s.version!==APP_VERSION&&dismissed!==s.version);
+ if(hasSiteUpdate){
+  const mine=s.releases.findIndex(r=>r.version===APP_VERSION),fresh=s.releases.slice(0,mine<0?1:mine);
+  return <>{moved}<div className="notice-update" role="alert"><div className="notice-update-head"><Sparkles size={18}/><strong>{L('有新版本，请刷新页面','A new version is available — please refresh')}</strong><button type="button" className="notice-update-close" aria-label={L('稍后再说','Later')} onClick={()=>setDismissed(s.version)}><X size={16}/></button></div>
+   {fresh.length>0&&<div className="notice-update-body">{fresh.map(r=><div key={r.version}><b>{r.title}</b><ul>{r.changes.map(c=><li key={c}>{c}</li>)}</ul></div>)}</div>}
+   <div className="notice-update-actions"><button type="button" className="button primary" onClick={()=>window.location.reload()}><RefreshCw size={15}/>{L('立即刷新','Refresh now')}</button><small>{L('正在写的答案请先保存或提交再刷新。','Save or submit any answer you are writing first.')}</small></div></div></>;
+ }
+
+ const bridge=s.bridge;
+ const isLocalOutdated=Boolean(bridge&&s.localBridgeVersion&&compareSemver(s.localBridgeVersion,bridge.version)<0);
+ const isLocalUpToDate=Boolean(bridge&&s.localBridgeVersion&&compareSemver(s.localBridgeVersion,bridge.version)>=0);
+ const showBridgeUpdate=Boolean(
+  hasBridgeUser&&
+  bridge&&
+  !isLocalUpToDate&&
+  bridgeDismissed!==bridge.version&&
+  (isLocalOutdated||s.bridgeSeen!==bridge.version),
+ );
+ if(!showBridgeUpdate||!bridge)return moved;
+
+ const copyCmd=async()=>{
+  if(await copyTextToClipboard(BRIDGE_LAUNCH_CMD)){
+   setCopiedBridgeCmd(true);
+   setTimeout(()=>setCopiedBridgeCmd(false),1800);
+  }
+ };
+ const recheck=async()=>{
+  setRecheckingBridge(true);
+  try{await checkLocalBridgeVersion(localCfg.port)}finally{setRecheckingBridge(false)}
+ };
+ const closeBridge=()=>{
+  markBridgeReleaseSeen(bridge.version);
+  setBridgeDismissed(bridge.version);
+ };
+ return <>{moved}<div className="notice-update" role="alert">
+  <div className="notice-update-head">
+   <Sparkles size={18}/>
+   <strong>{L(`本地桥接更新 v${bridge.version}`,`Bridge update v${bridge.version}`)}{isLocalOutdated&&s.localBridgeVersion?`（${L(`当前 v${s.localBridgeVersion}`,`now v${s.localBridgeVersion}`)}）`:''}</strong>
+   <button type="button" className="notice-update-close" aria-label={L('关闭','Close')} onClick={closeBridge}><X size={16}/></button>
+  </div>
+  {bridge.changes.length>0&&<div className="notice-update-body"><ul>{bridge.changes.map(c=><li key={c}>{c}</li>)}</ul></div>}
+  <div className="notice-update-actions">
+   <button type="button" className="button primary" onClick={()=>void copyCmd()}>{copiedBridgeCmd?<><Check size={15}/>{L('已复制命令','Copied')}</>:<><Copy size={15}/>{L('复制更新命令','Copy update cmd')}</>}</button>
+   <button type="button" className="button secondary" disabled={recheckingBridge} onClick={()=>void recheck()}><RefreshCw size={15}/>{recheckingBridge?L('检测中…','Checking…'):L('重新检测','Re-check')}</button>
+   <a className="button secondary" href="/ai/local-bridge" onClick={closeBridge}>{L('查看教程','Guide')}</a>
+  </div>
+ </div></>;
+}
 
 // 顶栏的「版本更新」：显示当前版本号，点开是每个版本改了什么（来自 lib/releases.ts，每次上线都往里写一条）。有没看过的更新时右上角亮一个白点。
 export function VersionLog(){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
@@ -133,20 +209,27 @@ export function VersionLog(){const {locale}=useI18n(),L=(zh:string,en:string)=>l
    {s.releases.length>0&&<a href="/releases" target="_blank" rel="noopener noreferrer" className="version-more" onClick={()=>setOpen(false)}><span>{L('查看更多更新内容','View all release notes')}</span><ExternalLink size={14}/></a>}
   </NoticePopover></div>}
 
-// 顶栏的铃铛：只放发给自己的通知（比如反馈有了回复），未读数用黄色标出。网站更新在旁边的「版本更新」里。打开列表即全部标为已读。
+// 顶栏的铃铛：放发给自己的通知（比如反馈回复）以及已启用本地客户端用户的桥接更新提醒，未读数用黄色标出。打开列表即全部标为已读。
 export function NoticeBell(){const {locale}=useI18n(),L=(zh:string,en:string)=>locale==='en'?en:zh;
- const s=useNotices(),[open,setOpen]=useState(false),box=useRef<HTMLDivElement>(null);
+ const s=useNotices(),[localCfg]=useLocalBridgeConfig(),[open,setOpen]=useState(false),box=useRef<HTMLDivElement>(null);
  const [oldSite,setOldSite]=useState(false),[oldSeen,setOldSeen]=useState(true);
  useEffect(()=>{const o=onOldSite();setOldSite(o);try{setOldSeen(!o||localStorage.getItem('old-site-seen')==='1')}catch{setOldSeen(!o)}},[]);
- const count=s.items.filter(n=>!n.read).length+(oldSeen?0:1);
- const [snapshot,setSnapshot]=useState<{items:Set<string>}>({items:new Set});
- const toggle=()=>{if(!open){setSnapshot({items:new Set(s.items.filter(n=>!n.read).map(n=>n.id))});if(count)void markAllRead();if(!oldSeen){try{localStorage.setItem('old-site-seen','1')}catch{}setOldSeen(true)}}setOpen(!open)};
+ const hasBridgeUser=localCfg.enabled||Boolean(localCfg.token.trim());
+ const bridge=s.bridge;
+ const bridgeOutdated=Boolean(hasBridgeUser&&bridge&&s.localBridgeVersion&&compareSemver(s.localBridgeVersion,bridge.version)<0);
+ const bridgeUpToDate=Boolean(hasBridgeUser&&bridge&&s.localBridgeVersion&&compareSemver(s.localBridgeVersion,bridge.version)>=0);
+ const showBridgeItem=Boolean(hasBridgeUser&&bridge&&!bridgeUpToDate);
+ const bridgeUnread=Boolean(showBridgeItem&&bridge&&(bridgeOutdated||s.bridgeSeen!==bridge.version));
+ const count=s.items.filter(n=>!n.read).length+(oldSeen?0:1)+(bridgeUnread?1:0);
+ const [snapshot,setSnapshot]=useState<{items:Set<string>;bridge:boolean}>({items:new Set,bridge:false});
+ const toggle=()=>{if(!open){setSnapshot({items:new Set(s.items.filter(n=>!n.read).map(n=>n.id)),bridge:bridgeUnread});if(count)void markAllRead();if(bridgeUnread&&bridge)markBridgeReleaseSeen(bridge.version);if(!oldSeen){try{localStorage.setItem('old-site-seen','1')}catch{}setOldSeen(true)}}setOpen(!open)};
  return <div className="notice-bell" ref={box}><button type="button" className="notice-bell-btn" aria-label={L(`通知${count?`（${count} 条未读）`:''}`,`Notifications${count?` (${count} unread)`:''}`)} aria-expanded={open} onClick={toggle}><Bell size={18}/>{count>0&&<span className="notice-count">{count>9?'9+':count}</span>}</button>
   <NoticePopover open={open} triggerRef={box} onClose={()=>setOpen(false)} label={L('通知','Notifications')}>
    <div className="notice-panel-head"><strong>{L('通知','Notifications')}</strong>{count===0&&<span><CheckCheck size={14}/>{L('都看过了','All caught up')}</span>}</div>
    <div className="notice-list">
     {oldSite&&<a href={newSiteHref()} className="notice-item unread"><Sparkles size={16}/><span><b>{L('网站换新网址了','The site has moved')}</b><small>{MOVE_TEXT}</small><time>{L('点这里打开新网址','Open the new address')}</time></span></a>}
+    {showBridgeItem&&bridge&&<a href="/ai/local-bridge" className={'notice-item'+(snapshot.bridge?' unread':'')} onClick={()=>setOpen(false)}><Sparkles size={16}/><span><b>{L(`本地桥接更新 v${bridge.version}`,`Bridge update v${bridge.version}`)}{bridgeOutdated&&s.localBridgeVersion?`（${L(`当前 v${s.localBridgeVersion}`,`now v${s.localBridgeVersion}`)}）`:''}</b><small>{bridge.changes.join('；')}</small><time>{BRIDGE_LAUNCH_CMD}</time></span></a>}
     {s.items.map(n=><a key={n.id} href={n.link||'/feedback'} className={'notice-item'+(snapshot.items.has(n.id)?' unread':'')} onClick={()=>setOpen(false)}><MessageSquareReply size={16}/><span><b>{n.title}</b>{n.body&&<small>{n.body}</small>}<time>{when(n.createdAt,L)}</time></span></a>)}
-    {!s.items.length&&!oldSite&&<p className="notice-empty">{L('暂无通知','No notifications')}</p>}
+    {!s.items.length&&!oldSite&&!showBridgeItem&&<p className="notice-empty">{L('暂无通知','No notifications')}</p>}
    </div>
   </NoticePopover></div>}

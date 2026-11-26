@@ -44,7 +44,8 @@ import {Check,KeyRound,Lock,ShieldCheck,SlidersHorizontal,Trash2,X} from 'lucide
 import {useI18n} from '../components/i18n';
 import {AI_CONFIG_EVENT,AI_PROVIDERS,DEFAULT_USER_AI_SETTINGS,notifyAiConfigChanged,providerMeta,type AiProviderId,type UserAiSettings} from '@/lib/ai-config';
 import {isLocalTutorReady,LOCAL_BRIDGE_PROVIDERS,LOCAL_PROVIDER_LABEL,useLocalBridgeConfig,type LocalBridgeProvider} from '@/lib/local-bridge-config';
-import {pingBridge,probeBridgeProviders,refreshBridgeProvider,type LocalProviderInfo,type ProbeProvidersOutcome} from '@/lib/local-bridge-client';
+import {pingBridgeInfo,probeBridgeProviders,refreshBridgeProvider,type LocalProviderInfo,type ProbeProvidersOutcome} from '@/lib/local-bridge-client';
+import {BRIDGE_RELEASE,compareSemver} from '@/lib/releases';
 import {BRIDGE_LAUNCH_CMD,copyTextToClipboard,LocalBridgeGuideModal} from './local-bridge-guide';
 
 export function LocalBridgeSection({L,hideGuideBtn}:{L:(zh:string,en:string)=>string;hideGuideBtn?:boolean}){
@@ -53,8 +54,16 @@ export function LocalBridgeSection({L,hideGuideBtn}:{L:(zh:string,en:string)=>st
  const [probing,setProbing]=useState(false);
  const [probeState,setProbeState]=useState<'idle'|'ready'|'warn'|'err'>('idle');
  const [probeLabel,setProbeLabel]=useState('');
+ const [bridgeVersion,setBridgeVersion]=useState<string|null>(null);
  const [copiedCmd,setCopiedCmd]=useState(false);
  const [guideOpen,setGuideOpen]=useState(false);
+
+ useEffect(()=>{
+  if(!localCfg.enabled&&!localCfg.token.trim())return;
+  let alive=true;
+  void pingBridgeInfo(localCfg.port).then(p=>{if(alive)setBridgeVersion(p.ok&&p.version?p.version:null)});
+  return()=>{alive=false};
+ },[localCfg.enabled,localCfg.port,localCfg.token]);
 
  const activeProvider=providers.find(p=>p.id===localCfg.provider);
 
@@ -116,10 +125,11 @@ export function LocalBridgeSection({L,hideGuideBtn}:{L:(zh:string,en:string)=>st
  const runProbe=async(refreshActive=false,targetProvider=localCfg.provider,enableOnReady=false)=>{
   setProbing(true);
   try{
+   const ping=await pingBridgeInfo(localCfg.port);
+   setBridgeVersion(ping.ok&&ping.version?ping.version:null);
    if(!localCfg.token.trim()){
-    const alive=await pingBridge(localCfg.port);
-    setProbeState(alive?'warn':'err');
-    setProbeLabel(alive?L('需填写配对码','Token required'):L('未连接','Offline'));
+    setProbeState(ping.ok?'warn':'err');
+    setProbeLabel(ping.ok?L('需填写配对码','Token required'):L('未连接','Offline'));
     return;
    }
    if(refreshActive&&providers.length>0){
@@ -169,6 +179,11 @@ export function LocalBridgeSection({L,hideGuideBtn}:{L:(zh:string,en:string)=>st
     <strong>{L('本地客户端','Local Client')}</strong>
     <div className="ai-cfg-head-actions">
      {probeState!=='idle'&&<span className={`ai-cfg-status ${probeState}`}>{probeLabel}</span>}
+     {bridgeVersion&&compareSemver(bridgeVersion,BRIDGE_RELEASE.version)<0&&(
+      <button type="button" className="ai-cfg-chip" onClick={()=>void copyLaunchCmd()}>
+       {copiedCmd?L('已复制升级命令','Copied'):L(`升级 v${BRIDGE_RELEASE.version}`,`Update v${BRIDGE_RELEASE.version}`)}
+      </button>
+     )}
      {!hideGuideBtn&&<button type="button" className="ai-cfg-chip" onClick={()=>setGuideOpen(true)}>{L('连接教程','Guide')}</button>}
     </div>
    </div>

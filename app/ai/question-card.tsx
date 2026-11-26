@@ -12,7 +12,7 @@ import GradeModelPicker from './grade-model-picker';
 import {AnnotatedAnswerBox,SelfScore} from './grade-view';
 import {StandardAnswerBox,StandardAnswerButton,useStandardAnswer} from './standard-answer-box';
 import {codeEditing,markdownEditing} from './code-input';
-import CodeReference from './code-reference';
+import CodeReference,{resolveCodeRefs,useCodeLang} from './code-reference';
 import AiDock,{type DockRequest} from './ai-dock';
 import {ListenButton,ReadingPassage} from '../components/speech-drill';
 import VoiceButton from '../components/voice-input';
@@ -131,20 +131,28 @@ export default function QuestionCard({item,label,result,last,onAnswer,onNext,onP
   {afterScore&&mainStd.error&&<p className="ai-grade-error">{mainStd.error}</p>}
   {afterScore&&<StandardAnswerBox std={mainStd}/>}
   {revealed&&referenceHidden&&<p className="ai-ref-hidden">{L('参考答案已遮住，写完后再对照。','The reference is hidden until you finish.')}</p>}
-  {revealed&&!referenceHidden&&!done&&!graded&&<div className="ai-reference"><strong>{L('参考答案','Reference answer')}</strong>{q.type==='code'?<CodeReference id={q.id} reference={q.reference} playground={quizPgMeta}/>:<p><KeywordText text={q.reference}/></p>}<strong>{L('评分要点','Key points')}</strong><ul>{q.points.map(p=><li key={p}><EnWords text={p}/></li>)}</ul>
+  {revealed&&!referenceHidden&&!done&&!graded&&<div className="ai-reference"><strong>{L('参考答案','Reference answer')}</strong>{q.type==='code'?<CodeReference id={q.id} reference={q.reference} customRefs={q.references} playground={quizPgMeta}/>:<p><KeywordText text={q.reference}/></p>}<strong>{L('评分要点','Key points')}</strong><ul>{q.points.map(p=><li key={p}><EnWords text={p}/></li>)}</ul>
    <SelfScore points={q.points} scores={q.scores} max={PRACTICE_MAX} onDone={score=>onAnswer({correct:score>=0.6*PRACTICE_MAX,given:text.trim()})}/></div>}
   {afterScore&&<>
    <button type="button" className={'rc-toggle ai-ref-toggle'+(refOpen?' on':'')} aria-expanded={refOpen} onClick={()=>setRefOpen(v=>!v)}>
     {refOpen?<><EyeOff size={15}/>{L('收起参考答案与评分要点','Hide reference & key points')}<ChevronUp size={15}/></>:<><Eye size={15}/>{L('展开参考答案与评分要点','Show reference & key points')}<ChevronDown size={15}/></>}
    </button>
-   {refOpen&&<div className="ai-reference"><strong>{L('参考答案','Reference answer')}</strong>{q.type==='code'?<CodeReference id={q.id} reference={q.reference} playground={quizPgMeta}/>:<p><KeywordText text={q.reference}/></p>}<strong>{L('评分要点','Key points')}</strong><ul>{q.points.map(p=><li key={p}><EnWords text={p}/></li>)}</ul></div>}
+   {refOpen&&<div className="ai-reference"><strong>{L('参考答案','Reference answer')}</strong>{q.type==='code'?<CodeReference id={q.id} reference={q.reference} customRefs={q.references} playground={quizPgMeta}/>:<p><KeywordText text={q.reference}/></p>}<strong>{L('评分要点','Key points')}</strong><ul>{q.points.map(p=><li key={p}><EnWords text={p}/></li>)}</ul></div>}
   </>}</div>;}
  else{const s=q as Extract<AiQuiz,{answer:number}>;input=<>{!done&&<p className="ai-choice-hint single">{L('单选题','Single choice')}</p>}<div className="ai-options">{item.order.map((o,i)=>option(o,i,s.options[o],()=>{setChosen([o]);onAnswer({correct:o===s.answer,given:s.options[o]})}))}</div></>}
  const self=isWritten(q);
+ const preferredLang=useCodeLang();
+ const resolvedCodeRef=useMemo(()=>{
+  if(q.type!=='code')return null;
+  const data=resolveCodeRefs(q.id,q.reference,q.references);
+  if(!data)return null;
+  const lang=preferredLang&&data.refs[preferredLang]?preferredLang:data.base;
+  return {lang,code:data.refs[lang]??q.reference};
+ },[q,preferredLang]);
  // 常驻 AI 老师：答题前只给提示（不透露答案），答完后讲解这道题、可以追问；在同一道题下保留临时对话。
  const [ask,setAsk]=useState<DockRequest>();
  // 选项按学习者屏幕上的顺序（已打乱）发给 AI，AI 说的 A、B、C、D 才能和页面对上。
- const tutorQuiz={type:aiQuizTypes[type],q:q.q,code:q.code,options:'options' in q?(item.order.length===q.options.length?item.order.map(o=>q.options[o]):q.options):undefined,answer:answerText(q,L),explain:q.explain,given:result?.given,correct:result?.correct};
+ const tutorQuiz={type:aiQuizTypes[type],q:q.q,code:q.code,options:'options' in q?(item.order.length===q.options.length?item.order.map(o=>q.options[o]):q.options):undefined,answer:resolvedCodeRef?resolvedCodeRef.code:answerText(q,L),explain:q.explain,given:result?.given,correct:result?.correct};
  const dockPrompts=done?[L('为什么是这个答案？我哪里想错了？','Why is this the answer? Where did I go wrong?'),L('每个选项分别错在哪里？','What is wrong with each option?'),L('举个例子帮我理解','Give me an example')]
   :[L('给我一点提示（不要告诉我答案）','Give me a hint (not the answer)'),L('这道题考的是什么知识点？','What concept is this testing?'),L('题目里的名词是什么意思？','What do the terms mean?')];
  const terms=done?findTerms(q.q,...('options' in q?q.options:[]),q.explain,q.type==='short'?q.reference:'',...(self?q.points:[])):[];
@@ -155,7 +163,7 @@ export default function QuestionCard({item,label,result,last,onAnswer,onNext,onP
  const noteCodeFence=q.code?`\`\`\`${snippetLang||''}\n${q.code}\n\`\`\``:'';
  const noteQuestionOnly=[`### ${q.q}`,noteCodeFence,noteOptionsText].filter(Boolean).join('\n\n');
  const noteAnswerBlock=q.type==='code'
-  ?`**${L('参考代码','Reference Code')}**：\n\`\`\`${snippetLang||''}\n${q.reference}\n\`\`\``
+  ?`**${L('参考代码','Reference Code')}**：\n\`\`\`${resolvedCodeRef?.lang||snippetLang||''}\n${resolvedCodeRef?.code||q.reference}\n\`\`\``
   :`**${L('参考答案','Reference Answer')}**：${answerText(q,L)}`;
  const notePointsBlock=isWritten(q)&&q.points.length
   ?`**${L('核心得分要点','Key Points')}**：\n${q.points.map((p,i)=>`${i+1}. ${p}`).join('\n')}`
