@@ -18,7 +18,7 @@ jobs:
           - os: windows-latest
             asset: InterviewStudyBridge-win-x64.exe
             platform: win32
-          - os: macos-14
+          - os: macos-latest
             asset: InterviewStudyBridge-darwin-arm64
             platform: darwin
           - os: macos-15-intel
