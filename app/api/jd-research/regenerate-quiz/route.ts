@@ -1,7 +1,11 @@
 import { AuthError, assertSameOrigin, rateLimit, sessionUser } from '@/lib/site-auth';
 import { consumeSiteAiQuota } from '@/lib/site-ai-quota';
 import { getAiInterviewRecord, saveAiInterviewRecord } from '@/lib/ai-interview-records';
-import { parseSingleStudyQuiz } from '@/lib/jd-research-server';
+import {
+ buildJdStudyRegenQuizInput,
+ getJdStudyRegenQuizSystemPrompt,
+ parseSingleStudyQuiz,
+} from '@/lib/jd-research-server';
 import { isAntigravityRateLimitError, runAntigravityBackgroundToCompletion, type AntigravityUsage } from '@/lib/antigravity-agent';
 import { runDeepSeekJdFallbackStream } from '@/lib/gemini';
 import type { JdInputKind, JdResearchReport } from '@/lib/jd-research-types';
@@ -25,20 +29,6 @@ type StoredJdRecordPayload = {
  imported?: { count: number; subject: string } | null;
  error?: string;
 };
-
-const REGEN_SYSTEM = `你是顶级技术面试教研专家。当前任务：【重新生成 1 道高质量、格式规范的替换学习题】。
-
-严格规则：
-1. 必须严格保持指定的题型（\`single\` / \`multi\` / \`short\` / \`code\`）与 \`dimension\` 字段不变，紧扣目标岗位 JD 与所在复习阶段目标，且与同阶段已有其他题目绝不重复。
-2. 题干 \`q\` 简洁清晰、无歧义、无语法错别字；行内代码反引号内禁止夹带真实换行（如需表达换行符请写字面量 \`\\\\n\`）。
-3. 若题型为 \`code\`，**必须同时提供 \`starters\` 与 \`references\` 两个对象，均包含 \`python\`、\`go\`、\`java\`、\`ts\`、\`rust\` 共 5 种语言**（\`starters\` 放简洁函数签名与 \`TODO\` 框架代码，\`references\` 放对应各语言的精炼完整参考代码）。
-4. 严禁调用任何工具，直接输出**一个合法 JSON 对象**（用 \`\`\`json 和 \`\`\` 包裹，不要输出代码块以外的文字），使用简体中文。
-
-示例结构（仅输出 1 道目标题型的对象）：
-- single: { "type": "single", "dimension": "...", "q": "...", "options": ["A", "B", "C", "D"], "answer": 0, "explain": "..." }
-- multi: { "type": "multi", "dimension": "...", "q": "...", "options": ["A", "B", "C", "D"], "answers": [0, 2], "explain": "..." }
-- short: { "type": "short", "dimension": "...", "q": "...", "reference": "...", "points": ["要点1", "要点2", "要点3"], "explain": "..." }
-- code: { "type": "code", "dimension": "...", "q": "...", "starters": { "python": "...", "go": "...", "java": "...", "ts": "...", "rust": "..." }, "references": { "python": "...", "go": "...", "java": "...", "ts": "...", "rust": "..." }, "points": ["要点1", "要点2"], "explain": "..." }`;
 
 function combineUsage(a?: AntigravityUsage, b?: AntigravityUsage): AntigravityUsage | undefined {
  if (!a && !b) return undefined;
@@ -89,24 +79,14 @@ export async function POST(req: Request) {
 
   const oldQuiz = quizzes[qIdx];
   const targetType = oldQuiz.type ?? 'single';
-  const otherStems = quizzes
-   .filter((_, i) => i !== qIdx)
-   .map((q, i) => `${i + 1}. (${q.type ?? 'single'}) ${q.q.slice(0, 72)}`)
-   .join('\n');
-
-  const userInput = [
-   `【岗位主题】${report.roleTitle}（${[report.inferredLevel, report.companyStyle].filter(Boolean).join(' · ')}）`,
-   `【复习路径阶段】${step.phase} · ${step.title}`,
-   step.goals.length ? `【阶段目标】${step.goals.join('；')}` : '',
-   `【必须保持的题型】${targetType}`,
-   oldQuiz.dimension ? `【必须保持的 dimension】${oldQuiz.dimension}` : '',
-   `【原题目（存在格式或内容问题，请重新出 1 道更高质量的新题替代）】\n${oldQuiz.q}`,
-   reason ? `【用户反馈的问题】${reason}` : '',
-   otherStems ? `【同阶段其他题目（严禁重复）】\n${otherStems}` : '',
-   rec.payload.source ? `【原始岗位 JD / 面经】\n${rec.payload.source.slice(0, 4000)}` : '',
-  ]
-   .filter(Boolean)
-   .join('\n\n');
+  const regenSystem = getJdStudyRegenQuizSystemPrompt();
+  const userInput = buildJdStudyRegenQuizInput({
+   report,
+   stepIdx,
+   qIdx,
+   source: rec.payload.source,
+   reason,
+  });
 
   const validateQuiz = (txt: string) => {
    const parsed = parseSingleStudyQuiz(txt, stepIdx, qIdx, oldQuiz.id, oldQuiz.dimension);
@@ -119,7 +99,7 @@ export async function POST(req: Request) {
   let out: { text: string; thoughts: string; modelLabel: string; usage?: AntigravityUsage };
   try {
    out = await runAntigravityBackgroundToCompletion({
-    systemInstruction: REGEN_SYSTEM,
+    systemInstruction: regenSystem,
     input: userInput,
     maxTotalTokens: 24_000,
     geminiProxy,
@@ -132,7 +112,7 @@ export async function POST(req: Request) {
     throw agentErr;
    }
    const dsOut = await runDeepSeekJdFallbackStream({
-    systemPrompt: REGEN_SYSTEM,
+    systemPrompt: regenSystem,
     userInput,
     maxTokens: 6144,
     thinkingLevel: 'low',

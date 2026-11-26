@@ -9,9 +9,20 @@
 .jds-qnums{display:flex;flex-wrap:wrap;gap:6px}
 .jds-qnum{min-width:32px;height:30px;padding:0 8px;border-radius:8px;border:1px solid var(--line);background:var(--surface-soft);color:var(--ink);font-size:12.5px;font-weight:650;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:3px;transition:border-color .15s,background .15s,color .15s}
 .jds-qnum.cur{border-color:var(--primary);background:var(--primary);color:var(--primary-foreground,#fff)}
+.jds-qnum.cur.done{border-color:#16a34a;background:#16a34a;color:#fff}
+.jds-qnum.cur.wrong{border-color:#dc2626;background:#dc2626;color:#fff}
 .jds-qnum.done:not(.cur){border-color:rgba(34,197,94,.45);background:rgba(34,197,94,.12);color:#16a34a}
 .jds-qnum.wrong:not(.cur){border-color:rgba(239,68,68,.45);background:rgba(239,68,68,.12);color:#ef4444}
 .jds-qnum small{font-size:11px;font-weight:600;opacity:.82}
+.jds-qbar-right{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
+.jds-stat-tags{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;margin:-4px 0 6px}
+.jds-stat-tag{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;font-size:12.5px;font-weight:650;background:var(--surface-soft);color:var(--body-ink);border:1px solid var(--line)}
+.jds-stat-tag.ok{border-color:rgba(34,197,94,.4);background:rgba(34,197,94,.1);color:#16a34a}
+.jds-stat-tag.err{border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.1);color:#ef4444}
+.jds-review-sum{display:flex;align-items:center;gap:8px;width:100%}
+.jds-review-sum .jds-review-q{flex:1;min-width:0}
+.jds-review-jump{margin-left:auto;flex:none}
+.jds-unans-dot{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--quiet);font-weight:700;flex:none}
 
 .jds-paths{display:flex;gap:8px;overflow-x:auto;padding:2px 0 4px;-webkit-overflow-scrolling:touch;scrollbar-width:thin}
 .jds-path-btn{display:inline-flex;align-items:center;gap:7px;padding:7px 12px;border-radius:12px;border:1px solid var(--line);background:var(--surface-soft);color:var(--ink);font:inherit;font-size:13px;font-weight:650;cursor:pointer;white-space:nowrap;flex:none;transition:border-color .15s,background .15s,color .15s}

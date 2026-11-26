@@ -6,6 +6,7 @@ import {
  buildJdResumeInput,
  buildJdStage1Input,
  buildJdStage2QuestionsInput,
+ buildJdStudyRegenQuizInput,
  combinePhaseQuizzes,
  getJdProjectDrillRegenQuizSystemPrompt,
  getJdProjectDrillSystemPrompt,
@@ -13,6 +14,7 @@ import {
  getJdResearchStage1SystemPrompt,
  getJdResearchStage2QuestionsSystemPrompt,
  getJdResumeSystemPrompt,
+ getJdStudyRegenQuizSystemPrompt,
  getReusedQuizzesForPhase,
  mergeStage2Parts,
  parseAndEnrichJdReport,
@@ -150,6 +152,28 @@ export async function POST(req: Request) {
     );
    }
 
+   if (task === 'study-regen-quiz') {
+    const report = body.report as JdResearchReport | undefined;
+    const stepIdx = Number(body.stepIdx);
+    const quizId = typeof body.quizId === 'string' ? body.quizId.trim() : '';
+    const source = typeof body.source === 'string' ? body.source.trim().slice(0, 12_000) : '';
+    const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 300) : '';
+    const quizzes = report?.roadmap?.[stepIdx]?.quizzes;
+    const qIdx = Array.isArray(quizzes) ? quizzes.findIndex(q => q.id === quizId) : -1;
+    if (!report || qIdx < 0) {
+     throw new AuthError('未找到要重出的学习题。', 400);
+    }
+    return Response.json(
+     {
+      system: getJdStudyRegenQuizSystemPrompt(),
+      user: buildJdStudyRegenQuizInput({ report, stepIdx, qIdx, source, reason }),
+      qIdx,
+      targetType: quizzes![qIdx].type ?? 'single',
+     },
+     { headers: noCache },
+    );
+   }
+
    throw new AuthError('不支持的本地辅助任务。', 400);
   }
 
@@ -196,12 +220,13 @@ export async function POST(req: Request) {
    return Response.json({ drill }, { headers: noCache });
   }
 
-  if (task === 'project-drill-regen-quiz') {
+  if (task === 'project-drill-regen-quiz' || task === 'study-regen-quiz') {
    const rawText = typeof body.rawText === 'string' ? body.rawText : '';
-   const projIdx = Number(body.projIdx);
-   const quizIdx = Number(body.quizIdx);
+   const projIdx = Number(body.projIdx ?? body.stepIdx);
+   const quizIdx = Number(body.quizIdx ?? body.qIdx);
    const fallbackId = typeof body.fallbackId === 'string' ? body.fallbackId : '';
    const fallbackDimension = typeof body.fallbackDimension === 'string' ? body.fallbackDimension : undefined;
+   const expectedType = typeof body.targetType === 'string' && body.targetType ? body.targetType : undefined;
    const quiz = parseSingleStudyQuiz(
     rawText,
     Number.isInteger(projIdx) ? projIdx : 0,
@@ -209,7 +234,9 @@ export async function POST(req: Request) {
     fallbackId,
     fallbackDimension,
    );
-   if (!quiz) throw new AuthError('重出题目解析失败，请重试。', 422);
+   if (!quiz || (expectedType && (quiz.type ?? 'single') !== expectedType)) {
+    throw new AuthError('重出题目解析失败，请重试。', 422);
+   }
    return Response.json({ quiz }, { headers: noCache });
   }
 

@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
  AlertTriangle,
  ArrowLeft,
+ ArrowRight,
  ArrowUpRight,
  BookOpen,
  Check,
@@ -27,6 +28,7 @@ import {
  Sparkles,
  Square,
  Target,
+ Trophy,
  X,
  Zap,
 } from 'lucide-react';
@@ -35,7 +37,9 @@ import SiteHeader from '../../components/site-header';
 import CardSideNav from '../../components/card-side-nav';
 import AddToNoteButton from '../../components/add-to-note';
 import AiDock from '../../ai/ai-dock';
-import QuestionCard, { type Item, type Result } from '../../ai/question-card';
+import CodeReference from '../../ai/code-reference';
+import QuestionCard, { answerText, type Item, type Result } from '../../ai/question-card';
+import KeywordText, { EnWords } from '../../components/keyword-text';
 import { Annotated } from '../../interview/annotated';
 import { AnnotatedAnswerBox } from '../../ai/grade-view';
 import { requestGrade, type GradeThinkState } from '../../ai/grade-client';
@@ -43,6 +47,8 @@ import { getGeminiAutoProxy } from '../../ai/gemini-proxy-pref';
 import { useI18n } from '../../components/i18n';
 import { aiQuizTypes, type AiQuiz } from '@/content/journey';
 import { answerBlocks } from '@/lib/my-questions';
+import { isLocalDeepReady, useLocalBridgeConfig } from '@/lib/local-bridge-config';
+import { streamDeepViaBridge } from '@/lib/local-bridge-client';
 import type { PlaygroundLang } from '@/lib/playground-bridge';
 import type { GradeItem, GradeResult } from '@/lib/grade-types';
 import type { AntigravityUsage } from '@/lib/antigravity-agent';
@@ -214,10 +220,13 @@ export default function JdSpecialClient({
  }, [topics]);
 
  const [activeTopicId, setActiveTopicId] = useState<string>(topics[0]?.id || '');
+ const [localCfg] = useLocalBridgeConfig();
  const [tab, setTab] = useState<ViewTab>('practice');
  const [stepIdx, setStepIdx] = useState(0);
  const [dimIdx, setDimIdx] = useState(0);
  const [qIndex, setQIndex] = useState(0);
+ const [showGroupResult, setShowGroupResult] = useState(false);
+ const [wrongOnlyKeys, setWrongOnlyKeys] = useState<string[] | null>(null);
  const [jdOpen, setJdOpen] = useState(false);
  const [regenKey, setRegenKey] = useState('');
  const [regenErr, setRegenErr] = useState('');
@@ -306,10 +315,17 @@ export default function JdSpecialClient({
  const safeDimIdx = Math.min(dimIdx, Math.max(0, dimensions.length - 1));
  const activeDim = dimensions[safeDimIdx] ?? null;
 
- const activeEntries: IndexedStudyQuiz[] = useMemo(() => {
+ const groupEntries: IndexedStudyQuiz[] = useMemo(() => {
   if (tab === 'dimension') return quizzesByDim[safeDimIdx] ?? [];
   return allIndexedQuizzes.filter(e => e.stepIdx === safeStepIdx);
  }, [tab, quizzesByDim, safeDimIdx, allIndexedQuizzes, safeStepIdx]);
+
+ const activeEntries: IndexedStudyQuiz[] = useMemo(() => {
+  if (!wrongOnlyKeys) return groupEntries;
+  const set = new Set(wrongOnlyKeys);
+  const filtered = groupEntries.filter(e => set.has(e.key));
+  return filtered.length ? filtered : groupEntries;
+ }, [groupEntries, wrongOnlyKeys]);
 
  // Legacy fallback data
  const legacyQuestions = topic?.report.questions ?? [];
@@ -369,6 +385,8 @@ export default function JdSpecialClient({
   stopGrade();
   setGradeErr('');
   setShowAns(false);
+  setShowGroupResult(false);
+  setWrongOnlyKeys(null);
   setActiveTopicId(id);
   setStepIdx(0);
   setDimIdx(0);
@@ -379,6 +397,8 @@ export default function JdSpecialClient({
 
  const switchTab = (nextTab: ViewTab) => {
   setTab(nextTab);
+  setShowGroupResult(false);
+  setWrongOnlyKeys(null);
   if (nextTab === 'dimension') {
    const firstNonEmpty = quizzesByDim[safeDimIdx]?.length ? safeDimIdx : Math.max(0, quizzesByDim.findIndex(b => b.length > 0));
    setDimIdx(firstNonEmpty);
@@ -395,12 +415,16 @@ export default function JdSpecialClient({
  };
 
  const switchStep = (nextStep: number) => {
+  setShowGroupResult(false);
+  setWrongOnlyKeys(null);
   setStepIdx(nextStep);
   setQIndex(0);
   if (topic) syncUrl(topic.id, 'practice', nextStep, safeDimIdx, 0);
  };
 
  const switchDim = (nextDim: number) => {
+  setShowGroupResult(false);
+  setWrongOnlyKeys(null);
   setTab('dimension');
   setDimIdx(nextDim);
   setQIndex(0);
@@ -411,6 +435,7 @@ export default function JdSpecialClient({
   stopGrade();
   setGradeErr('');
   setShowAns(false);
+  setShowGroupResult(false);
   setQIndex(idx);
   if (topic) syncUrl(topic.id, tab, safeStepIdx, safeDimIdx, idx);
  };
@@ -426,15 +451,20 @@ export default function JdSpecialClient({
     drafts,
    };
   });
-  if (res.correct) {
-   setPassed(prev => {
+  setPassed(prev => {
+   if (res.correct) {
     if (prev.has(studyKey)) return prev;
     const next = new Set(prev);
     next.add(studyKey);
     persistPassed(username, next);
     return next;
-   });
-  }
+   }
+   if (!prev.has(studyKey)) return prev;
+   const next = new Set(prev);
+   next.delete(studyKey);
+   persistPassed(username, next);
+   return next;
+  });
  };
 
  const handleStructuredDraft = (val: string) => {
@@ -448,8 +478,8 @@ export default function JdSpecialClient({
  };
 
  const resetCurrentGroupProgress = () => {
-  if (!topic || !activeEntries.length) return;
-  const keys = activeEntries.map(e => e.key);
+  if (!topic || !groupEntries.length) return;
+  const keys = groupEntries.map(e => e.key);
   updateSession(prev => {
    const results = { ...prev.results };
    const drafts = { ...prev.drafts };
@@ -459,8 +489,43 @@ export default function JdSpecialClient({
    }
    return { ...prev, results, drafts };
   });
+  setPassed(prev => {
+   let changed = false;
+   const next = new Set(prev);
+   for (const k of keys) {
+    if (next.delete(k)) changed = true;
+   }
+   if (changed) persistPassed(username, next);
+   return changed ? next : prev;
+  });
+  setShowGroupResult(false);
+  setWrongOnlyKeys(null);
   setQIndex(0);
   syncUrl(topic.id, tab, safeStepIdx, safeDimIdx, 0);
+ };
+
+ const applyRegeneratedReport = (targetKey: string, nextReport: JdResearchReport, nextUsage?: AntigravityUsage) => {
+  if (!topic) return;
+  setTopicList(prev =>
+   prev.map(t => (t.id === topic.id ? { ...t, report: nextReport, usage: nextUsage ?? t.usage } : t)),
+  );
+  updateSession(prev => {
+   const results = { ...prev.results };
+   const drafts = { ...prev.drafts };
+   const orders = { ...prev.orders };
+   delete results[targetKey];
+   delete drafts[targetKey];
+   delete orders[targetKey];
+   return { ...prev, results, drafts, orders };
+  });
+  setPassed(prev => {
+   if (!prev.has(targetKey)) return prev;
+   const next = new Set(prev);
+   next.delete(targetKey);
+   persistPassed(username, next);
+   return next;
+  });
+  setRegenNonce(prev => ({ ...prev, [targetKey]: (prev[targetKey] || 0) + 1 }));
  };
 
  const regenerateCurrentQuiz = async () => {
@@ -469,6 +534,76 @@ export default function JdSpecialClient({
   setRegenKey(targetKey);
   setRegenErr('');
   try {
+   if (isLocalDeepReady(localCfg)) {
+    const pRes = await fetch('/api/jd-research/local-helper', {
+     method: 'POST',
+     headers: { 'content-type': 'application/json' },
+     body: JSON.stringify({
+      action: 'prompts',
+      task: 'study-regen-quiz',
+      report: topic.report,
+      stepIdx: currentEntry.stepIdx,
+      quizId: currentEntry.quiz.id,
+      source: topic.source || topic.title,
+     }),
+    });
+    const pData = (await pRes.json()) as {
+     system?: string;
+     user?: string;
+     qIdx?: number;
+     targetType?: string;
+     error?: string;
+    };
+    if (!pRes.ok || !pData.system || !pData.user || typeof pData.qIdx !== 'number') {
+     throw new Error(pData.error || L('准备本地提示词失败', 'Failed to prepare prompt'));
+    }
+    const out = await streamDeepViaBridge({
+     cfg: localCfg,
+     system: pData.system,
+     messages: [{ role: 'user', content: pData.user }],
+     jsonMode: true,
+     onDelta: () => {},
+    });
+    const parseRes = await fetch('/api/jd-research/local-helper', {
+     method: 'POST',
+     headers: { 'content-type': 'application/json' },
+     body: JSON.stringify({
+      action: 'parse',
+      task: 'study-regen-quiz',
+      rawText: out.text,
+      stepIdx: currentEntry.stepIdx,
+      qIdx: pData.qIdx,
+      fallbackId: currentEntry.quiz.id,
+      fallbackDimension: currentEntry.quiz.dimension,
+      targetType: pData.targetType,
+     }),
+    });
+    const parseData = (await parseRes.json()) as { quiz?: AiQuiz; error?: string };
+    if (!parseRes.ok || !parseData.quiz) {
+     throw new Error(parseData.error || L('重出题目解析失败，请重试', 'Regeneration failed'));
+    }
+    const nextReport: JdResearchReport = {
+     ...topic.report,
+     roadmap: topic.report.roadmap.map((s, idx) =>
+      idx === currentEntry.stepIdx
+       ? { ...s, quizzes: (s.quizzes ?? []).map((q, qi) => (qi === pData.qIdx ? parseData.quiz! : q)) }
+       : s,
+     ),
+    };
+    fetch('/api/ai-interview-records', {
+     method: 'POST',
+     headers: { 'content-type': 'application/json' },
+     body: JSON.stringify({
+      id: topic.id,
+      kind: 'jd-research',
+      patch: true,
+      payload: { report: nextReport },
+     }),
+    }).catch(() => {});
+    applyRegeneratedReport(targetKey, nextReport);
+    return;
+   }
+
    const r = await fetch('/api/jd-research/regenerate-quiz', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -488,26 +623,7 @@ export default function JdSpecialClient({
    if (!r.ok || !d.ok || !d.report) {
     throw new Error(d.error || L('重出题目失败，请重试', 'Regeneration failed'));
    }
-   setTopicList(prev =>
-    prev.map(t => (t.id === topic.id ? { ...t, report: d.report!, usage: d.usage ?? t.usage } : t)),
-   );
-   updateSession(prev => {
-    const results = { ...prev.results };
-    const drafts = { ...prev.drafts };
-    const orders = { ...prev.orders };
-    delete results[targetKey];
-    delete drafts[targetKey];
-    delete orders[targetKey];
-    return { ...prev, results, drafts, orders };
-   });
-   setPassed(prev => {
-    if (!prev.has(targetKey)) return prev;
-    const next = new Set(prev);
-    next.delete(targetKey);
-    persistPassed(username, next);
-    return next;
-   });
-   setRegenNonce(prev => ({ ...prev, [targetKey]: (prev[targetKey] || 0) + 1 }));
+   applyRegeneratedReport(targetKey, d.report, d.usage);
   } catch (e) {
    setRegenErr((e as Error).message || L('重出题目失败，请重试', 'Regeneration failed'));
   } finally {
@@ -520,6 +636,74 @@ export default function JdSpecialClient({
   setFillingStepIdx(targetStepIdx);
   setFillErr('');
   try {
+   if (isLocalDeepReady(localCfg)) {
+    const pRes = await fetch('/api/jd-research/local-helper', {
+     method: 'POST',
+     headers: { 'content-type': 'application/json' },
+     body: JSON.stringify({
+      action: 'prompts',
+      task: 'phase-quizzes',
+      kind: topic.kind ?? 'jd',
+      source: topic.source || topic.title,
+      stage1: topic.report,
+      phaseIndex: targetStepIdx,
+     }),
+    });
+    const pData = (await pRes.json()) as {
+     system?: string;
+     user?: string;
+     reusedQuizzes?: AiQuiz[];
+     error?: string;
+    };
+    if (!pRes.ok || !pData.system || !pData.user) {
+     throw new Error(pData.error || L('补题提示词准备失败', 'Failed to prepare prompt'));
+    }
+    const out = await streamDeepViaBridge({
+     cfg: localCfg,
+     system: pData.system,
+     messages: [{ role: 'user', content: pData.user }],
+     jsonMode: true,
+     onDelta: () => {},
+    });
+    const parseRes = await fetch('/api/jd-research/local-helper', {
+     method: 'POST',
+     headers: { 'content-type': 'application/json' },
+     body: JSON.stringify({
+      action: 'parse',
+      task: 'phase-quizzes',
+      rawText: out.text,
+      phaseIndex: targetStepIdx,
+      reusedQuizzes: pData.reusedQuizzes ?? [],
+     }),
+    });
+    const parseData = (await parseRes.json()) as { quizzes?: AiQuiz[]; error?: string };
+    if (!parseRes.ok || !parseData.quizzes?.length) {
+     throw new Error(parseData.error || L('补题解析失败，请重试', 'Generation failed'));
+    }
+    const doneReport: JdResearchReport = {
+     ...topic.report,
+     roadmap: topic.report.roadmap.map((s, idx) =>
+      idx === targetStepIdx ? { ...s, quizzes: parseData.quizzes } : s,
+     ),
+    };
+    fetch('/api/ai-interview-records', {
+     method: 'POST',
+     headers: { 'content-type': 'application/json' },
+     body: JSON.stringify({
+      id: topic.id,
+      kind: 'jd-research',
+      patch: true,
+      payload: { report: doneReport },
+     }),
+    }).catch(() => {});
+    setTopicList(prev => prev.map(t => (t.id === topic.id ? { ...t, report: doneReport } : t)));
+    setShowGroupResult(false);
+    setWrongOnlyKeys(null);
+    setQIndex(0);
+    syncUrl(topic.id, tab, safeStepIdx, safeDimIdx, 0);
+    return;
+   }
+
    const r = await fetch('/api/jd-research/fill-phase', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -685,9 +869,9 @@ export default function JdSpecialClient({
  }, [topic, currentEntry, studyKey, session.orders]);
 
  const activeAnsweredCount = useMemo(() => {
-  if (!activeEntries.length) return 0;
-  return activeEntries.filter(e => Boolean(session.results[e.key])).length;
- }, [activeEntries, session.results]);
+  if (!groupEntries.length) return 0;
+  return groupEntries.filter(e => Boolean(session.results[e.key])).length;
+ }, [groupEntries, session.results]);
 
  return (
   <div className="ai-shell">
@@ -980,7 +1164,7 @@ export default function JdSpecialClient({
          </>
         )}
 
-        {activeEntries.length > 0 && currentStudyItem && currentEntry ? (
+        {groupEntries.length > 0 && currentStudyItem && currentEntry ? (
          <>
           <div className="jds-qbar-row">
            <div className="jds-qnums" aria-label={L('题号切换', 'Question index')}>
@@ -993,7 +1177,7 @@ export default function JdSpecialClient({
                type="button"
                className={
                 'jds-qnum' +
-                (i === safeQIdx ? ' cur' : '') +
+                (!showGroupResult && i === safeQIdx ? ' cur' : '') +
                 (res ? (res.correct ? ' done' : ' wrong') : '')
                }
                onClick={() => switchQuestion(i)}
@@ -1005,62 +1189,274 @@ export default function JdSpecialClient({
              );
             })}
            </div>
-           <span className="jds-num" style={{ fontSize: 12.5, color: 'var(--quiet)', fontWeight: 650 }}>
-            {safeQIdx + 1} / {activeEntries.length}
-           </span>
+           <div className="jds-qbar-right">
+            {wrongOnlyKeys && (
+             <button
+              type="button"
+              className="ai-note-pill"
+              onClick={() => {
+               setWrongOnlyKeys(null);
+               setQIndex(0);
+              }}
+             >
+              <span>{L(`只刷错题 (${activeEntries.length})`, `Wrong only (${activeEntries.length})`)}</span>
+              <X size={12} />
+             </button>
+            )}
+            {activeAnsweredCount > 0 && !showGroupResult && (
+             <button
+              type="button"
+              className="ai-note-pill"
+              onClick={() => {
+               setWrongOnlyKeys(null);
+               setShowGroupResult(true);
+              }}
+             >
+              <span>{L('查看结果', 'Results')}</span>
+             </button>
+            )}
+            <span className="jds-num" style={{ fontSize: 12.5, color: 'var(--quiet)', fontWeight: 650 }}>
+             {showGroupResult ? `${activeAnsweredCount} / ${groupEntries.length}` : `${safeQIdx + 1} / ${activeEntries.length}`}
+            </span>
+           </div>
           </div>
 
-          {regenErr && (
-           <p className="ai-grade-error" style={{ margin: 0 }}>
-            {regenErr}
-           </p>
-          )}
-
-          <QuestionCard
-           key={`${studyKey}:${regenNonce[studyKey] || 0}`}
-           item={currentStudyItem}
-           label={
-            tab === 'dimension' && activeDim
-             ? `${activeDim.name} · ${currentEntry.stepPhase}`
-             : `${currentEntry.stepPhase} · ${currentEntry.stepTitle}`
-           }
-           result={session.results[studyKey] ?? null}
-           draft={session.drafts[studyKey]}
-           onDraftChange={handleStructuredDraft}
-           last={safeQIdx === activeEntries.length - 1}
-           onAnswer={handleStructuredAnswer}
-           onRegenerate={() => void regenerateCurrentQuiz()}
-           regenerating={regenKey === studyKey}
-           onPrev={safeQIdx > 0 ? () => switchQuestion(safeQIdx - 1) : undefined}
-           onNext={() => {
-            if (safeQIdx < activeEntries.length - 1) {
-             switchQuestion(safeQIdx + 1);
-            } else if (tab === 'practice' && safeStepIdx < roadmap.length - 1) {
-             switchStep(safeStepIdx + 1);
-            } else if (tab === 'dimension') {
-             const nextDim = quizzesByDim.findIndex((b, idx) => idx > safeDimIdx && b.length > 0);
-             if (nextDim >= 0) switchDim(nextDim);
-            }
-           }}
-           noteBackHref={
-            tab === 'dimension'
-             ? `/learn/jd-special?id=${encodeURIComponent(topic.id)}&tab=dimension&dim=${safeDimIdx}&q=${safeQIdx}`
-             : `/learn/jd-special?id=${encodeURIComponent(topic.id)}&step=${safeStepIdx}&q=${safeQIdx}`
-           }
-           onBeforeNoteLeave={flushSession}
-           playground={{
-            subjectName: topic.title.slice(0, 24),
-            levelTitle:
+          {showGroupResult ? (
+           (() => {
+            const total = groupEntries.length;
+            const rightEntries = groupEntries.filter(e => session.results[e.key]?.correct === true);
+            const wrongEntries = groupEntries.filter(e => session.results[e.key] && !session.results[e.key].correct);
+            const unansweredIdx = groupEntries.findIndex(e => !session.results[e.key]);
+            const unansweredCount = groupEntries.filter(e => !session.results[e.key]).length;
+            const pct = total ? Math.round((rightEntries.length / total) * 100) : 0;
+            const groupTitle =
              tab === 'dimension' && activeDim
               ? activeDim.name
-              : `${currentEntry.stepPhase} · ${currentEntry.stepTitle}`,
-            hintLang: subjectHintLang(topic.report.recommendedSubject),
-            backHref:
+              : activeStep
+                ? `${activeStep.phase} · ${activeStep.title}`
+                : topic.title;
+            const nextDimIdx =
              tab === 'dimension'
-              ? `/learn/jd-special?id=${encodeURIComponent(topic.id)}&tab=dimension&dim=${safeDimIdx}&q=${safeQIdx}`
-              : `/learn/jd-special?id=${encodeURIComponent(topic.id)}&step=${safeStepIdx}&q=${safeQIdx}`,
-           }}
-          />
+              ? quizzesByDim.findIndex((b, idx) => idx > safeDimIdx && b.length > 0)
+              : -1;
+            const hasNextStep = tab === 'practice' && safeStepIdx < roadmap.length - 1;
+            const canAdvance = hasNextStep || nextDimIdx >= 0;
+            const nextBtnLabel = hasNextStep
+             ? L(`下一阶段：${roadmap[safeStepIdx + 1]?.phase ?? ''}`, `Next: ${roadmap[safeStepIdx + 1]?.phase ?? ''}`)
+             : nextDimIdx >= 0
+               ? L(`下一维度：${dimensions[nextDimIdx]?.name ?? ''}`, `Next: ${dimensions[nextDimIdx]?.name ?? ''}`)
+               : '';
+
+            return (
+             <>
+              <section className="ai-card ai-result">
+               <Trophy size={36} />
+               <h2>{groupTitle}</h2>
+               <p className="ai-score">
+                {rightEntries.length} / {total}
+                <small>{pct}%</small>
+               </p>
+               <div className="jds-stat-tags">
+                <span className="jds-stat-tag ok">
+                 <Check size={13} />
+                 {L(`答对 ${rightEntries.length}`, `${rightEntries.length} right`)}
+                </span>
+                <span className={'jds-stat-tag' + (wrongEntries.length ? ' err' : '')}>
+                 <X size={13} />
+                 {L(`答错 ${wrongEntries.length}`, `${wrongEntries.length} wrong`)}
+                </span>
+                {unansweredCount > 0 && (
+                 <span className="jds-stat-tag">
+                  {L(`未答 ${unansweredCount}`, `${unansweredCount} left`)}
+                 </span>
+                )}
+               </div>
+               <div className="ai-result-actions">
+                {wrongEntries.length > 0 && (
+                 <button
+                  type="button"
+                  className="button primary"
+                  onClick={() => {
+                   setWrongOnlyKeys(wrongEntries.map(e => e.key));
+                   setShowGroupResult(false);
+                   setQIndex(0);
+                  }}
+                 >
+                  <RotateCcw size={15} />
+                  {L(`只刷错题 (${wrongEntries.length})`, `Retry wrong (${wrongEntries.length})`)}
+                 </button>
+                )}
+                {unansweredIdx >= 0 && (
+                 <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => {
+                   setWrongOnlyKeys(null);
+                   switchQuestion(unansweredIdx);
+                  }}
+                 >
+                  {L(`继续未答 (${unansweredCount})`, `Continue (${unansweredCount})`)}
+                 </button>
+                )}
+                <button
+                 type="button"
+                 className="button secondary"
+                 onClick={() => setShowGroupResult(false)}
+                >
+                 <ArrowLeft size={15} />
+                 {L('返回题目', 'Back to quiz')}
+                </button>
+                <button
+                 type="button"
+                 className="button secondary"
+                 onClick={resetCurrentGroupProgress}
+                >
+                 <RotateCcw size={15} />
+                 {tab === 'dimension' ? L('重做本维度', 'Reset') : L('重做本阶段', 'Reset Phase')}
+                </button>
+                {canAdvance && (
+                 <button
+                  type="button"
+                  className={wrongEntries.length === 0 && unansweredCount === 0 ? 'button primary' : 'button secondary'}
+                  onClick={() => {
+                   if (hasNextStep) switchStep(safeStepIdx + 1);
+                   else if (nextDimIdx >= 0) switchDim(nextDimIdx);
+                  }}
+                 >
+                  {nextBtnLabel}
+                  <ArrowRight size={15} />
+                 </button>
+                )}
+               </div>
+              </section>
+
+              <section className="ai-card ai-review">
+               <h2>{L('本组复盘', 'Review')}</h2>
+               {groupEntries.map((entry, idx) => {
+                const r = session.results[entry.key];
+                const qz = entry.quiz;
+                const written = qz.type === 'short' || qz.type === 'code' || qz.type === 'design';
+                const isWrong = Boolean(r && !r.correct);
+                return (
+                 <details key={entry.key} open={isWrong}>
+                  <summary>
+                   <span className="jds-review-sum">
+                    {r ? (
+                     r.correct ? (
+                      <Check size={16} className="right" />
+                     ) : (
+                      <X size={16} className="wrong" />
+                     )
+                    ) : (
+                     <span className="jds-unans-dot">—</span>
+                    )}
+                    <span className="jds-review-q">
+                     <strong>{idx + 1}. </strong>
+                     <EnWords text={qz.q} />
+                    </span>
+                    <button
+                     type="button"
+                     className="ai-note-pill jds-review-jump"
+                     onClick={e => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setWrongOnlyKeys(null);
+                      switchQuestion(idx);
+                     }}
+                    >
+                     <span>{isWrong ? L('重做', 'Retry') : L('查看', 'Open')}</span>
+                    </button>
+                   </span>
+                  </summary>
+                  {r?.given && (
+                   <p>
+                    {L('你的作答：', 'Your answer: ')}
+                    <EnWords text={r.given} />
+                   </p>
+                  )}
+                  {qz.type === 'code' ? (
+                   <CodeReference
+                    id={qz.id}
+                    reference={qz.reference}
+                    customRefs={qz.references}
+                    playground={{
+                     hintLang: subjectHintLang(topic.report.recommendedSubject),
+                     title: qz.q.slice(0, 72),
+                    }}
+                   />
+                  ) : written ? (
+                   <pre className="ai-review-ref">{answerText(qz, L)}</pre>
+                  ) : (
+                   <p>
+                    {L('正确答案：', 'Answer: ')}
+                    <EnWords text={answerText(qz, L)} />
+                   </p>
+                  )}
+                  {qz.explain && (
+                   <p className="muted">
+                    <KeywordText text={qz.explain} />
+                   </p>
+                  )}
+                 </details>
+                );
+               })}
+              </section>
+             </>
+            );
+           })()
+          ) : (
+           <>
+            {regenErr && (
+             <p className="ai-grade-error" style={{ margin: 0 }}>
+              {regenErr}
+             </p>
+            )}
+
+            <QuestionCard
+             key={`${studyKey}:${regenNonce[studyKey] || 0}`}
+             item={currentStudyItem}
+             label={
+              tab === 'dimension' && activeDim
+               ? `${activeDim.name} · ${currentEntry.stepPhase}`
+               : `${currentEntry.stepPhase} · ${currentEntry.stepTitle}`
+             }
+             result={session.results[studyKey] ?? null}
+             draft={session.drafts[studyKey]}
+             onDraftChange={handleStructuredDraft}
+             last={safeQIdx === activeEntries.length - 1}
+             onAnswer={handleStructuredAnswer}
+             onRegenerate={() => void regenerateCurrentQuiz()}
+             regenerating={regenKey === studyKey}
+             onPrev={safeQIdx > 0 ? () => switchQuestion(safeQIdx - 1) : undefined}
+             onNext={() => {
+              if (safeQIdx < activeEntries.length - 1) {
+               switchQuestion(safeQIdx + 1);
+              } else {
+               setWrongOnlyKeys(null);
+               setShowGroupResult(true);
+              }
+             }}
+             noteBackHref={
+              tab === 'dimension'
+               ? `/learn/jd-special?id=${encodeURIComponent(topic.id)}&tab=dimension&dim=${safeDimIdx}&q=${safeQIdx}`
+               : `/learn/jd-special?id=${encodeURIComponent(topic.id)}&step=${safeStepIdx}&q=${safeQIdx}`
+             }
+             onBeforeNoteLeave={flushSession}
+             playground={{
+              subjectName: topic.title.slice(0, 24),
+              levelTitle:
+               tab === 'dimension' && activeDim
+                ? activeDim.name
+                : `${currentEntry.stepPhase} · ${currentEntry.stepTitle}`,
+              hintLang: subjectHintLang(topic.report.recommendedSubject),
+              backHref:
+               tab === 'dimension'
+                ? `/learn/jd-special?id=${encodeURIComponent(topic.id)}&tab=dimension&dim=${safeDimIdx}&q=${safeQIdx}`
+                : `/learn/jd-special?id=${encodeURIComponent(topic.id)}&step=${safeStepIdx}&q=${safeQIdx}`,
+             }}
+            />
+           </>
+          )}
          </>
         ) : tab === 'practice' ? (
          <div className="ai-card jds-empty">

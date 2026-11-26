@@ -763,6 +763,56 @@ export function buildJdProjectDrillRegenQuizInput(opts: {
   .join('\n\n');
 }
 
+let cachedStudyRegenPrompt: string | null = null;
+export function getJdStudyRegenQuizSystemPrompt(): string {
+ if (cachedStudyRegenPrompt) return cachedStudyRegenPrompt;
+ cachedStudyRegenPrompt = `你是顶级技术面试教研专家。当前任务：【重新生成 1 道高质量、格式规范的替换学习题】。
+
+严格规则：
+1. 必须严格保持指定的题型（\`single\` / \`multi\` / \`short\` / \`code\`）与 \`dimension\` 字段不变，紧扣目标岗位 JD 与所在复习阶段目标，且与同阶段已有其他题目绝不重复。
+2. 题干 \`q\` 简洁清晰、无歧义、无语法错别字；行内代码反引号内禁止夹带真实换行（如需表达换行符请写字面量 \`\\\\n\`）。
+3. 若题型为 \`code\`，**必须同时提供 \`starters\` 与 \`references\` 两个对象，均包含 \`python\`、\`go\`、\`java\`、\`ts\`、\`rust\` 共 5 种语言**（\`starters\` 放简洁函数签名与 \`TODO\` 框架代码，\`references\` 放对应各语言的精炼完整参考代码）。
+4. 严禁调用任何工具，直接输出**一个合法 JSON 对象**（用 \`\`\`json 和 \`\`\` 包裹，不要输出代码块以外的文字），使用简体中文。
+
+示例结构（仅输出 1 道目标题型的对象）：
+- single: { "type": "single", "dimension": "...", "q": "...", "options": ["A", "B", "C", "D"], "answer": 0, "explain": "..." }
+- multi: { "type": "multi", "dimension": "...", "q": "...", "options": ["A", "B", "C", "D"], "answers": [0, 2], "explain": "..." }
+- short: { "type": "short", "dimension": "...", "q": "...", "reference": "...", "points": ["要点1", "要点2", "要点3"], "explain": "..." }
+- code: { "type": "code", "dimension": "...", "q": "...", "starters": { "python": "...", "go": "...", "java": "...", "ts": "...", "rust": "..." }, "references": { "python": "...", "go": "...", "java": "...", "ts": "...", "rust": "..." }, "points": ["要点1", "要点2"], "explain": "..." }`;
+ return cachedStudyRegenPrompt;
+}
+
+export function buildJdStudyRegenQuizInput(opts: {
+ report: JdResearchReport;
+ stepIdx: number;
+ qIdx: number;
+ source?: string;
+ reason?: string;
+}): string {
+ const step = opts.report.roadmap[opts.stepIdx];
+ const quizzes = step?.quizzes ?? [];
+ const oldQuiz = quizzes[opts.qIdx];
+ if (!step || !oldQuiz) return '';
+ const targetType = oldQuiz.type ?? 'single';
+ const otherStems = quizzes
+  .filter((_, i) => i !== opts.qIdx)
+  .map((q, i) => `${i + 1}. (${q.type ?? 'single'}) ${q.q.slice(0, 72)}`)
+  .join('\n');
+ return [
+  `【岗位主题】${opts.report.roleTitle}（${[opts.report.inferredLevel, opts.report.companyStyle].filter(Boolean).join(' · ')}）`,
+  `【复习路径阶段】${step.phase} · ${step.title}`,
+  step.goals.length ? `【阶段目标】${step.goals.join('；')}` : '',
+  `【必须保持的题型】${targetType}`,
+  oldQuiz.dimension ? `【必须保持的 dimension】${oldQuiz.dimension}` : '',
+  `【原题目（存在格式或内容问题，请重新出 1 道更高质量的新题替代）】\n${oldQuiz.q}`,
+  opts.reason ? `【用户反馈的问题】${opts.reason}` : '',
+  otherStems ? `【同阶段其他题目（严禁重复）】\n${otherStems}` : '',
+  opts.source ? `【原始岗位 JD / 面经】\n${opts.source.slice(0, 4000)}` : '',
+ ]
+  .filter(Boolean)
+  .join('\n\n');
+}
+
 export function buildJdResearchInput(opts: {
  kind: JdInputKind;
  source: string;
