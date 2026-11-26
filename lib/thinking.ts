@@ -80,9 +80,6 @@ export type ModelThinkingSpec={
 const SPEC_DS_OFF:ModelThinkingSpec={levels:['off','low','high','max'],defaultLevel:'off'};
 const SPEC_DS_FLASH_THINK:ModelThinkingSpec={levels:['off','low','high','max'],defaultLevel:'low'};
 const SPEC_DS_PRO:ModelThinkingSpec={levels:['off','low','high','max'],defaultLevel:'high'};
-const SPEC_GM_HYDROGEN:ModelThinkingSpec={levels:['medium'],defaultLevel:'medium',locked:true};
-const SPEC_GM_38_FLASH:ModelThinkingSpec={levels:['low','medium','high'],defaultLevel:'medium'};
-const SPEC_GM_25_PRO:ModelThinkingSpec={levels:['low','medium','high'],defaultLevel:'high'};
 const SPEC_OPENAI_REASONING:ModelThinkingSpec={levels:['low','medium','high'],defaultLevel:'medium'};
 const SPEC_OFF_ONLY:ModelThinkingSpec={levels:['off'],defaultLevel:'off',locked:true};
 const SPEC_CLAUDE:ModelThinkingSpec={levels:['off','low','medium','high'],defaultLevel:'off'};
@@ -93,13 +90,7 @@ export function getCustomThinkingSpec(provider:string,model?:string):ModelThinki
  const m=(model||'').trim().toLowerCase();
  if(provider==='deepseek'){
   if(m.includes('v4-pro')||m.includes('reasoner'))return SPEC_DS_PRO;
-  return SPEC_DS_PRO.defaultLevel==='high'&&!m.includes('flash')?SPEC_DS_PRO:{levels:['off','low','high','max'],defaultLevel:'high'};
- }
- if(provider==='gemini'){
-  if(!m||m.includes('hydrogen'))return SPEC_GM_HYDROGEN;
-  if(m.includes('2.5-pro'))return SPEC_GM_25_PRO;
-  if(m.includes('3.8')||m.includes('3.6'))return SPEC_GM_38_FLASH;
-  return SPEC_GM_HYDROGEN;
+  return !m.includes('flash')?SPEC_DS_PRO:SPEC_DS_FLASH_THINK;
  }
  if(provider==='openai'){
   if(/^o\d|^gpt-5/.test(m))return SPEC_OPENAI_REASONING;
@@ -162,34 +153,31 @@ type LocalThinkingInput = {
  defaultThinkingLevel?: string;
 };
 
-// AI 问答模型与自定义配置对应的思考规格与作用域键。
-export function getTutorThinkingSpec(siteModel:string,custom?:{provider:string;model?:string}|null,local?:LocalThinkingInput|null):{scopeKey:string;spec:ModelThinkingSpec}{
- if((siteModel==='local'||(siteModel==='auto'&&local?.enabled))&&local?.enabled){
+// 全站统一模型选择对应的思考规格（覆盖问答、评分、笔记、重出、深度调研）。
+export function getGlobalThinkingSpec(model:string,custom?:{provider:string;model?:string}|null,local?:LocalThinkingInput|null,isGuest=false):{scopeKey:string;spec:ModelThinkingSpec}{
+ void isGuest;
+ if((model==='local'||(model==='auto'&&local?.enabled))&&local?.enabled){
   const m=local.model?.trim()||'default';
   return {scopeKey:`local:${local.provider}/${m}`,spec:getLocalThinkingSpec(local.provider,local.model,local.thinkingLevels,local.defaultThinkingLevel)};
  }
- if((siteModel==='auto'||siteModel==='custom')&&custom){
+ if((model==='auto'||model==='custom')&&custom){
   const m=custom.model?.trim()||custom.provider;
   return {scopeKey:`custom:${custom.provider}/${m}`,spec:getCustomThinkingSpec(custom.provider,custom.model)};
  }
- if(siteModel==='gemini-4'||siteModel==='gemini-flash')return {scopeKey:'model:gemini-4-hydrogen',spec:SPEC_GM_HYDROGEN};
- if(siteModel==='deepseek-v4-pro')return {scopeKey:'tutor:deepseek-v4-pro',spec:SPEC_DS_PRO};
- if(siteModel==='deepseek-flash-think')return {scopeKey:'tutor:deepseek-flash-think',spec:SPEC_DS_FLASH_THINK};
- return {scopeKey:'tutor:deepseek-flash',spec:SPEC_DS_OFF};
+ if(model==='deepseek-v4-pro')return {scopeKey:'tutor:deepseek-v4-pro',spec:SPEC_DS_PRO};
+ if(model==='deepseek-flash-think'||model==='deepseek')return {scopeKey:'tutor:deepseek-flash-think',spec:SPEC_DS_FLASH_THINK};
+ if(model==='deepseek-flash')return {scopeKey:'tutor:deepseek-flash',spec:SPEC_DS_OFF};
+ return {scopeKey:'global:deepseek-auto',spec:SPEC_DS_FLASH_THINK};
 }
 
-// AI 评分模型与自定义配置对应的思考规格与作用域键。
+// AI 问答模型与自定义配置对应的思考规格与作用域键（与全站统一规格共用同一份作用域）。
+export function getTutorThinkingSpec(siteModel:string,custom?:{provider:string;model?:string}|null,local?:LocalThinkingInput|null):{scopeKey:string;spec:ModelThinkingSpec}{
+ return getGlobalThinkingSpec(siteModel,custom,local,false);
+}
+
+// AI 评分模型与自定义配置对应的思考规格与作用域键（与全站统一规格共用同一份作用域）。
 export function getGradeThinkingSpec(gradeModel:string,custom?:{provider:string;model?:string}|null,isGuest=false,local?:LocalThinkingInput|null):{scopeKey:string;spec:ModelThinkingSpec}{
- if((gradeModel==='local'||(gradeModel==='auto'&&local?.enabled))&&local?.enabled){
-  const m=local.model?.trim()||'default';
-  return {scopeKey:`local:${local.provider}/${m}`,spec:getLocalThinkingSpec(local.provider,local.model,local.thinkingLevels,local.defaultThinkingLevel)};
- }
- if((gradeModel==='auto'||gradeModel==='custom')&&custom){
-  const m=custom.model?.trim()||custom.provider;
-  return {scopeKey:`custom:${custom.provider}/${m}`,spec:getCustomThinkingSpec(custom.provider,custom.model)};
- }
- if(gradeModel==='deepseek'||isGuest)return {scopeKey:'grade:deepseek-flash',spec:SPEC_DS_FLASH_THINK};
- return {scopeKey:'model:gemini-4-hydrogen',spec:SPEC_GM_HYDROGEN};
+ return getGlobalThinkingSpec(gradeModel,custom,local,isGuest);
 }
 
 // 把任意请求挡位夹紧到某个规格允许的最接近挡位。

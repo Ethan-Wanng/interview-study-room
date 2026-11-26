@@ -1,5 +1,13 @@
 import { aiQuizTypes, type AiQuiz } from '@/content/journey';
-import type { AntigravityUsage } from './antigravity-agent';
+
+export type AiTokenUsage = {
+ totalTokens: number;
+ inputTokens: number;
+ cachedTokens: number;
+ outputTokens: number;
+ thoughtTokens: number;
+};
+export type AntigravityUsage = AiTokenUsage;
 
 export type JdInputKind = 'jd' | 'experience';
 

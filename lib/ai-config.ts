@@ -1,4 +1,4 @@
-export type AiProviderId='deepseek'|'openai'|'anthropic'|'gemini'|'qwen';
+export type AiProviderId='deepseek'|'openai'|'anthropic'|'qwen';
 
 // 用户为自己的专属 API 设置的使用限制与配置（保存在服务端该登录用户名下，仅本人可用）。
 export type UserAiSettings={
@@ -64,16 +64,6 @@ export const AI_PROVIDERS:AiProviderMeta[]=[
   models:['claude-sonnet-5-5','claude-haiku-5-5','claude-opus-5-5'],
   keyPlaceholder:'sk-ant-...',
   keyHint:['填入 Anthropic Console 的 API Key（console.anthropic.com）','Enter your Anthropic API key from console.anthropic.com'],
- },
- {
-  id:'gemini',
-  name:'Google Gemini',
-  nameEn:'Google Gemini',
-  badge:'Gemini',
-  defaultModel:'gemini-4-hydrogen',
-  models:['gemini-4-hydrogen','gemini-3.8-flash','gemini-3.6-flash','gemini-2.5-pro'],
-  keyPlaceholder:'AIzaSy...',
-  keyHint:['填入 Google AI Studio 的 Gemini API Key（aistudio.google.com）','Enter your Gemini API key from aistudio.google.com'],
  },
  {
   id:'qwen',

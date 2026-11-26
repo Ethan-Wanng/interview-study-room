@@ -1,16 +1,8 @@
 import { AuthError, assertSameOrigin, rateLimit, sessionUser } from '@/lib/site-auth';
-import { consumeSiteAiQuota } from '@/lib/site-ai-quota';
 import { getAiInterviewRecord, saveAiInterviewRecord } from '@/lib/ai-interview-records';
 import { readPromptCache, sha256Hex, writePromptCache } from '@/lib/prompt-cache';
-import {
- ANTIGRAVITY_MODEL_CHAIN,
- AntigravityError,
- antigravityModelLabel,
- isAntigravityFallbackTriggerError,
- runAntigravityBackgroundToCompletion,
- type AntigravityUsage,
-} from '@/lib/antigravity-agent';
-import { runDeepSeekJdFallbackStream } from '@/lib/gemini';
+import { combineTokenUsage, prepareDeepModelExecution } from '@/lib/deep-model-route';
+import { runSelectedDeepModelStream } from '@/lib/gemini';
 import {
  buildJdResumeInput,
  createThinkJsonStreamSplitter,
@@ -19,7 +11,7 @@ import {
  normalizeJdSourceForCache,
  parseJdReferenceResume,
 } from '@/lib/jd-research-server';
-import type { JdInputKind, JdReferenceResume, JdResearchReport } from '@/lib/jd-research-types';
+import type { AiTokenUsage, JdInputKind, JdReferenceResume, JdResearchReport } from '@/lib/jd-research-types';
 
 export const dynamic = 'force-dynamic';
 const noCache = { 'Cache-Control': 'no-store' };
@@ -29,7 +21,7 @@ type CachedResumePayload = {
  rawText: string;
  thoughts: string;
  model: string;
- usage?: AntigravityUsage;
+ usage?: AiTokenUsage;
 };
 
 type CachedJdPayload = {
@@ -37,7 +29,7 @@ type CachedJdPayload = {
  rawText: string;
  thoughts: string;
  model?: string;
- usage?: AntigravityUsage;
+ usage?: AiTokenUsage;
  durationMs?: number;
 };
 
@@ -58,21 +50,10 @@ type StoredJdRecordPayload = {
  report: JdResearchReport | null;
  rawText?: string;
  thoughts?: string;
- usage?: AntigravityUsage;
+ usage?: AiTokenUsage;
  imported?: { count: number; subject: string } | null;
  error?: string;
 };
-
-function combineUsage(a?: AntigravityUsage, b?: AntigravityUsage): AntigravityUsage | undefined {
- if (!a && !b) return undefined;
- return {
-  totalTokens: (a?.totalTokens || 0) + (b?.totalTokens || 0),
-  inputTokens: (a?.inputTokens || 0) + (b?.inputTokens || 0),
-  cachedTokens: (a?.cachedTokens || 0) + (b?.cachedTokens || 0),
-  outputTokens: (a?.outputTokens || 0) + (b?.outputTokens || 0),
-  thoughtTokens: (a?.thoughtTokens || 0) + (b?.thoughtTokens || 0),
- };
-}
 
 export async function POST(req: Request) {
  try {
@@ -91,7 +72,6 @@ export async function POST(req: Request) {
 
   const recordId = typeof body.recordId === 'string' ? body.recordId.trim().slice(0, 80) : '';
   const bypassCache = body.bypassCache === true;
-  const geminiProxy = body.geminiProxy !== false;
 
   if (!recordId) {
    throw new AuthError('缺少必要的调研记录 ID。', 400);
@@ -136,8 +116,8 @@ export async function POST(req: Request) {
      const resumeKey = `jd-resume-v1:${hashHex}`;
 
      let resume: JdReferenceResume | null = null;
-     let modelLabel = antigravityModelLabel();
-     let usedUsage: AntigravityUsage | undefined;
+     let modelLabel = 'DeepSeek V4.1 Flash（深度思考）';
+     let usedUsage: AiTokenUsage | undefined;
      let cachedHit = false;
 
      if (!bypassCache) {
@@ -150,39 +130,32 @@ export async function POST(req: Request) {
      }
 
      if (!resume) {
-      const siteQ = await consumeSiteAiQuota(req, user, 'gemini');
-      if (!siteQ.ok) {
-       send({ type: 'error', error: siteQ.message });
-       return;
-      }
+      const exec = await prepareDeepModelExecution(req, user, body.model, body.thinkingLevel);
+      modelLabel = exec.displayLabel;
+      send({ type: 'status', model: exec.displayLabel });
+
       const systemPrompt = getJdResumeSystemPrompt();
       const userInput = buildJdResumeInput({ kind, source, report });
       const validate = (txt: string) => Boolean(parseJdReferenceResume(txt, report.roleTitle));
 
-      const runDeepSeek = async () => {
-       const dsLabel = 'DeepSeek V4.1 Flash（Agent限流兜底）';
-       send({ type: 'status', model: dsLabel });
-       let lastEmitAt = 0;
-       const splitter = createThinkJsonStreamSplitter({
-        onThoughtDelta: td => {
-         send({ type: 'thought', text: td });
-        },
-        onJsonDelta: jd => {
-         const now = Date.now();
-         if (now - lastEmitAt >= 300) {
-          lastEmitAt = now;
-          send({ type: 'delta', text: jd });
-         } else if (jd) {
-          send({ type: 'delta', text: jd });
-          lastEmitAt = now;
-         }
-        },
-       });
-       const dsOut = await runDeepSeekJdFallbackStream({
+      const splitter = createThinkJsonStreamSplitter({
+       onThoughtDelta: td => {
+        send({ type: 'thought', text: td });
+       },
+       onJsonDelta: jd => {
+        if (jd) send({ type: 'delta', text: jd });
+       },
+      });
+
+      let out: Awaited<ReturnType<typeof runSelectedDeepModelStream>>;
+      try {
+       out = await runSelectedDeepModelStream({
+        model: exec.model,
+        thinkingLevel: exec.thinkingLevel,
+        custom: exec.custom,
         systemPrompt,
         userInput,
         maxTokens: 12288,
-        thinkingLevel: 'low',
         signal: req.signal,
         validate,
         onModel: m => send({ type: 'status', model: m }),
@@ -191,90 +164,44 @@ export async function POST(req: Request) {
         onReset: () => send({ type: 'reset' }),
        });
        splitter.flush();
-       return {
-        text: dsOut.text,
-        thoughts: dsOut.thoughts,
-        modelLabel: dsOut.model,
-        usage: dsOut.usage,
-       };
-      };
-
-      let out: { text: string; thoughts: string; modelLabel: string; usage?: AntigravityUsage };
-      try {
-       send({ type: 'status', model: antigravityModelLabel() });
-       out = await runAntigravityBackgroundToCompletion({
-        systemInstruction: systemPrompt,
-        input: userInput,
-        maxTotalTokens: 48_000,
-        rounds: 1,
-        maxModels: 2,
-        firstProgressTimeoutMs: 35_000,
-        deadlineMs: 95_000,
-        geminiProxy,
-        signal: req.signal,
-        validate,
-       });
-      } catch (agentErr) {
-       if (req.signal?.aborted) throw agentErr;
-       if (isAntigravityFallbackTriggerError(agentErr)) {
-        out = await runDeepSeek();
-       } else {
-        send({ type: 'status', model: 'Antigravity Agent（重试中）' });
-        try {
-         out = await runAntigravityBackgroundToCompletion({
-          systemInstruction: systemPrompt,
-          input: userInput,
-          maxTotalTokens: 48_000,
-          rounds: 1,
-          maxModels: ANTIGRAVITY_MODEL_CHAIN.length,
-          firstProgressTimeoutMs: 35_000,
-          deadlineMs: 95_000,
-          geminiProxy,
-          signal: req.signal,
-          validate,
-         });
-        } catch (retryErr) {
-         if (req.signal?.aborted || !isAntigravityFallbackTriggerError(retryErr)) {
-          throw retryErr;
-         }
-         out = await runDeepSeek();
-        }
-       }
+      } catch (err) {
+       await exec.refund();
+       throw err;
       }
 
-      if (out.thoughts) {
-       send({ type: 'thought', text: out.thoughts });
-      }
       const parsed = parseJdReferenceResume(out.text, report.roleTitle);
       if (!parsed) {
+       await exec.refund();
        send({ type: 'error', error: '参考简历解析失败，请再试一次。' });
        return;
       }
       resume = parsed;
-      modelLabel = out.modelLabel;
+      modelLabel = out.model;
       usedUsage = out.usage;
 
-      const extracted = extractThoughtsAndJson(out.text);
-      await writePromptCache(
-       resumeKey,
-       'jd-resume',
-       modelLabel,
-       {
-        resume,
-        rawText: extracted.jsonRaw || out.text,
-        thoughts: (out.thoughts || extracted.thoughts || '').trim(),
-        model: modelLabel,
-        usage: out.usage,
-       } satisfies CachedResumePayload,
-       7 * 24 * 3600_000,
-      );
+      if (!exec.custom) {
+       const extracted = extractThoughtsAndJson(out.text);
+       await writePromptCache(
+        resumeKey,
+        'jd-resume',
+        modelLabel,
+        {
+         resume,
+         rawText: extracted.jsonRaw || out.text,
+         thoughts: (out.thoughts || extracted.thoughts || '').trim(),
+         model: modelLabel,
+         usage: out.usage,
+        } satisfies CachedResumePayload,
+        7 * 24 * 3600_000,
+       );
+      }
      }
 
      const nextReport: JdResearchReport = {
       ...report,
       resume,
      };
-     const nextUsage = cachedHit ? rec.payload.usage : combineUsage(rec.payload.usage, usedUsage);
+     const nextUsage = cachedHit ? rec.payload.usage : combineTokenUsage(rec.payload.usage, usedUsage);
 
      await saveAiInterviewRecord({
       id: rec.id,
@@ -324,7 +251,7 @@ export async function POST(req: Request) {
     } catch (e) {
      if (!req.signal?.aborted) {
       const msg =
-       e instanceof AuthError || e instanceof AntigravityError
+       e instanceof AuthError
         ? e.message
         : e instanceof Error && e.message
           ? e.message

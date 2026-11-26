@@ -406,6 +406,28 @@ html.dark{
 .site-nav-menu a:hover,.site-nav-menu a.on{background:color-mix(in srgb,var(--primary) 11%,var(--surface-soft))}
 .site-nav-menu a.on b{color:var(--primary)}
 
+/* 顶栏全站统一 AI 模型与思考强度选择器 */
+.global-model-wrap{position:relative;flex:none}
+.global-model-btn{gap:5px;max-width:176px}
+.global-model-btn span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.global-model-chev{flex:none;transition:transform .16s}
+.global-model-chev.rot{transform:rotate(180deg)}
+.global-model-btn.on{border-color:color-mix(in srgb,var(--primary) 55%,var(--glass-border,var(--line)));color:var(--primary)}
+.global-model-head-actions{display:inline-flex;align-items:center;gap:6px;flex:none}
+.global-model-head-actions .ai-cfg-chip{display:inline-flex;align-items:center;gap:4px;text-decoration:none}
+.global-model-body{display:flex;flex-direction:column;gap:10px;padding:10px 12px 12px;overflow-y:auto}
+.global-model-sec{display:flex;flex-direction:column;gap:6px}
+.global-model-sec-title{font-size:11.5px;font-weight:700;color:var(--quiet)}
+.global-model-list{display:flex;flex-direction:column;gap:4px}
+.global-model-item{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:8px 10px;border-radius:10px;border:1px solid transparent;background:color-mix(in srgb,var(--surface-soft) 72%,transparent);color:var(--ink);font:inherit;font-size:13px;font-weight:600;text-align:left;cursor:pointer;transition:background .14s,border-color .14s,color .14s}
+.global-model-item:hover{background:color-mix(in srgb,var(--primary) 9%,var(--surface-soft));border-color:color-mix(in srgb,var(--primary) 30%,var(--line))}
+.global-model-item.on{background:color-mix(in srgb,var(--primary) 13%,var(--surface));border-color:color-mix(in srgb,var(--primary) 55%,var(--line));color:var(--primary)}
+.global-model-item-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.global-model-think{width:100%}
+.settings-proxy-link{gap:6px;padding:6px 12px;min-height:0;font-size:13px}
+@media(max-width:767px){.global-model-btn{max-width:128px}}
+@media(max-width:540px){.global-model-chev{display:none!important}}
+
 /* 通用提示条（用于反馈、操场、故事） */
 .fb-alert{padding:10px 12px;border-radius:10px;font-size:.86rem;line-height:1.5}
 .fb-alert.err{background:color-mix(in oklab,#dc2626 12%,var(--surface));border:1px solid color-mix(in oklab,#dc2626 35%,var(--line));color:#dc2626}

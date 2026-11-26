@@ -7,8 +7,9 @@ import {ArrowLeft,Check,ChevronDown,ChevronUp,Copy,History,Loader2,Lock,Plus,Rot
 import SiteHeader from '../../components/site-header';
 import AddToNoteButton from '../../components/add-to-note';
 import {useI18n} from '../../components/i18n';
-import {getGeminiAutoProxy} from '../../ai/gemini-proxy-pref';
-import {isLocalDeepReady,LOCAL_PROVIDER_LABEL,useLocalBridgeConfig} from '@/lib/local-bridge-config';
+import {getActiveGlobalThinkingLevel,shouldUseLocalBridge,useGlobalAiModel} from '../../ai/thinking-pref';
+import {classifySafeHref,splitBareUrlTrailing} from '@/lib/safe-href';
+import {LOCAL_PROVIDER_LABEL,useLocalBridgeConfig} from '@/lib/local-bridge-config';
 import {streamDeepViaBridge} from '@/lib/local-bridge-client';
 
 const DESIGN_SYSTEM=`你是顶级互联网大厂（P8/Staff 级别）系统设计与架构面试官。请对候选人的架构方案进行深度、务实、直击要害的技术评审（不要执行 shell 命令或写文件，直接基于专业架构经验作答，必要时可核查最新主流工程实践）。
@@ -63,12 +64,44 @@ const PRESETS:{id:string;zh:string;en:string;topicZh:string;topicEn:string}[]=[
  {id:'shorturl',zh:'短链与高可用存储',en:'URL Shortener',topicZh:'设计百亿级高可用短链生成与 302 跳转服务（发号器、布隆过滤器、多级缓存与防刷）',topicEn:'Design a 10B-scale high-availability URL shortener with multi-tier caching'},
 ];
 
+const ARCH_BARE_URL_RE=/https?:\/\/[^\s<>"'`\u4e00-\u9fff]+/g;
+function renderArchBareUrls(s:string,keyPrefix:string){
+ const out:React.ReactNode[]=[];
+ let last=0;
+ ARCH_BARE_URL_RE.lastIndex=0;
+ let m:RegExpExecArray|null;
+ while((m=ARCH_BARE_URL_RE.exec(s))!==null){
+  if(m.index>last)out.push(<span key={`${keyPrefix}-t-${last}`}>{s.slice(last,m.index)}</span>);
+  const {url,trailing}=splitBareUrlTrailing(m[0]);
+  const safe=classifySafeHref(url);
+  if(safe?.external){
+   out.push(<a key={`${keyPrefix}-u-${m.index}`} className="tutor-link tutor-ext-link" href={safe.href} target="_blank" rel="noopener noreferrer">{url}</a>);
+   if(trailing)out.push(<span key={`${keyPrefix}-tr-${m.index}`}>{trailing}</span>);
+  }else{
+   out.push(<span key={`${keyPrefix}-r-${m.index}`}>{m[0]}</span>);
+  }
+  last=m.index+m[0].length;
+ }
+ if(last===0)return <>{s}</>;
+ if(last<s.length)out.push(<span key={`${keyPrefix}-e`}>{s.slice(last)}</span>);
+ return <>{out}</>;
+}
+
 function renderInline(line:string){
- const parts=line.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
+ const parts=line.split(/(`[^`]+`|\*\*[^*]+\*\*|\[[^\]\n]+\]\([^)\s]+\))/g);
  return parts.map((p,i)=>{
   if(p.startsWith('`')&&p.endsWith('`')&&p.length>2)return <code key={i}>{p.slice(1,-1)}</code>;
   if(p.startsWith('**')&&p.endsWith('**')&&p.length>4)return <strong key={i}>{p.slice(2,-2)}</strong>;
-  return <span key={i}>{p}</span>;
+  const lm=p.match(/^\[([^\]\n]+)\]\(([^)\s]+)\)$/);
+  if(lm){
+   const safe=classifySafeHref(lm[2]);
+   if(safe){
+    return safe.external
+     ?<a key={i} className="tutor-link tutor-ext-link" href={safe.href} target="_blank" rel="noopener noreferrer">{lm[1]}</a>
+     :<a key={i} className="tutor-link" href={safe.href}>{lm[1]}</a>;
+   }
+  }
+  return <span key={i}>{renderArchBareUrls(p,`a${i}`)}</span>;
  });
 }
 
@@ -108,8 +141,10 @@ const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
  export default function ArchitectClient({username}:{username:string}){
  const {locale}=useI18n();
  const L=(zh:string,en:string)=>locale==='en'?en:zh;
+ const [globalModel]=useGlobalAiModel();
  const [localCfg]=useLocalBridgeConfig();
- const useLocal=isLocalDeepReady(localCfg);
+ const useLocal=shouldUseLocalBridge('deep',globalModel,localCfg);
+ const thinkingLevel=getActiveGlobalThinkingLevel(globalModel,localCfg,null,!username);
 
  const [mode,setMode]=useState<Mode>('design');
  const [topic,setTopic]=useState(PRESETS[0].topicZh);
@@ -159,7 +194,6 @@ const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
   sig:string;
   cacheKey?:string;
   ckSig?:string;
-  geminiProxy:boolean;
   startedAt?:number;
  })=>{
   stopActive();
@@ -177,7 +211,6 @@ const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
    id:opts.interactionId,
    sig:opts.sig,
    rid:opts.recId,
-   geminiProxy:opts.geminiProxy?'1':'0',
   });
   if(opts.cacheKey&&opts.ckSig){
    pollParams.set('ck',opts.cacheKey);
@@ -250,7 +283,6 @@ const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
     sig:rec.sig,
     cacheKey:rec.payload?.cacheKey,
     ckSig:rec.ckSig,
-    geminiProxy:getGeminiAutoProxy(),
     startedAt:rec.updatedAt||rec.createdAt,
    });
   }
@@ -307,7 +339,7 @@ const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
   const patchTurn=(patch:Partial<Turn>)=>setTurns(list=>list.map(t=>t.id===localTurnId?{...t,...patch}:t));
 
   try{
-   if(isLocalDeepReady(localCfg)){
+   if(useLocal){
     const doneTurns=turns.filter(t=>t.status==='done');
     const msgs:{role:'user'|'assistant';content:string}[]=[];
     doneTurns.forEach((t,i)=>{
@@ -330,6 +362,7 @@ const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
      cfg:localCfg,
      system:mode==='mock'?MOCK_SYSTEM:DESIGN_SYSTEM,
      messages:msgs,
+     thinkingLevel,
      onThink:d=>{accThink+=d;patchTurn({thoughts:accThink})},
      onDelta:d=>{accText+=d;patchTurn({text:accText})},
      signal:ctl.signal,
@@ -357,7 +390,6 @@ const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
     stopActive();
     return;
    }
-   const geminiProxy=getGeminiAutoProxy();
    const r=await fetch('/api/architect-review',{
     method:'POST',
     headers:{'content-type':'application/json'},
@@ -369,7 +401,8 @@ const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
      previousInteractionId:prev?.interactionId,
      prevSig:prev?.sig,
      followupContext:prev?.followupContext,
-     geminiProxy,
+     model:globalModel,
+     thinkingLevel,
     }),
     signal:ctl.signal,
    });
@@ -405,7 +438,6 @@ const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
     sig:d.sig,
     cacheKey:d.cacheKey,
     ckSig:d.ckSig,
-    geminiProxy,
     startedAt,
    });
   }catch(e){

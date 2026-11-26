@@ -2,7 +2,6 @@
 import {useEffect,useRef,useState} from 'react';
 import {ArrowUpRight,Loader2,Sparkles,X} from 'lucide-react';
 import {useI18n} from './i18n';
-import {getGeminiAutoProxy} from '../ai/gemini-proxy-pref';
 import {needsAiForInlineRun,openInPlayground,prepareForPlayground,type PlaygroundLang} from '@/lib/playground-bridge';
 import {runPlaygroundCode,type PlaygroundRunResult} from '@/lib/playground-runner';
 
@@ -70,7 +69,6 @@ export function useInlineCodeRun(lang:PlaygroundLang|null,code:string,meta?:Inli
     title:meta?.title,
     expect:meta?.expect,
     questionId:meta?.questionId,
-    geminiProxy:getGeminiAutoProxy(),
    }),
    signal:ctl.signal,
   });

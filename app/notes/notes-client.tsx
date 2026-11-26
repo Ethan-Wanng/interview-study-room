@@ -1,6 +1,7 @@
 'use client';
 import '../ai/ai.css';
 import './notes.css';
+import {classifySafeHref} from '@/lib/safe-href';
 import {Fragment,memo,useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import {useSearchParams} from 'next/navigation';
 import {
@@ -197,7 +198,11 @@ function renderInlineMd(s:string){
   }
   const lm=p.match(/^\[([^\]\n]+)\]\(([^)\s]+)\)$/);
   if(lm){
-   return <a key={i} href={lm[2]} className="nb-link">{lm[1]}</a>;
+   const safe=classifySafeHref(lm[2]);
+   if(!safe)return <Fragment key={i}>{p}</Fragment>;
+   return safe.external
+    ?<a key={i} href={safe.href} className="nb-link" target="_blank" rel="noopener noreferrer">{lm[1]}</a>
+    :<a key={i} href={safe.href} className="nb-link">{lm[1]}</a>;
   }
   return <Fragment key={i}>{p}</Fragment>;
  });

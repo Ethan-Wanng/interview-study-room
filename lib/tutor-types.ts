@@ -24,21 +24,21 @@ export type TutorQuiz={type:string;q:string;code?:string;options?:string[];answe
 export type TutorContext={kind:'practice'|'lesson'|'task'|'support';lesson:TutorLesson}|{kind:'hint'|'explain'|'recite';quiz:TutorQuiz}|{kind:'playground';playground:TutorPlayground}|{kind:'site';page:string};
 // model：学习者在对话框里选的模型。不传或 auto = 默认（开了专属 API 就用专属的，否则用站点的 DeepSeek）；
 // custom = 自己的专属 API；其余是站点提供的模型 id（算站点每日次数）。
-export type TutorRequest={context:TutorContext;messages:TutorMessage[];model?:string;geminiProxy?:boolean;thinkingLevel?:ThinkingLevel};
+export type TutorRequest={context:TutorContext;messages:TutorMessage[];model?:string;thinkingLevel?:ThinkingLevel};
 // id 是对话框里的选项，model 是真正发给接口的模型名，thinking 表示是否开启思考模式（先想再答，思考过程会显示出来）。
 // DeepSeek 现在只有两个模型（见 https://api-docs.deepseek.com/zh-cn/quick_start/pricing）：deepseek-flash（V4.1 Flash，能识图）和 deepseek-v4-pro（不能识图）；旧名 deepseek-chat、deepseek-reasoner 已停用。
-export type TutorModel={id:string;model:string;thinking:boolean;label:[string,string];provider:'deepseek'|'gemini';vision:boolean;note:[string,string]};
+export type TutorModel={id:string;model:string;thinking:boolean;label:[string,string];provider:'deepseek';vision:boolean;note:[string,string]};
 export const TUTOR_MODELS:TutorModel[]=[
  {id:'deepseek-flash',model:'deepseek-flash',thinking:false,label:['DeepSeek V4.1 Flash','DeepSeek V4.1 Flash'],provider:'deepseek',vision:true,note:['快，日常答疑，能看图','Fast, everyday questions, understands images']},
  {id:'deepseek-flash-think',model:'deepseek-flash',thinking:true,label:['DeepSeek V4.1 Flash · 深度思考','DeepSeek V4.1 Flash · thinking'],provider:'deepseek',vision:true,note:['先想再答，会显示思考的关键步骤','Thinks first and shows its key steps']},
  {id:'deepseek-v4-pro',model:'deepseek-v4-pro',thinking:true,label:['DeepSeek V4 Pro · 深度思考','DeepSeek V4 Pro · thinking'],provider:'deepseek',vision:false,note:['最强，适合难题，慢一些，不能看图','Strongest; slower, for hard problems, no images']},
- {id:'gemini-4',model:'gemini-4-hydrogen',thinking:true,label:['Gemini 4 Hydrogen','Gemini 4 Hydrogen'],provider:'gemini',vision:true,note:['默认思考强度，不可用时依次降级 Gemini 3.8 Flash / 3.6 Flash（支持识图）','Default thinking, falls back to 3.8 Flash / 3.6 Flash, supports images']},
 ];
 export const DEFAULT_TUTOR_MODEL=TUTOR_MODELS[0];
 export function tutorModelBadge(model:string|undefined,lang:'zh'|'en'='zh'):string{
  const {base:m,level}=splitModelTag(model);
  if(!m)return '';
  const lvTag=level?(lang==='en'?` (${thinkingLevelBadgeText(level,lang)})`:`（${thinkingLevelBadgeText(level,lang)}）`):'';
+ if(m==='antigravity-agent'||m.startsWith('Antigravity Agent'))return m;
  if(m.startsWith('local:')){
   const rest=m.slice(6),slash=rest.indexOf('/');
   const prov=slash>0?rest.slice(0,slash):rest,name=slash>0?rest.slice(slash+1):'default';

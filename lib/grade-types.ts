@@ -3,20 +3,23 @@ import {splitModelTag,thinkingLevelBadgeText,type ThinkingLevel} from './thinkin
 // 一次请求算一次额度：练习时一次评一道题，试卷交卷时把所有主观题放在一次请求里。
 export type GradeKind='fill'|'short'|'code'|'design';
 export type GradeItem={id:string;kind:GradeKind;q:string;code?:string;reference:string;points:string[];scores?:number[];max:number;answer:string};
-export type GradeModelId='auto'|'gemini'|'deepseek'|'custom'|'local';
-export type GradeModelOption={id:Exclude<GradeModelId,'custom'|'local'>;name:string;nameEn:string;hint:string;hintEn:string};
+export type GradeModelId='auto'|'deepseek'|'deepseek-flash'|'deepseek-flash-think'|'deepseek-v4-pro'|'custom'|'local';
+export type GradeModelOption={id:Exclude<GradeModelId,'custom'|'local'|'deepseek'>;name:string;nameEn:string;hint:string;hintEn:string};
 export const GRADE_MODELS:GradeModelOption[]=[
- {id:'auto',name:'自动（Gemini 4 优先）',nameEn:'Auto (Gemini 4 first)',hint:'优先 Gemini 4 Hydrogen（依次降级 3.8 Flash / 3.6 Flash），失败时自动使用 DeepSeek V4.1 Flash（思考模式）保底',hintEn:'Prefer Gemini 4 Hydrogen (fallback 3.8 / 3.6 Flash), auto fallback to DeepSeek V4.1 Flash (thinking)'},
- {id:'gemini',name:'Gemini 4 Hydrogen',nameEn:'Gemini 4 Hydrogen',hint:'默认 Gemini 4 Hydrogen，不可用时依次降级 Gemini 3.8 Flash / 3.6 Flash（仅 Gemini 走代理模式）',hintEn:'Default Gemini 4 Hydrogen with fallback to Gemini 3.8 / 3.6 Flash via Gemini-only proxy'},
- {id:'deepseek',name:'DeepSeek V4.1 Flash（思考）',nameEn:'DeepSeek V4.1 Flash (Thinking)',hint:'使用 DeepSeek V4.1 Flash 深度思考模式评分，与 AI 对话模型独立选择',hintEn:'DeepSeek V4.1 Flash with thinking mode enabled (independent from tutor model)'},
+ {id:'auto',name:'自动（DeepSeek）',nameEn:'Auto (DeepSeek)',hint:'自动选择专属 API 或 DeepSeek V4.1 Flash（思考模式）评分',hintEn:'Use custom API if enabled, otherwise DeepSeek V4.1 Flash (thinking)'},
+ {id:'deepseek-flash',name:'DeepSeek V4.1 Flash',nameEn:'DeepSeek V4.1 Flash',hint:'快速评分',hintEn:'Fast grading'},
+ {id:'deepseek-flash-think',name:'DeepSeek V4.1 Flash · 深度思考',nameEn:'DeepSeek V4.1 Flash · Thinking',hint:'DeepSeek V4.1 Flash 深度思考模式评分',hintEn:'DeepSeek V4.1 Flash with thinking mode enabled'},
+ {id:'deepseek-v4-pro',name:'DeepSeek V4 Pro · 深度思考',nameEn:'DeepSeek V4 Pro · Thinking',hint:'DeepSeek V4 Pro 深度思考模式评分',hintEn:'DeepSeek V4 Pro with thinking mode enabled'},
 ];
 export const DEFAULT_GRADE_MODEL:GradeModelId='auto';
-export const isGradeModelId=(v:unknown):v is GradeModelId=>v==='auto'||v==='gemini'||v==='deepseek'||v==='custom'||v==='local';
+const ALL_GRADE_IDS=new Set<string>(['auto','deepseek','deepseek-flash','deepseek-flash-think','deepseek-v4-pro','custom','local']);
+export const isGradeModelId=(v:unknown):v is GradeModelId=>typeof v==='string'&&ALL_GRADE_IDS.has(v);
 export const parseGradeModel=(v:unknown):GradeModelId=>isGradeModelId(v)?v:DEFAULT_GRADE_MODEL;
 export function gradeModelBadge(model:string|undefined,lang:'zh'|'en'='zh'):string{
  const {base:m,level}=splitModelTag(model);
  if(!m)return '';
  const lvTag=level?(lang==='en'?` (${thinkingLevelBadgeText(level,lang)})`:`（${thinkingLevelBadgeText(level,lang)}）`):'';
+ if(m==='antigravity-agent'||m.startsWith('Antigravity Agent'))return m;
  if(m.startsWith('local:')){
   const rest=m.slice(6),slash=rest.indexOf('/');
   const prov=slash>0?rest.slice(0,slash):rest,name=slash>0?rest.slice(slash+1):'default';
@@ -28,9 +31,10 @@ export function gradeModelBadge(model:string|undefined,lang:'zh'|'en'='zh'):stri
  if(m==='gemini-3.6-flash')return (lang==='en'?'Gemini 3.6 Flash (fallback)':'Gemini 3.6 Flash（降级）')+(level?` · ${thinkingLevelBadgeText(level,lang)}`:'');
  if(m==='deepseek-flash (thinking)'||m==='deepseek-flash-think')return (lang==='en'?'DeepSeek V4.1 Flash (Thinking)':'DeepSeek V4.1 Flash（思考）')+lvTag;
  if(m==='deepseek-flash')return `DeepSeek V4.1 Flash${lvTag}`;
+ if(m==='deepseek-v4-pro')return (lang==='en'?'DeepSeek V4 Pro':'DeepSeek V4 Pro')+lvTag;
  return m+lvTag;
 }
-export type GradeRequest={items:GradeItem[];model?:GradeModelId;geminiProxy?:boolean;mode?:'grade'|'standard';thinkingLevel?:ThinkingLevel};
+export type GradeRequest={items:GradeItem[];model?:GradeModelId;mode?:'grade'|'standard';thinkingLevel?:ThinkingLevel};
 // 直接在学生作答原文上的划词/逐句批注：
 // quote 为学生原文中的原话片段；kind 表示有错（wrong）、表述不完整/片面（warn）或答对要点（right）；
 // comment 指出具体哪里错了、为什么错以及正确说法（或答对了哪个要点）。

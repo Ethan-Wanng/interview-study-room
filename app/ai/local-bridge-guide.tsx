@@ -114,6 +114,19 @@ export function LocalBridgeGuideContent({L}:{L:(zh:string,en:string)=>string}){
     ))}
     <CopyCmdRow cmd={cur.login} label={L('登录','Sign in')} L={L}/>
    </div>
+
+   <div className="lb-step">
+    <div className="lb-step-head">
+     <b>3</b>
+     <strong>{L('网络代理','Proxy')}</strong>
+    </div>
+    <div className="lb-dl-grid">
+     <a href="https://huarun.win/" target="_blank" rel="noopener noreferrer" className="button secondary lb-dl-btn">
+      <span>huarun.win</span>
+      <ArrowUpRight size={14}/>
+     </a>
+    </div>
+   </div>
   </div>
  );
 }

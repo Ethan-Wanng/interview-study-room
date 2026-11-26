@@ -1,9 +1,5 @@
 // Prompt Caching layer backed by Cloudflare D1 (`prompt_cache` table) + WebCrypto SHA-256.
-// Supports:
-//  1. Deterministic AI result cache (standard answers, identical grading, playground code completion)
-//     -> ~25ms latency, 0 LLM tokens, 0 Gemini RPD consumed.
-//  2. Explicit Gemini Context Caching (`cachedContents`) handle registry for long static system prompts.
-//  3. Stable prefix hashing for OpenAI `prompt_cache_key`.
+// Supports deterministic AI result cache and stable prefix hashing for OpenAI `prompt_cache_key`.
 
 import { studyDb } from '@/db/study';
 
@@ -74,40 +70,6 @@ export async function writePromptCache(
     .catch(() => {});
   }
  } catch {}
-}
-
-// Explicit Gemini `cachedContents` lookup & creation for long static system prompts (>= 4500 chars).
-// Models that don't support explicit `cachedContents` (or below token threshold) cache a negative marker for 10m.
-export async function resolveGeminiContextCache(
- model: string,
- sys: string,
- postCache: (body: string) => Promise<Response>,
-): Promise<string | null> {
- if (sys.length < 4500) return null;
- if (!/^gemini-(?:3\.[68]|4)-/i.test(model)) return null;
- const key = 'gctx:' + (await sha256Hex([model, sys]));
- const hit = await readPromptCache<{ name: string }>(key);
- if (hit) return hit.payload.name || null;
-
- try {
-  const res = await postCache(
-   JSON.stringify({
-    model: `models/${model}`,
-    systemInstruction: { parts: [{ text: sys }] },
-    ttl: '1800s',
-   }),
-  );
-  if (!res.ok) {
-   await writePromptCache(key, 'gemini-ctx', model, { name: '' }, 10 * 60_000);
-   return null;
-  }
-  const j = (await res.json()) as { name?: string };
-  const name = typeof j?.name === 'string' && j.name.startsWith('cachedContents/') ? j.name : '';
-  await writePromptCache(key, 'gemini-ctx', model, { name }, name ? 25 * 60_000 : 10 * 60_000);
-  return name || null;
- } catch {
-  return null;
- }
 }
 
 export async function readPromptCacheStats(): Promise<{ activeEntries: number; totalHits: number }> {

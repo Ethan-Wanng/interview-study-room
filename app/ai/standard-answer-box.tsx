@@ -4,6 +4,7 @@ import {Check,Copy,FileCheck2,Loader2,Square,X} from 'lucide-react';
 import {gradeModelBadge,type GradeItem} from '@/lib/grade-types';
 import {useI18n} from '../components/i18n';
 import KeywordText from '../components/keyword-text';
+import {classifySafeHref} from '@/lib/safe-href';
 import GradeModelPicker from './grade-model-picker';
 import ThinkBox from './think-box';
 import {gradeQuota,requestStandardAnswer,type GradeThinkState} from './grade-client';
@@ -12,10 +13,20 @@ export type StandardRecord={text:string;model?:string;think?:string;secs?:number
 type SlotState={loading?:boolean;live?:string;think?:GradeThinkState|null;error?:string;record?:StandardRecord};
 
 function stdInline(t:string){
- return t.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*)/g).map((p,i)=>
-  p.startsWith('`')&&p.endsWith('`')&&p.length>2?<code key={i}>{p.slice(1,-1)}</code>
-   :p.startsWith('**')&&p.endsWith('**')&&p.length>4?<strong key={i}><KeywordText text={p.slice(2,-2)}/></strong>
-   :<Fragment key={i}><KeywordText text={p}/></Fragment>);
+ return t.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\([^)\s]+\))/g).map((p,i)=>{
+  if(p.startsWith('`')&&p.endsWith('`')&&p.length>2)return <code key={i}>{p.slice(1,-1)}</code>;
+  if(p.startsWith('**')&&p.endsWith('**')&&p.length>4)return <strong key={i}><KeywordText text={p.slice(2,-2)}/></strong>;
+  const lm=p.match(/^\[([^\]\n]+)\]\(([^)\s]+)\)$/);
+  if(lm){
+   const safe=classifySafeHref(lm[2]);
+   if(safe){
+    return safe.external
+     ?<a key={i} className="tutor-link tutor-ext-link" href={safe.href} target="_blank" rel="noopener noreferrer">{lm[1]}</a>
+     :<a key={i} className="tutor-link" href={safe.href}>{lm[1]}</a>;
+   }
+  }
+  return <Fragment key={i}><KeywordText text={p}/></Fragment>;
+ });
 }
 
 export function StandardText({text,caret}:{text:string;caret?:boolean}){

@@ -1,9 +1,8 @@
 // Unified site-owned AI token anti-abuse quota guard (atomic D1 counters on `auth_limits`, zero schema migration).
-// Protects shared site DEEPSEEK_API_KEY and GEMINI_API_KEY against guest cookie-reset abuse and multi-account farming:
-// - Regular logged-in users: 50 site DeepSeek calls/day (shared across Tutor, Grading, My-Questions, Playground, etc.),
-//                            15 site Gemini/Agent calls/day (shared across Gemini Tutor/Grade, Architect, JD sub-routes).
-// - Guests: 5 DeepSeek calls/day per session + 10 DeepSeek calls/day per IP; 0 Gemini calls (blocked with 403).
-// - Same IP across all non-admin accounts: max 120 DeepSeek/day, 30 Gemini/day.
+// Protects shared site DEEPSEEK_API_KEY against guest cookie-reset abuse and multi-account farming:
+// - Regular logged-in users: 50 site DeepSeek calls/day (shared across Tutor, Grading, My-Questions, Playground, JD/Architect, etc.).
+// - Guests: 5 DeepSeek calls/day per session + 10 DeepSeek calls/day per IP.
+// - Same IP across all non-admin accounts: max 120 DeepSeek/day.
 // - Per-minute burst limit: 10/min (user), 4/min (guest).
 // - Admins, Custom API Keys, and Local Client Bridge (`interview-study-bridge`) do NOT consume site quota.
 
@@ -12,7 +11,7 @@ import { currentAdmin } from './admin-auth';
 import { beijingDayWindow } from './jd-daily-limit';
 import { hashToken } from './site-auth';
 
-export type SiteAiProvider = 'deepseek' | 'gemini';
+export type SiteAiProvider = 'deepseek';
 
 export const SITE_AI_LIMITS = {
  deepseek: {
@@ -20,12 +19,6 @@ export const SITE_AI_LIMITS = {
   guestDaily: 5,
   guestIpDaily: 10,
   ipDaily: 120,
- },
- gemini: {
-  userDaily: 15,
-  guestDaily: 0,
-  guestIpDaily: 0,
-  ipDaily: 30,
  },
  burstPerMinute: {
   user: 10,
@@ -105,18 +98,9 @@ export type SiteAiQuotaOutcome =
 export async function consumeSiteAiQuota(
  req: Request,
  user: { id: string; is_guest: number },
- provider: SiteAiProvider,
+ provider: SiteAiProvider = 'deepseek',
 ): Promise<SiteAiQuotaOutcome> {
  const isGuest = Boolean(user.is_guest);
- if (isGuest && provider === 'gemini') {
-  return {
-   ok: false,
-   status: 403,
-   error: 'auth',
-   message: '游客不支持调用站点 Gemini 模型，请登录后使用或接入本地客户端。',
-  };
- }
-
  if (!isGuest) {
   const admin = await currentAdmin(req.headers).catch(() => null);
   if (admin) {
@@ -134,7 +118,6 @@ export async function consumeSiteAiQuota(
  };
 
  try {
-  // 1. Per-minute burst guard (blocks automated scraping/spam loops)
   const bScope = isGuest && ip ? `ip:${ip}` : `u:${user.id}`;
   const bLimit = isGuest ? SITE_AI_LIMITS.burstPerMinute.guest : SITE_AI_LIMITS.burstPerMinute.user;
   const bKey = burstKey(bScope);
@@ -149,27 +132,24 @@ export async function consumeSiteAiQuota(
   }
   incremented.push(bKey);
 
-  // 2. Per-user daily quota (DeepSeek: 50/day user, 5/day guest; Gemini: 15/day user)
   const spec = SITE_AI_LIMITS[provider];
   const uLimit = isGuest ? spec.guestDaily : spec.userDaily;
   const uKey = userDayKey(provider, user.id, dayKey);
   const uCount = await atomicInc(uKey, uLimit, resetAtMs, now);
   if (uCount === null) {
    await rollback();
-   const providerLabel = provider === 'gemini' ? '站点 Gemini' : '站点 DeepSeek';
    return {
     ok: false,
     status: 429,
     error: 'quota',
     message: isGuest
-     ? `游客每天最多使用 ${uLimit} 次${providerLabel}，今日额度已用完。登录后每天可使用 ${spec.userDaily} 次，或免费接入「本地客户端」。`
-     : `今日 ${uLimit} 次${providerLabel}额度已用完，明天 0 点重置；可在「AI 设置」接入本地客户端或配置专属 API Key（不限站内额度）。`,
+     ? `游客每天最多使用 ${uLimit} 次站点 DeepSeek，今日额度已用完。登录后每天可使用 ${spec.userDaily} 次，或免费接入「本地客户端」。`
+     : `今日 ${uLimit} 次站点 DeepSeek 额度已用完，明天 0 点重置；可在「AI 设置」接入本地客户端或配置专属 API Key（不限站内额度）。`,
    };
   }
   incremented.push(uKey);
 
-  // 3. Per-IP guest daily cap (prevents clearing cookies to mint unlimited guest sessions)
-  if (isGuest && ip && provider === 'deepseek') {
+  if (isGuest && ip) {
    const gIpKey = guestIpDayKey(ip, dayKey);
    const gIpCount = await atomicInc(gIpKey, SITE_AI_LIMITS.deepseek.guestIpDaily, resetAtMs, now);
    if (gIpCount === null) {
@@ -184,7 +164,6 @@ export async function consumeSiteAiQuota(
    incremented.push(gIpKey);
   }
 
-  // 4. Per-IP global daily anti-sybil cap across all non-admin accounts
   if (ip) {
    const allIpKey = ipDayKey(provider, ip, dayKey);
    const allIpCount = await atomicInc(allIpKey, spec.ipDaily, resetAtMs, now);
@@ -214,7 +193,6 @@ export async function consumeSiteAiQuota(
    refund,
   };
  } catch {
-  // Never hard-break if D1 transiently hiccups
   return { ok: true, remaining: 1, limit: SITE_AI_LIMITS[provider].userDaily, refund: async () => {} };
  }
 }
@@ -222,10 +200,9 @@ export async function consumeSiteAiQuota(
 export async function getSiteAiRemaining(
  req: Request,
  user: { id: string; is_guest: number },
- provider: SiteAiProvider,
+ provider: SiteAiProvider = 'deepseek',
 ): Promise<{ remaining: number; limit: number }> {
  const isGuest = Boolean(user.is_guest);
- if (isGuest && provider === 'gemini') return { remaining: 0, limit: 0 };
  if (!isGuest) {
   const admin = await currentAdmin(req.headers).catch(() => null);
   if (admin) return { remaining: 999, limit: 999 };

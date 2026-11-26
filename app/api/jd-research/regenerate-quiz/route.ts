@@ -1,14 +1,13 @@
 import { AuthError, assertSameOrigin, rateLimit, sessionUser } from '@/lib/site-auth';
-import { consumeSiteAiQuota } from '@/lib/site-ai-quota';
 import { getAiInterviewRecord, saveAiInterviewRecord } from '@/lib/ai-interview-records';
+import { combineTokenUsage, prepareDeepModelExecution } from '@/lib/deep-model-route';
+import { runSelectedDeepModelStream } from '@/lib/gemini';
 import {
  buildJdStudyRegenQuizInput,
  getJdStudyRegenQuizSystemPrompt,
  parseSingleStudyQuiz,
 } from '@/lib/jd-research-server';
-import { isAntigravityRateLimitError, runAntigravityBackgroundToCompletion, type AntigravityUsage } from '@/lib/antigravity-agent';
-import { runDeepSeekJdFallbackStream } from '@/lib/gemini';
-import type { JdInputKind, JdResearchReport } from '@/lib/jd-research-types';
+import type { AiTokenUsage, JdInputKind, JdResearchReport } from '@/lib/jd-research-types';
 
 export const dynamic = 'force-dynamic';
 const noCache = { 'Cache-Control': 'no-store' };
@@ -25,21 +24,10 @@ type StoredJdRecordPayload = {
  report: JdResearchReport | null;
  rawText?: string;
  thoughts?: string;
- usage?: AntigravityUsage;
+ usage?: AiTokenUsage;
  imported?: { count: number; subject: string } | null;
  error?: string;
 };
-
-function combineUsage(a?: AntigravityUsage, b?: AntigravityUsage): AntigravityUsage | undefined {
- if (!a && !b) return undefined;
- return {
-  totalTokens: (a?.totalTokens || 0) + (b?.totalTokens || 0),
-  inputTokens: (a?.inputTokens || 0) + (b?.inputTokens || 0),
-  cachedTokens: (a?.cachedTokens || 0) + (b?.cachedTokens || 0),
-  outputTokens: (a?.outputTokens || 0) + (b?.outputTokens || 0),
-  thoughtTokens: (a?.thoughtTokens || 0) + (b?.thoughtTokens || 0),
- };
-}
 
 export async function POST(req: Request) {
  try {
@@ -60,7 +48,6 @@ export async function POST(req: Request) {
   const stepIdx = Number(body.stepIdx);
   const quizId = typeof body.quizId === 'string' ? body.quizId.trim().slice(0, 80) : '';
   const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 300) : '';
-  const geminiProxy = body.geminiProxy !== false;
 
   if (!recordId || !quizId || !Number.isInteger(stepIdx) || stepIdx < 0) {
    throw new AuthError('缺少必要的题目定位参数。', 400);
@@ -93,42 +80,27 @@ export async function POST(req: Request) {
    return Boolean(parsed && (parsed.type ?? 'single') === targetType);
   };
 
-  const siteQ = await consumeSiteAiQuota(req, user, 'gemini');
-  if (!siteQ.ok) throw new AuthError(siteQ.message, siteQ.status);
-
-  let out: { text: string; thoughts: string; modelLabel: string; usage?: AntigravityUsage };
+  const exec = await prepareDeepModelExecution(req, user, body.model, body.thinkingLevel);
+  let out: Awaited<ReturnType<typeof runSelectedDeepModelStream>>;
   try {
-   out = await runAntigravityBackgroundToCompletion({
-    systemInstruction: regenSystem,
-    input: userInput,
-    maxTotalTokens: 24_000,
-    geminiProxy,
-    signal: req.signal,
-    validate: validateQuiz,
-   });
-  } catch (agentErr) {
-   // Strictly fallback to DeepSeek ONLY when Antigravity Agent hits rate limiting (429 / quota / resource_exhausted).
-   if (req.signal?.aborted || !isAntigravityRateLimitError(agentErr)) {
-    throw agentErr;
-   }
-   const dsOut = await runDeepSeekJdFallbackStream({
+   out = await runSelectedDeepModelStream({
+    model: exec.model,
+    thinkingLevel: exec.thinkingLevel,
+    custom: exec.custom,
     systemPrompt: regenSystem,
     userInput,
     maxTokens: 6144,
-    thinkingLevel: 'low',
     signal: req.signal,
     validate: validateQuiz,
    });
-   out = {
-    text: dsOut.text,
-    thoughts: dsOut.thoughts,
-    modelLabel: dsOut.model,
-    usage: dsOut.usage,
-   };
+  } catch (err) {
+   await exec.refund();
+   throw err;
   }
 
   const nextQuiz = parseSingleStudyQuiz(out.text, stepIdx, qIdx, oldQuiz.id, oldQuiz.dimension);
   if (!nextQuiz) {
+   await exec.refund();
    return Response.json({ error: '重出题目解析失败，请再试一次。' }, { status: 502, headers: noCache });
   }
 
@@ -140,7 +112,7 @@ export async function POST(req: Request) {
      : s,
    ),
   };
-  const nextUsage = combineUsage(rec.payload.usage, out.usage);
+  const nextUsage = combineTokenUsage(rec.payload.usage, out.usage);
 
   await saveAiInterviewRecord({
    id: rec.id,
@@ -164,7 +136,7 @@ export async function POST(req: Request) {
     quiz: nextQuiz,
     report: nextReport,
     usage: nextUsage,
-    model: out.modelLabel,
+    model: out.model,
    },
    { headers: noCache },
   );

@@ -1,161 +1,48 @@
 'use client';
-import {useGeminiAutoProxy} from '../ai/gemini-proxy-pref';
-import {useModelThinkingLevel,useStoredNoteModel,useStoredTutorModel} from '../ai/thinking-pref';
-import {useGradeModel} from '../ai/grade-client';
+import {useGlobalAiModel,useModelThinkingLevel} from '../ai/thinking-pref';
 import {useAiConfigStatus} from '../ai/ai-settings';
 import {providerMeta} from '@/lib/ai-config';
-import {getGradeThinkingSpec,getTutorThinkingSpec,THINKING_META,type ModelThinkingSpec} from '@/lib/thinking';
-import {isLocalGradeReady,isLocalTutorReady,LOCAL_PROVIDER_LABEL,useLocalBridgeConfig} from '@/lib/local-bridge-config';
+import {getGlobalThinkingSpec,THINKING_META,type ModelThinkingSpec} from '@/lib/thinking';
+import {hasBridgeTransport,LOCAL_PROVIDER_LABEL,useLocalBridgeConfig} from '@/lib/local-bridge-config';
 import {TUTOR_MODELS} from '@/lib/tutor-types';
-import {GRADE_MODELS} from '@/lib/grade-types';
-type ProxyCheckItem={
- id:'primary'|'standby'|'direct'|'gemini4'|'agent';
- protocol:string;
- ok:boolean;
- state:'ok'|'busy'|'quota'|'blocked'|'error';
- status:number;
- ms:number;
- detail:string;
-};
-type ProxyQuotaItem={
- model:string;
- label:string;
- rpm:{used:number;limit:number};
- tpm:{used:number;limit:number};
- rpd:{used:number;limit:number};
- coolingSec:number;
-};
-type ProxyCheckResult={
- cnDay:number;
- slot:'day1-15'|'day16-end';
- colo:string;
- mode:'worker-tunnel'|'gateway';
- checks:ProxyCheckItem[];
- quotas?:ProxyQuotaItem[];
-};
-const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(n>=10000?0:1)}K`:String(n);
-function GeminiProxyRow({L}:{L:(zh:string,en:string)=>string}){
- const [auto,setAuto]=useGeminiAutoProxy();
- const [checking,setChecking]=useState(false);
- const [res,setRes]=useState<ProxyCheckResult|null>(null);
- const [err,setErr]=useState('');
- const runCheck=async()=>{
-  if(checking)return;
-  setChecking(true);
-  setErr('');
-  try{
-   const r=await fetch('/api/gemini-proxy-check',{
-    method:'POST',
-    headers:{'content-type':'application/json'},
-    body:'{}',
-   });
-   const d=await r.json() as ProxyCheckResult&{error?:string};
-   if(!r.ok)throw new Error(d.error??L('检测失败','Check failed'));
-   setRes(d);
-  }catch(e){
-   setErr((e as Error).message||L('检测失败','Check failed'));
-  }finally{
-   setChecking(false);
-  }
- };
- const rowLabel=(id:ProxyCheckItem['id'])=>
-  id==='primary'?L('当前节点','Primary')
-  :id==='standby'?L('备用节点','Standby')
-  :id==='direct'?L('直连','Direct')
-  :id==='agent'?L('Agent 引擎','Agent')
-  :'Gemini 4';
- const stateLabel=(c:ProxyCheckItem)=>
-  c.state==='ok'?L('正常','OK')
-  :c.state==='busy'?L('高负载 503','Busy 503')
-  :c.state==='quota'?L('限流 429','Quota 429')
-  :c.state==='blocked'?L('地区受限','Geo-blocked')
-  :c.detail==='timeout'?L('超时','Timeout')
-  :L('不可达','Failed');
- const stateTone=(c:ProxyCheckItem)=>
-  c.state==='ok'?'ok'
-  :c.state==='busy'||c.state==='quota'?'warn'
-  :'err';
+function ProxyLinkRow({L}:{L:(zh:string,en:string)=>string}){
  return (
-  <div className="settings-row settings-row-col">
-   <div className="settings-row-head">
-    <span className="settings-label">{L('Gemini 自动代理','Gemini auto proxy')}</span>
-    <div className="settings-net-ctrls">
-     <button type="button" className="settings-net-btn" disabled={checking} onClick={()=>void runCheck()}>
-      {checking?<Loader2 size={13} className="ai-spin"/>:<Activity size={13}/>}
-      <span>{checking?L('检测中…','Checking…'):L('网络检查','Check')}</span>
-     </button>
-     <div className="settings-seg" role="group" aria-label={L('Gemini 自动代理','Gemini auto proxy')}>
-      <button type="button" className={auto?'on':''} onClick={()=>setAuto(true)}>{L('开启','On')}</button>
-      <button type="button" className={!auto?'on':''} onClick={()=>setAuto(false)}>{L('关闭','Off')}</button>
-     </div>
-    </div>
-   </div>
-   {err&&<span className="settings-net-err" role="alert">{err}</span>}
-   {res&&(
-    <div className="settings-net-panel">
-     <div className="settings-net-meta">
-      <span>{res.slot==='day1-15'?L(`${res.cnDay} 日 · 1–15 日原节点`,`Day ${res.cnDay} · Primary (1–15)`):L(`${res.cnDay} 日 · 16–月末新节点`,`Day ${res.cnDay} · New (16–end)`)}</span>
-      {res.colo&&<span>{res.colo}</span>}
-     </div>
-     {res.checks.map(c=>(
-      <div key={c.id} className="settings-net-item">
-       <span className="settings-net-left">
-        <i className={'settings-net-dot '+stateTone(c)}/>
-        <b>{rowLabel(c.id)}</b>
-       </span>
-       <span className="settings-net-right">
-        <span className="settings-net-ms">{c.ms}ms</span>
-        <span className={'settings-net-tag '+stateTone(c)}>{stateLabel(c)}</span>
-       </span>
-      </div>
-     ))}
-     {res.quotas&&res.quotas.length>0&&(
-      <div className="settings-net-quotas">
-       {res.quotas.map(q=>(
-        <div key={q.model} className="settings-net-qrow">
-         <b>{q.label}</b>
-         <span>RPM {q.rpm.used}/{q.rpm.limit} · TPM {fmtTok(q.tpm.used)}/{fmtTok(q.tpm.limit)} · RPD {q.rpd.used}/{q.rpd.limit}{q.coolingSec>0?` (${q.coolingSec}s)`:''}</span>
-        </div>
-       ))}
-      </div>
-     )}
-    </div>
-   )}
+  <div className="settings-row">
+   <span className="settings-label">{L('网络代理','Proxy')}</span>
+   <a href="https://huarun.win/" target="_blank" rel="noopener noreferrer" className="button secondary settings-proxy-link">
+    <span>huarun.win</span>
+    <ExternalLink size={13}/>
+   </a>
   </div>
  );
 }
-function NoteModelRow({L,isGuest}:{L:(zh:string,en:string)=>string;isGuest:boolean}){
- const [noteModel,setNoteModel]=useStoredNoteModel();
+function GlobalModelRow({L,isGuest}:{L:(zh:string,en:string)=>string;isGuest:boolean}){
+ const [model,setModel]=useGlobalAiModel();
  const {status}=useAiConfigStatus();
  const [localCfg]=useLocalBridgeConfig();
- const localTutorActive=isLocalTutorReady(localCfg);
- const guest=isGuest||Boolean(status?.isGuest);
- const customOn=Boolean(!guest&&status?.settings?.enabled&&status?.settings?.hasKey&&status?.settings?.allowTutor);
+ const localReady=Boolean(localCfg.enabled&&hasBridgeTransport(localCfg));
+ const customOn=Boolean(!isGuest&&!status?.isGuest&&status?.settings?.enabled&&status?.settings?.hasKey);
  const customLabel=customOn&&status?.settings
   ?`${providerMeta(status.settings.provider).badge} · ${status.settings.model||providerMeta(status.settings.provider).defaultModel}`
   :'';
- const visibleModels=guest?TUTOR_MODELS.filter(m=>m.provider!=='gemini'):TUTOR_MODELS;
- const value=
-  (noteModel==='custom'&&!customOn)||(noteModel==='local'&&!localTutorActive)
-   ?'auto'
-   :(guest&&TUTOR_MODELS.find(m=>m.id===noteModel)?.provider==='gemini'?'auto':noteModel);
+ const value=(model==='custom'&&!customOn)||(model==='local'&&!localReady)?'auto':model;
  return (
   <div className="settings-row">
-   <span className="settings-label">{L('笔记 AI 模型','Note AI model')}</span>
+   <span className="settings-label">{L('AI 模型','AI model')}</span>
    <select
     className="theme-select settings-theme-select"
     value={value}
-    onChange={e=>setNoteModel(e.target.value)}
-    aria-label={L('笔记 AI 模型','Note AI model')}
+    onChange={e=>setModel(e.target.value)}
+    aria-label={L('AI 模型','AI model')}
    >
     <option value="auto">
-     {localTutorActive
-      ?L(`默认（本地 ${LOCAL_PROVIDER_LABEL[localCfg.provider]}）`,`Default (Local ${LOCAL_PROVIDER_LABEL[localCfg.provider]})`)
-      :L('默认（自动）','Default (Auto)')}
+     {localReady
+      ?L(`自动（本地 ${LOCAL_PROVIDER_LABEL[localCfg.provider]}）`,`Auto (Local ${LOCAL_PROVIDER_LABEL[localCfg.provider]})`)
+      :L('自动（DeepSeek）','Auto (DeepSeek)')}
     </option>
-    {localTutorActive&&<option value="local">{L(`本地：${LOCAL_PROVIDER_LABEL[localCfg.provider]}`,`Local: ${LOCAL_PROVIDER_LABEL[localCfg.provider]}`)}</option>}
+    {localReady&&<option value="local">{L(`本地：${LOCAL_PROVIDER_LABEL[localCfg.provider]}`,`Local: ${LOCAL_PROVIDER_LABEL[localCfg.provider]}`)}</option>}
     {customOn&&<option value="custom">{L(`专属 API（${customLabel}）`,`Custom (${customLabel})`)}</option>}
-    {visibleModels.map(m=>(
+    {TUTOR_MODELS.map(m=>(
      <option key={m.id} value={m.id}>{L(m.label[0],m.label[1])}</option>
     ))}
    </select>
@@ -182,38 +69,28 @@ function ModelThinkingSeg({title,scopeKey,spec,L}:{title:string;scopeKey:string;
  );
 }
 function ThinkingLevelRow({L,isGuest}:{L:(zh:string,en:string)=>string;isGuest:boolean}){
- const tutorModel=useStoredTutorModel();
- const [gradeModel]=useGradeModel();
- const [noteModel]=useStoredNoteModel();
+ const [globalModel]=useGlobalAiModel();
  const [localCfg]=useLocalBridgeConfig();
- const localTutor=isLocalTutorReady(localCfg)?localCfg:null;
- const localGrade=isLocalGradeReady(localCfg)?localCfg:null;
- const effTutor=isGuest&&TUTOR_MODELS.find(m=>m.id===tutorModel)?.provider==='gemini'?'auto':tutorModel;
- const effNote=isGuest&&TUTOR_MODELS.find(m=>m.id===noteModel)?.provider==='gemini'?'auto':noteModel;
- const tutor=getTutorThinkingSpec(effTutor,null,localTutor);
- const grade=getGradeThinkingSpec(gradeModel,null,isGuest,localGrade);
- const note=getTutorThinkingSpec(effNote,null,localTutor);
- const tutorName=(effTutor==='local'||(effTutor==='auto'&&localTutor))?LOCAL_PROVIDER_LABEL[localCfg.provider]:(TUTOR_MODELS.find(m=>m.id===effTutor)?.label[0]??'DeepSeek V4.1 Flash');
- const gradeName=(gradeModel==='local'||(gradeModel==='auto'&&localGrade))?LOCAL_PROVIDER_LABEL[localCfg.provider]:(isGuest?'DeepSeek V4.1 Flash（思考）':(GRADE_MODELS.find(m=>m.id===gradeModel)?.name??'Gemini 4 Hydrogen'));
- const noteName=(effNote==='local'||(effNote==='auto'&&localTutor))?LOCAL_PROVIDER_LABEL[localCfg.provider]:(TUTOR_MODELS.find(m=>m.id===effNote)?.label[0]??'DeepSeek V4.1 Flash');
- const showTutor=!tutor.spec.locked;
- const showGrade=!grade.spec.locked;
- const showNoteSeg=!note.spec.locked&&effNote!=='auto'&&effNote!=='custom'&&note.scopeKey!==tutor.scopeKey&&note.scopeKey!==grade.scopeKey;
- if(!showTutor&&!showGrade&&!showNoteSeg)return null;
+ const {status}=useAiConfigStatus();
+ const customOn=Boolean(!isGuest&&!status?.isGuest&&status?.settings?.enabled&&status?.settings?.hasKey);
+ const customCfg=customOn&&status?.settings?{provider:status.settings.provider,model:status.settings.model}:null;
+ const localActive=Boolean(localCfg.enabled&&hasBridgeTransport(localCfg));
+ const active=getGlobalThinkingSpec(globalModel,customCfg,localActive?localCfg:null,isGuest);
+ if(active.spec.locked)return null;
+ const modelName=
+  (globalModel==='local'||(globalModel==='auto'&&localActive))&&localActive
+   ?LOCAL_PROVIDER_LABEL[localCfg.provider]
+   :globalModel==='custom'&&customCfg
+    ?providerMeta(customCfg.provider).badge
+    :(TUTOR_MODELS.find(m=>m.id===globalModel)?.label[0]??'DeepSeek V4.1 Flash');
  return (
   <div className="settings-row settings-row-col">
-   <span className="settings-stack">
-    <span className="settings-label">{L('AI 思考强度','AI thinking strength')}</span>
-    
-   </span>
-   {showTutor&&<ModelThinkingSeg title={L(`问答：${tutorName}`,`Chat: ${tutorName}`)} scopeKey={tutor.scopeKey} spec={tutor.spec} L={L}/>}
-   {showGrade&&<ModelThinkingSeg title={L(`评分：${gradeName}`,`Grade: ${gradeName}`)} scopeKey={grade.scopeKey} spec={grade.spec} L={L}/>}
-   {showNoteSeg&&<ModelThinkingSeg title={L(`笔记：${noteName}`,`Notes: ${noteName}`)} scopeKey={note.scopeKey} spec={note.spec} L={L}/>}
+   <ModelThinkingSeg title={L(`思考强度 · ${modelName}`,`Thinking · ${modelName}`)} scopeKey={active.scopeKey} spec={active.spec} L={L}/>
   </div>
  );
 }
 import {useEffect,useRef,useState,type ChangeEvent,type CSSProperties} from 'react';
-import {Activity,AudioLines,Camera,Lightbulb,LightbulbOff,Loader2,LogIn,LogOut,RotateCcw,Settings,ShieldCheck,Sparkles} from 'lucide-react';
+import {AudioLines,Camera,ExternalLink,Lightbulb,LightbulbOff,LogIn,LogOut,RotateCcw,Settings,ShieldCheck,Sparkles} from 'lucide-react';
 import {Dialog,DialogContent,DialogDescription,DialogHeader,DialogTitle,DialogTrigger} from '@/components/ui/dialog';
 import {NoticeBell as Bell,VersionLog} from './notices';
 import {AnimationDownloadMenu} from './animation-download-menu';
@@ -340,8 +217,8 @@ export default function AccountMenu({username}:{username:string}){
       <span className="settings-label">{L('背景配色','Background theme')}</span>
       <ThemeSelect className="theme-select settings-theme-select"/>
      </div>
-     {username&&<GeminiProxyRow L={L}/>}
-     <NoteModelRow L={L} isGuest={!username}/>
+     <ProxyLinkRow L={L}/>
+     <GlobalModelRow L={L} isGuest={!username}/>
      <ThinkingLevelRow L={L} isGuest={!username}/>
 
      <div className="settings-glass">

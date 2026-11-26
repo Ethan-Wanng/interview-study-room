@@ -7,7 +7,6 @@ import SiteHeader from '../components/site-header';
 import AddToNoteButton from '../components/add-to-note';
 import {useI18n} from '../components/i18n';
 import {codeEditing} from '../ai/code-input';
-import {getGeminiAutoProxy} from '../ai/gemini-proxy-pref';
 import AiDock,{type DockRequest} from '../ai/ai-dock';
 import {PLAYGROUND_EXAMPLES,PLAYGROUND_LANGS} from '@/content/playground-examples';
 import {runPlaygroundCode,type PlaygroundRunResult} from '@/lib/playground-runner';
@@ -299,7 +298,6 @@ export default function PlaygroundClient({
      title:ctx?.title||L(curEx.title[0],curEx.title[1]),
      expect:ctx?.expect,
      questionId:ctx?.questionId,
-     geminiProxy:getGeminiAutoProxy(),
     }),
    });
    const d=await r.json() as {ok?:boolean;code?:string;error?:string};

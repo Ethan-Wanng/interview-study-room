@@ -34,8 +34,8 @@ function contextOf(v:unknown):TutorContext|null{if(!v||typeof v!=='object')retur
  if(o.kind==='playground'){const playground=playgroundOf(o.playground);return playground&&{kind:'playground',playground}}
  if(o.kind==='site')return str(o.page,300)?{kind:'site',page:o.page as string}:null;
  return null}
-const normalizeTutorModel=(m:unknown)=>m==='gemini-flash'?'gemini-4':m;
-function parse(body:unknown):{context:TutorContext;messages:TutorMessage[];model?:string;geminiProxy:boolean;thinkingLevel:ThinkingLevel}|null{if(!body||typeof body!=='object')return null;const {context:c,messages:m,model:rawModel,geminiProxy,thinkingLevel}=body as Record<string,unknown>;const model=normalizeTutorModel(rawModel);
+const normalizeTutorModel=(m:unknown)=>m==='gemini-flash'||m==='gemini'||m==='gemini-4'||m==='antigravity-agent'?'auto':m==='deepseek'?'deepseek-flash-think':m;
+function parse(body:unknown):{context:TutorContext;messages:TutorMessage[];model?:string;thinkingLevel:ThinkingLevel}|null{if(!body||typeof body!=='object')return null;const {context:c,messages:m,model:rawModel,thinkingLevel}=body as Record<string,unknown>;const model=normalizeTutorModel(rawModel);
  if(model!==undefined&&model!=='auto'&&model!=='custom'&&!TUTOR_MODELS.some(x=>x.id===model))return null;
  const context=contextOf(c);if(!context||!Array.isArray(m)||!m.length||m.length>TUTOR_LIMITS.messages)return null;
  const messages=m.map(x=>x&&typeof x==='object'?x as Record<string,unknown>:{});
@@ -43,7 +43,7 @@ function parse(body:unknown):{context:TutorContext;messages:TutorMessage[];model
  if(!messages.every(x=>{const imgs=imagesOf(x);return (x.role==='user'||x.role==='model')&&str(x.text,TUTOR_LIMITS.text)&&imgs!==null&&((x.text as string).trim()||imgs.length)&&(x.role==='user'||!imgs.length)&&imgs.length<=TUTOR_IMAGES.perMessage&&imgs.every(u=>typeof u==='string'&&u.length<=TUTOR_IMAGES.size&&IMAGE_URL.test(u))}))return null;
  if(messages.reduce((n,x)=>n+(imagesOf(x)?.length??0),0)>TUTOR_IMAGES.perRequest)return null;
  if(messages[0].role!=='user'||messages[messages.length-1].role!=='user')return null;
- return {context,model:model as string|undefined,geminiProxy:geminiProxy!==false,thinkingLevel:parseThinkingLevel(thinkingLevel),messages:messages.map(x=>({role:x.role as TutorMessage['role'],text:x.text as string,...(imagesOf(x)?.length?{images:imagesOf(x) as string[]}:{})}))}}
+ return {context,model:model as string|undefined,thinkingLevel:parseThinkingLevel(thinkingLevel),messages:messages.map(x=>({role:x.role as TutorMessage['role'],text:x.text as string,...(imagesOf(x)?.length?{images:imagesOf(x) as string[]}:{})}))}}
 
 // 学习者在问“哪里能学到 / 练到某个关键词”时，先做一次站内搜索，把找到的卡片、题目和面试题（带链接）交给 AI。
 // 全站 AI 老师每次都搜；卡片和题目旁边的 AI 老师只在问到“哪里、哪一关、相关的题”这类话时才搜；答题前的提示和客服演练不搜。
@@ -88,7 +88,7 @@ export async function POST(req:Request){try{assertSameOrigin(req);const user=awa
     send({t:'start'});
     try{
      const links=await findLinks(input.context,input.messages);
-     const model=await tutorStream(input.context,input.messages,text=>{wrote=true;send({t:'delta',text})},()=>{wrote=false;send({t:'reset'})},customCfg,site,text=>{wrote=true;send({t:'think',text})},links,input.geminiProxy,m=>send({t:'model',model:m}),ctl.signal,input.thinkingLevel,!user.is_guest);
+     const model=await tutorStream(input.context,input.messages,text=>{wrote=true;send({t:'delta',text})},()=>{wrote=false;send({t:'reset'})},customCfg,site,text=>{wrote=true;send({t:'think',text})},links,m=>send({t:'model',model:m}),ctl.signal,input.thinkingLevel);
      send({t:'done',remaining,model});
     }catch(e){
      if(ctl.signal.aborted){if(!wrote)await onRefund().catch(()=>{})}
@@ -105,9 +105,6 @@ export async function POST(req:Request){try{assertSameOrigin(req);const user=awa
 
  // 学习者在对话框里明确选了站点模型时，不走专属 API，直接用站点模型（算站点每日次数）。
  const siteModel=input.model&&input.model!=='auto'&&input.model!=='custom'?input.model:undefined;
- if(user.is_guest&&siteModel&&TUTOR_MODELS.find(m=>m.id===siteModel)?.provider==='gemini'){
-  return fail('auth','游客不支持调用 Gemini 模型，请登录后使用或切换 DeepSeek。',403);
- }
  // 已登录用户如果启用了自己的专属 API Key，则仅该用户本人可用，并执行用户自设的限额与场景限制（游客绝不允许使用自定义 Key）
  if(!user.is_guest&&!siteModel){
   const custom=await prepareCustomAi(user.id,'tutor');
@@ -117,12 +114,11 @@ export async function POST(req:Request){try{assertSameOrigin(req);const user=awa
   }
  }
 
- const siteProvider=siteModel&&TUTOR_MODELS.find(m=>m.id===siteModel)?.provider==='gemini'?'gemini':'deepseek';
- const siteQuota=await consumeSiteAiQuota(req,user,siteProvider);
+ const siteQuota=await consumeSiteAiQuota(req,user,'deepseek');
  if(!siteQuota.ok)return fail(siteQuota.error,siteQuota.message,siteQuota.status,{remaining:0});
  const db=studyDb(),day=dayNow(),limit=limitOf(user.is_guest);
  if(siteQuota.limit===999){
-  return streamTutor(999,()=>siteQuota.refund(),e=>e instanceof VisionError?e.message+'（这次没有扣次数）':(e instanceof Error&&e.message.startsWith('gemini-rate-limit:'))?'站点 Gemini 限流已满（5 次/分钟 · 20 次/天），请稍后再试、切换 DeepSeek，或在「AI 设置」绑定自己的 API Key。（这次没有扣次数）':'AI 老师暂时连不上，这次没有扣次数，请稍后再试。',undefined,siteModel);
+  return streamTutor(999,()=>siteQuota.refund(),e=>e instanceof VisionError?e.message+'（这次没有扣次数）':'AI 老师暂时连不上，这次没有扣次数，请稍后再试。',undefined,siteModel);
  }
  const row=await db.prepare('INSERT INTO ai_tutor_quota(user_id,day,count) VALUES(?,?,1) ON CONFLICT(user_id,day) DO UPDATE SET count=count+1 WHERE count<? RETURNING count').bind(user.id,day,limit).first<{count:number}>();
  if(!row){
@@ -131,5 +127,5 @@ export async function POST(req:Request){try{assertSameOrigin(req);const user=awa
  }
  const refund=async()=>{await Promise.all([siteQuota.refund(),db.prepare('UPDATE ai_tutor_quota SET count=MAX(count-1,0) WHERE user_id=? AND day=?').bind(user.id,day).run().catch(()=>{})])};
  const rem=Math.min(Math.max(0,limit-row.count),siteQuota.remaining);
- return streamTutor(rem,refund,e=>e instanceof VisionError?e.message+'（这次没有扣次数）':(e instanceof Error&&e.message.startsWith('gemini-rate-limit:'))?'站点 Gemini 限流已满（5 次/分钟 · 20 次/天），请稍后再试、切换 DeepSeek，或在「AI 设置」绑定自己的 API Key。（这次没有扣次数）':'AI 老师暂时连不上，这次没有扣次数，请稍后再试。',undefined,siteModel)}
+ return streamTutor(rem,refund,e=>e instanceof VisionError?e.message+'（这次没有扣次数）':'AI 老师暂时连不上，这次没有扣次数，请稍后再试。',undefined,siteModel)}
  catch(e){if(e instanceof AuthError)return fail('auth',e.message,e.status);return fail('failed','AI 老师暂时不可用。',500)}}

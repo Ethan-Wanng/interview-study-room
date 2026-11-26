@@ -3,8 +3,7 @@ import { redirect } from 'next/navigation';
 import { Lock } from 'lucide-react';
 import { sessionUser } from '@/lib/site-auth';
 import { listAiInterviewRecords } from '@/lib/ai-interview-records';
-import type { AntigravityUsage } from '@/lib/antigravity-agent';
-import type { JdInputKind, JdResearchReport } from '@/lib/jd-research-types';
+import type { AiTokenUsage, JdInputKind, JdResearchReport } from '@/lib/jd-research-types';
 import SiteHeader from '../../components/site-header';
 import ProjectDrillClient, { type ProjectDrillTopic } from './project-drill-client';
 
@@ -67,7 +66,7 @@ export default async function ProjectDrillPage({
  const rows = await listAiInterviewRecords<{
   kind?: JdInputKind;
   source?: string;
-  usage?: AntigravityUsage;
+  usage?: AiTokenUsage;
   partialReport?: JdResearchReport | null;
   report?: JdResearchReport | null;
  }>(user.id, 'jd-research');

@@ -1,7 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { readExecutionProfile } from "./execution-profile.mjs";
-import { startLocalGeminiProxy } from "./gemini-proxy.mjs";
 
 const [command, ...args] = process.argv.slice(2);
 if (!["dev", "build"].includes(command)) throw new Error("Expected dev or build.");
@@ -13,14 +12,6 @@ if (managedLinux && command === "build") {
   ], { stdio: "inherit" });
   if (result.error) throw result.error;
   process.exit(result.status ?? 1);
-}
-
-if (!managedLinux && command === "dev" && !process.env.GEMINI_PROXY_URL) {
-  const proxy = await startLocalGeminiProxy({ verbose: true }).catch(() => null);
-  if (proxy?.url) {
-    process.env.GEMINI_PROXY_URL = proxy.url;
-    process.on("exit", () => proxy.stop());
-  }
 }
 
 // Import in this process so the preview owner retains its PID and signals.

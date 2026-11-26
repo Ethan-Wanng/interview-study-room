@@ -14,10 +14,11 @@ function loadCustomInfo():Promise<GradeQuotaInfo|null>{
  return cachedCustom;
 }
 
-const PICKER_MODEL_LABEL:Record<Exclude<GradeModelId,'custom'|'local'>,[string,string]>={
+const PICKER_MODEL_LABEL:Record<Exclude<GradeModelId,'custom'|'local'|'deepseek'>,[string,string]>={
  auto:['自动','Auto'],
- gemini:['Gemini 4','Gemini 4'],
- deepseek:['DeepSeek','DeepSeek'],
+ 'deepseek-flash':['DeepSeek V4.1 Flash','DeepSeek V4.1 Flash'],
+ 'deepseek-flash-think':['DeepSeek V4.1 Flash · 思考','DeepSeek V4.1 Flash · Think'],
+ 'deepseek-v4-pro':['DeepSeek V4 Pro','DeepSeek V4 Pro'],
 };
 
 export default function GradeModelPicker({disabled=false}:{disabled?:boolean}){
@@ -49,23 +50,15 @@ export default function GradeModelPicker({disabled=false}:{disabled?:boolean}){
  const effective:GradeModelId=
   model==='custom'&&!customInfo.hasCustom?'auto'
   :model==='local'&&!localGradeActive?'auto'
-  :(customInfo.isGuest&&model==='gemini'?'deepseek':model);
+  :model==='deepseek'?'deepseek-flash-think'
+  :model;
  const {scopeKey,spec}=getGradeThinkingSpec(effective,customInfo.hasCustom?{provider:customInfo.provider,model:customInfo.model}:null,customInfo.isGuest,localGradeActive?localCfg:null);
  const [thinking,setThinking]=useModelThinkingLevel(scopeKey,spec);
- const visibleModels=customInfo.isGuest?GRADE_MODELS.filter(m=>m.id!=='gemini'):GRADE_MODELS;
- const currentHint=
-  effective==='local'||(effective==='auto'&&localGradeActive)
-   ?L(`使用本地客户端 ${LOCAL_PROVIDER_LABEL[localCfg.provider]} 评分`,`Grade with local ${LOCAL_PROVIDER_LABEL[localCfg.provider]}`)
-   :effective==='custom'
-    ?L(`使用你在「AI 设置」里绑定的专属模型（${customInfo.label||'自定义'}）进行评分`,`Grade with your custom model (${customInfo.label||'custom'})`)
-    :(lang==='en'
-     ?GRADE_MODELS.find(m=>m.id===effective)?.hintEn
-     :GRADE_MODELS.find(m=>m.id===effective)?.hint)??'';
  const curMeta=THINKING_META[thinking];
 
  return (
   <>
-   <label className="ai-grade-picker" title={`${currentHint}${lang==='en'?' · Independent from AI chat model':' · 与 AI 对话模型独立选择'}`}>
+   <label className="ai-grade-picker">
     <Cpu size={14} aria-hidden="true"/>
     <span className="ai-picker-lbl">{L('模型','Model')}</span>
     <select
@@ -74,11 +67,11 @@ export default function GradeModelPicker({disabled=false}:{disabled?:boolean}){
      aria-label={L('AI 评分模型','AI grading model')}
      onChange={e=>setModel(parseGradeModel(e.target.value))}
     >
-     {visibleModels.map(m=>(
+     {GRADE_MODELS.map(m=>(
       <option key={m.id} value={m.id}>
        {m.id==='auto'&&localGradeActive
         ?L(`自动（本地 ${LOCAL_PROVIDER_LABEL[localCfg.provider]}）`,`Auto (Local ${LOCAL_PROVIDER_LABEL[localCfg.provider]})`)
-        :(customInfo.isGuest&&m.id==='auto'?L('自动 (DeepSeek)','Auto (DeepSeek)'):(lang==='en'?PICKER_MODEL_LABEL[m.id][1]:PICKER_MODEL_LABEL[m.id][0]))}
+        :(lang==='en'?PICKER_MODEL_LABEL[m.id][1]:PICKER_MODEL_LABEL[m.id][0])}
       </option>
      ))}
      {localGradeActive&&<option value="local">{L(`本地：${LOCAL_PROVIDER_LABEL[localCfg.provider]}`,`Local: ${LOCAL_PROVIDER_LABEL[localCfg.provider]}`)}</option>}

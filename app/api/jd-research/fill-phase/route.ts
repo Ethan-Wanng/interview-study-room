@@ -1,16 +1,8 @@
 import { AuthError, assertSameOrigin, rateLimit, sessionUser } from '@/lib/site-auth';
-import { consumeSiteAiQuota } from '@/lib/site-ai-quota';
 import { getAiInterviewRecord, saveAiInterviewRecord } from '@/lib/ai-interview-records';
 import { readPromptCache, sha256Hex, writePromptCache } from '@/lib/prompt-cache';
-import {
- ANTIGRAVITY_MODEL_CHAIN,
- AntigravityError,
- antigravityModelLabel,
- isAntigravityFallbackTriggerError,
- runAntigravityBackgroundToCompletion,
- type AntigravityUsage,
-} from '@/lib/antigravity-agent';
-import { runDeepSeekJdFallbackStream } from '@/lib/gemini';
+import { combineTokenUsage, prepareDeepModelExecution } from '@/lib/deep-model-route';
+import { runSelectedDeepModelStream } from '@/lib/gemini';
 import {
  buildJdPhaseQuizzesInput,
  combinePhaseQuizzes,
@@ -20,7 +12,7 @@ import {
  parsePhaseQuizzes,
 } from '@/lib/jd-research-server';
 import type { AiQuiz } from '@/content/journey';
-import type { JdInputKind, JdResearchReport } from '@/lib/jd-research-types';
+import type { AiTokenUsage, JdInputKind, JdResearchReport } from '@/lib/jd-research-types';
 
 export const dynamic = 'force-dynamic';
 const noCache = { 'Cache-Control': 'no-store' };
@@ -30,7 +22,7 @@ type CachedPhasePayload = {
  rawText: string;
  thoughts: string;
  model: string;
- usage?: AntigravityUsage;
+ usage?: AiTokenUsage;
 };
 
 type CachedJdPayload = {
@@ -38,7 +30,7 @@ type CachedJdPayload = {
  rawText: string;
  thoughts: string;
  model?: string;
- usage?: AntigravityUsage;
+ usage?: AiTokenUsage;
  durationMs?: number;
 };
 
@@ -58,21 +50,10 @@ type StoredJdRecordPayload = {
  report: JdResearchReport | null;
  rawText?: string;
  thoughts?: string;
- usage?: AntigravityUsage;
+ usage?: AiTokenUsage;
  imported?: { count: number; subject: string } | null;
  error?: string;
 };
-
-function combineUsage(a?: AntigravityUsage, b?: AntigravityUsage): AntigravityUsage | undefined {
- if (!a && !b) return undefined;
- return {
-  totalTokens: (a?.totalTokens || 0) + (b?.totalTokens || 0),
-  inputTokens: (a?.inputTokens || 0) + (b?.inputTokens || 0),
-  cachedTokens: (a?.cachedTokens || 0) + (b?.cachedTokens || 0),
-  outputTokens: (a?.outputTokens || 0) + (b?.outputTokens || 0),
-  thoughtTokens: (a?.thoughtTokens || 0) + (b?.thoughtTokens || 0),
- };
-}
 
 export async function POST(req: Request) {
  try {
@@ -91,7 +72,6 @@ export async function POST(req: Request) {
 
   const recordId = typeof body.recordId === 'string' ? body.recordId.trim().slice(0, 80) : '';
   const stepIdx = Number(body.stepIdx);
-  const geminiProxy = body.geminiProxy !== false;
 
   if (!recordId || !Number.isInteger(stepIdx) || stepIdx < 0) {
    throw new AuthError('缺少必要的路径阶段定位参数。', 400);
@@ -138,8 +118,8 @@ export async function POST(req: Request) {
      const reusedQuizzes = getReusedQuizzesForPhase(report, stepIdx);
 
      let quizzes: AiQuiz[] | null = null;
-     let modelLabel = antigravityModelLabel();
-     let usedUsage: AntigravityUsage | undefined;
+     let modelLabel = 'DeepSeek V4.1 Flash（深度思考）';
+     let usedUsage: AiTokenUsage | undefined;
 
      if (phaseKey) {
       const hit = await readPromptCache<CachedPhasePayload>(phaseKey);
@@ -151,11 +131,10 @@ export async function POST(req: Request) {
      }
 
      if (!quizzes) {
-      const siteQ = await consumeSiteAiQuota(req, user, 'gemini');
-      if (!siteQ.ok) {
-       send({ type: 'error', error: siteQ.message });
-       return;
-      }
+      const exec = await prepareDeepModelExecution(req, user, body.model, body.thinkingLevel);
+      modelLabel = exec.displayLabel;
+      send({ type: 'status', model: exec.displayLabel });
+
       const systemPrompt = getJdResearchPhaseQuizzesSystemPrompt();
       const userInput = buildJdPhaseQuizzesInput({
        kind,
@@ -166,87 +145,30 @@ export async function POST(req: Request) {
       });
       const validate = (txt: string) => parsePhaseQuizzes(txt, stepIdx).length >= 4;
 
-      let out: { text: string; thoughts: string; modelLabel: string; usage?: AntigravityUsage };
+      let out: Awaited<ReturnType<typeof runSelectedDeepModelStream>>;
       try {
-       send({ type: 'status', model: antigravityModelLabel() });
-       out = await runAntigravityBackgroundToCompletion({
-        systemInstruction: systemPrompt,
-        input: userInput,
-        maxTotalTokens: 56_000,
-        rounds: 1,
-        maxModels: 2,
-        firstProgressTimeoutMs: 35_000,
-        deadlineMs: 85_000,
-        geminiProxy,
+       out = await runSelectedDeepModelStream({
+        model: exec.model,
+        thinkingLevel: exec.thinkingLevel,
+        custom: exec.custom,
+        systemPrompt,
+        userInput,
+        maxTokens: 12288,
         signal: req.signal,
         validate,
+        onModel: m => send({ type: 'status', model: m }),
        });
-      } catch (agentErr) {
-       if (req.signal?.aborted) throw agentErr;
-       if (isAntigravityFallbackTriggerError(agentErr)) {
-        const dsLabel = 'DeepSeek V4.1 Flash（Agent限流兜底）';
-        send({ type: 'status', model: dsLabel });
-        const dsOut = await runDeepSeekJdFallbackStream({
-         systemPrompt,
-         userInput,
-         maxTokens: 12288,
-         thinkingLevel: 'low',
-         signal: req.signal,
-         validate,
-         onModel: m => send({ type: 'status', model: m }),
-        });
-        out = {
-         text: dsOut.text,
-         thoughts: dsOut.thoughts,
-         modelLabel: dsOut.model,
-         usage: dsOut.usage,
-        };
-       } else {
-        send({ type: 'status', model: 'Antigravity Agent（重试中）' });
-        try {
-         out = await runAntigravityBackgroundToCompletion({
-          systemInstruction: systemPrompt,
-          input: userInput,
-          maxTotalTokens: 56_000,
-          rounds: 1,
-          maxModels: ANTIGRAVITY_MODEL_CHAIN.length,
-          firstProgressTimeoutMs: 35_000,
-          deadlineMs: 85_000,
-          geminiProxy,
-          signal: req.signal,
-          validate,
-         });
-        } catch (retryErr) {
-         if (req.signal?.aborted || !isAntigravityFallbackTriggerError(retryErr)) {
-          throw retryErr;
-         }
-         const dsLabel = 'DeepSeek V4.1 Flash（Agent限流兜底）';
-         send({ type: 'status', model: dsLabel });
-         const dsOut = await runDeepSeekJdFallbackStream({
-          systemPrompt,
-          userInput,
-          maxTokens: 12288,
-          thinkingLevel: 'low',
-          signal: req.signal,
-          validate,
-          onModel: m => send({ type: 'status', model: m }),
-         });
-         out = {
-          text: dsOut.text,
-          thoughts: dsOut.thoughts,
-          modelLabel: dsOut.model,
-          usage: dsOut.usage,
-         };
-        }
-       }
+      } catch (err) {
+       await exec.refund();
+       throw err;
       }
 
       const generated = parsePhaseQuizzes(out.text, stepIdx);
       quizzes = combinePhaseQuizzes(reusedQuizzes, generated, stepIdx);
-      modelLabel = out.modelLabel;
+      modelLabel = out.model;
       usedUsage = out.usage;
 
-      if (phaseKey && quizzes.length >= 4) {
+      if (phaseKey && !exec.custom && quizzes.length >= 4) {
        await writePromptCache(
         phaseKey,
         'jd-phase',
@@ -272,7 +194,7 @@ export async function POST(req: Request) {
       ...report,
       roadmap: report.roadmap.map((s, idx) => (idx === stepIdx ? { ...s, quizzes } : s)),
      };
-     const nextUsage = combineUsage(rec.payload.usage, usedUsage);
+     const nextUsage = combineTokenUsage(rec.payload.usage, usedUsage);
 
      await saveAiInterviewRecord({
       id: rec.id,
@@ -322,7 +244,7 @@ export async function POST(req: Request) {
     } catch (e) {
      if (!req.signal?.aborted) {
       const msg =
-       e instanceof AuthError || e instanceof AntigravityError
+       e instanceof AuthError
         ? e.message
         : e instanceof Error && e.message
           ? e.message

@@ -43,15 +43,15 @@ import KeywordText, { EnWords } from '../../components/keyword-text';
 import { Annotated } from '../../interview/annotated';
 import { AnnotatedAnswerBox } from '../../ai/grade-view';
 import { requestGrade, type GradeThinkState } from '../../ai/grade-client';
-import { getGeminiAutoProxy } from '../../ai/gemini-proxy-pref';
+import { getActiveGlobalThinkingLevel, shouldUseLocalBridge, useGlobalAiModel } from '../../ai/thinking-pref';
 import { useI18n } from '../../components/i18n';
 import { aiQuizTypes, type AiQuiz } from '@/content/journey';
 import { answerBlocks } from '@/lib/my-questions';
-import { isLocalDeepReady, useLocalBridgeConfig } from '@/lib/local-bridge-config';
+import { useLocalBridgeConfig } from '@/lib/local-bridge-config';
 import { streamDeepViaBridge } from '@/lib/local-bridge-client';
 import type { PlaygroundLang } from '@/lib/playground-bridge';
 import type { GradeItem, GradeResult } from '@/lib/grade-types';
-import type { AntigravityUsage } from '@/lib/antigravity-agent';
+import type { AiTokenUsage as AntigravityUsage } from '@/lib/jd-research-types';
 import {
  countJdStudyQuizzes,
  hasStructuredStudyQuizzes,
@@ -220,7 +220,10 @@ export default function JdSpecialClient({
  }, [topics]);
 
  const [activeTopicId, setActiveTopicId] = useState<string>(topics[0]?.id || '');
+ const [globalModel] = useGlobalAiModel();
  const [localCfg] = useLocalBridgeConfig();
+ const useLocal = shouldUseLocalBridge('deep', globalModel, localCfg);
+ const thinkingLevel = getActiveGlobalThinkingLevel(globalModel, localCfg);
  const [tab, setTab] = useState<ViewTab>('practice');
  const [stepIdx, setStepIdx] = useState(0);
  const [dimIdx, setDimIdx] = useState(0);
@@ -534,7 +537,7 @@ export default function JdSpecialClient({
   setRegenKey(targetKey);
   setRegenErr('');
   try {
-   if (isLocalDeepReady(localCfg)) {
+   if (useLocal) {
     const pRes = await fetch('/api/jd-research/local-helper', {
      method: 'POST',
      headers: { 'content-type': 'application/json' },
@@ -561,6 +564,7 @@ export default function JdSpecialClient({
      cfg: localCfg,
      system: pData.system,
      messages: [{ role: 'user', content: pData.user }],
+     thinkingLevel,
      jsonMode: true,
      onDelta: () => {},
     });
@@ -611,7 +615,8 @@ export default function JdSpecialClient({
      recordId: topic.id,
      stepIdx: currentEntry.stepIdx,
      quizId: currentEntry.quiz.id,
-     geminiProxy: getGeminiAutoProxy(),
+     model: globalModel,
+     thinkingLevel,
     }),
    });
    const d = (await r.json()) as {
@@ -636,7 +641,7 @@ export default function JdSpecialClient({
   setFillingStepIdx(targetStepIdx);
   setFillErr('');
   try {
-   if (isLocalDeepReady(localCfg)) {
+   if (useLocal) {
     const pRes = await fetch('/api/jd-research/local-helper', {
      method: 'POST',
      headers: { 'content-type': 'application/json' },
@@ -662,6 +667,7 @@ export default function JdSpecialClient({
      cfg: localCfg,
      system: pData.system,
      messages: [{ role: 'user', content: pData.user }],
+     thinkingLevel,
      jsonMode: true,
      onDelta: () => {},
     });
@@ -710,7 +716,8 @@ export default function JdSpecialClient({
     body: JSON.stringify({
      recordId: topic.id,
      stepIdx: targetStepIdx,
-     geminiProxy: getGeminiAutoProxy(),
+     model: globalModel,
+     thinkingLevel,
     }),
    });
    if (!r.ok || !r.body) {

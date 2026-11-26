@@ -27,9 +27,9 @@ import AddToNoteButton from '../../components/add-to-note';
 import AiDock from '../../ai/ai-dock';
 import QuestionCard, { type Item, type Result } from '../../ai/question-card';
 import { Annotated } from '../annotated';
-import { getGeminiAutoProxy } from '../../ai/gemini-proxy-pref';
+import { getActiveGlobalThinkingLevel, shouldUseLocalBridge, useGlobalAiModel } from '../../ai/thinking-pref';
 import { useI18n } from '../../components/i18n';
-import { isLocalDeepReady, LOCAL_PROVIDER_LABEL, useLocalBridgeConfig } from '@/lib/local-bridge-config';
+import { LOCAL_PROVIDER_LABEL, useLocalBridgeConfig } from '@/lib/local-bridge-config';
 import { streamDeepViaBridge } from '@/lib/local-bridge-client';
 import { aiQuizTypes, type AiQuiz } from '@/content/journey';
 import type { PlaygroundLang } from '@/lib/playground-bridge';
@@ -139,7 +139,10 @@ export default function ProjectDrillClient({
 }) {
  const { locale } = useI18n();
  const L = (zh: string, en: string) => (locale === 'en' ? en : zh);
+ const [globalModel] = useGlobalAiModel();
  const [localCfg] = useLocalBridgeConfig();
+ const useLocal = shouldUseLocalBridge('deep', globalModel, localCfg);
+ const thinkingLevel = getActiveGlobalThinkingLevel(globalModel, localCfg);
 
  const [reportOverrides, setReportOverrides] = useState<Record<string, JdResearchReport>>({});
  const topicList = useMemo(
@@ -253,7 +256,7 @@ export default function ProjectDrillClient({
   let accTh = '';
   let accTail = '';
   try {
-   if (isLocalDeepReady(localCfg)) {
+   if (useLocal) {
     const targetTopic = topicList.find(t => t.id === tid) ?? activeTopic;
     if (!targetTopic) throw new Error(L('未找到对应的简历报告', 'Report not found'));
     setGenModel(`${LOCAL_PROVIDER_LABEL[localCfg.provider]} · ${localCfg.model.trim() || 'default'}`);
@@ -276,6 +279,7 @@ export default function ProjectDrillClient({
      cfg: localCfg,
      system: pData.system,
      messages: [{ role: 'user', content: pData.user }],
+     thinkingLevel,
      jsonMode: true,
      onModel: m => setGenModel(m),
      onThink: d => {
@@ -333,7 +337,8 @@ export default function ProjectDrillClient({
      recordId: tid,
      projIdx: pi,
      bypassCache: Boolean(opts?.bypassCache),
-     geminiProxy: getGeminiAutoProxy(),
+     model: globalModel,
+     thinkingLevel,
     }),
     signal: ctl.signal,
    });
@@ -544,7 +549,7 @@ export default function ProjectDrillClient({
   setRegenKey(targetKey);
   setRegenErr('');
   try {
-   if (isLocalDeepReady(localCfg)) {
+   if (useLocal) {
     const pRes = await fetch('/api/jd-research/local-helper', {
      method: 'POST',
      headers: { 'content-type': 'application/json' },
@@ -564,6 +569,7 @@ export default function ProjectDrillClient({
      cfg: localCfg,
      system: pData.system,
      messages: [{ role: 'user', content: pData.user }],
+     thinkingLevel,
      jsonMode: true,
      onDelta: () => {},
     });
@@ -627,7 +633,8 @@ export default function ProjectDrillClient({
      projIdx: safeProjIdx,
      mode: 'regen-quiz',
      quizIdx: targetQIdx,
-     geminiProxy: getGeminiAutoProxy(),
+     model: globalModel,
+     thinkingLevel,
     }),
    });
    const d = (await r.json()) as {

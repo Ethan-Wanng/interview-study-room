@@ -3,8 +3,7 @@ import {redirect} from 'next/navigation';
 import {Lock} from 'lucide-react';
 import {sessionUser} from '@/lib/site-auth';
 import {listAiInterviewRecords} from '@/lib/ai-interview-records';
-import {countJdStudyQuizzes,type JdInputKind,type JdResearchReport} from '@/lib/jd-research-types';
-import type {AntigravityUsage} from '@/lib/antigravity-agent';
+import {countJdStudyQuizzes,type AiTokenUsage,type JdInputKind,type JdResearchReport} from '@/lib/jd-research-types';
 import SiteHeader from '../../components/site-header';
 import JdSpecialClient,{type JdSpecialTopic} from './jd-special-client';
 
@@ -29,7 +28,7 @@ export default async function JdSpecialPage(){
    </div>
   );
  }
- const rows=await listAiInterviewRecords<{kind?:JdInputKind;source?:string;cached?:boolean;stage1Cached?:boolean;durationMs?:number;usage?:AntigravityUsage;report?:JdResearchReport|null}>(user.id,'jd-research');
+ const rows=await listAiInterviewRecords<{kind?:JdInputKind;source?:string;cached?:boolean;stage1Cached?:boolean;durationMs?:number;usage?:AiTokenUsage;report?:JdResearchReport|null}>(user.id,'jd-research');
  const topics:JdSpecialTopic[]=rows
   .filter(r=>r.status==='completed'&&r.payload?.report&&countJdStudyQuizzes(r.payload.report)>0)
   .map(r=>({

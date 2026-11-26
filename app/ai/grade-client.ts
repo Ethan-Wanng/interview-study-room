@@ -1,34 +1,24 @@
 import {gradeQuestionText} from '@/content/code-starters';
 import type {AiQuiz} from '@/content/journey';
-import {useSyncExternalStore} from 'react';
-import {DEFAULT_GRADE_MODEL,GRADE_LIMITS,parseGradeModel,pointScores,type GradeEvent,type GradeItem,type GradeMark,type GradeMarkKind,type GradeModelId,type GradeResponse,type GradeResult} from '@/lib/grade-types';
+import {GRADE_LIMITS,parseGradeModel,pointScores,type GradeEvent,type GradeItem,type GradeMark,type GradeMarkKind,type GradeModelId,type GradeResponse,type GradeResult} from '@/lib/grade-types';
 import {getGradeThinkingSpec} from '@/lib/thinking';
 import {filterStarterMarks} from '@/lib/starter-diff';
-import {getLocalBridgeConfig,isLocalGradeReady} from '@/lib/local-bridge-config';
+import {getLocalBridgeConfig} from '@/lib/local-bridge-config';
 import {streamGradeViaBridge,streamStandardViaBridge} from '@/lib/local-bridge-client';
-import {getGeminiAutoProxy} from './gemini-proxy-pref';
-import {getModelThinkingLevel} from './thinking-pref';
+import {getGlobalAiModel,getModelThinkingLevel,setGlobalAiModel,shouldUseLocalBridge,useGlobalAiModel} from './thinking-pref';
 
-// AI 评分模型选择独立于「AI 对话（ai-tutor-model）」，单独存在本地并同步给各个评分入口。
-export const GRADE_MODEL_KEY='ai-grade-model';
-const gradeListeners=new Set<()=>void>();
-const emitGradeModel=()=>gradeListeners.forEach(fn=>fn());
+// 统一跟随全站模型选择（globalModel），同时保留原导出函数名兼容既有评分入口。
+export const GRADE_MODEL_KEY='ai-global-model-v1';
 export function getGradeModel():GradeModelId{
- if(typeof window==='undefined')return DEFAULT_GRADE_MODEL;
- try{return parseGradeModel(localStorage.getItem(GRADE_MODEL_KEY));}catch{return DEFAULT_GRADE_MODEL;}
+ return parseGradeModel(getGlobalAiModel());
 }
 export function setGradeModel(id:GradeModelId){
- const next=parseGradeModel(id);
- try{if(typeof window!=='undefined')localStorage.setItem(GRADE_MODEL_KEY,next);}catch{}
- emitGradeModel();
+ setGlobalAiModel(parseGradeModel(id));
 }
-const subGradeModel=(fn:()=>void)=>{
- gradeListeners.add(fn);
- const onStorage=(e:StorageEvent)=>{if(e.key===GRADE_MODEL_KEY)fn();};
- if(typeof window!=='undefined')window.addEventListener('storage',onStorage);
- return ()=>{gradeListeners.delete(fn);if(typeof window!=='undefined')window.removeEventListener('storage',onStorage);};
+export const useGradeModel=():[GradeModelId,(id:GradeModelId)=>void]=>{
+ const [gm,setGm]=useGlobalAiModel();
+ return [parseGradeModel(gm),(id:GradeModelId)=>setGm(parseGradeModel(id))];
 };
-export const useGradeModel=():[GradeModelId,(id:GradeModelId)=>void]=>[useSyncExternalStore(subGradeModel,getGradeModel,()=>DEFAULT_GRADE_MODEL),setGradeModel];
 
 type Written=Extract<AiQuiz,{type:'short'|'code'|'design'}>;
 export const isWritten=(q:AiQuiz):q is Written=>q.type==='short'||q.type==='code'||q.type==='design';
@@ -92,7 +82,7 @@ async function runGradeNdjson<T>(
  if(signal?.aborted)return ABORTED;
  const rawGm=parseGradeModel(body.model);
  const localCfg=getLocalBridgeConfig();
- const useLocal=isLocalGradeReady(localCfg)&&(rawGm==='auto'||rawGm==='local');
+ const useLocal=shouldUseLocalBridge('grade',rawGm,localCfg);
  if(useLocal){
   const {scopeKey,spec}=getGradeThinkingSpec('local',cachedGradeCustom,cachedGradeIsGuest,localCfg);
   const thinkingLevel=spec.locked?'auto':getModelThinkingLevel(scopeKey,spec);
@@ -137,11 +127,11 @@ async function runGradeNdjson<T>(
    return {ok:false,quota:false,message:err instanceof Error&&err.message?err.message:NET};
   }
  }
- const gm=(cachedGradeIsGuest&&rawGm==='gemini')||(rawGm==='local')?'deepseek':rawGm;
+ const gm=rawGm==='local'?'auto':rawGm;
  const {scopeKey,spec}=getGradeThinkingSpec(gm,cachedGradeCustom,cachedGradeIsGuest);
  const thinkingLevel=spec.locked?'auto':getModelThinkingLevel(scopeKey,spec);
  let res:Response;
- try{res=await fetch('/api/grade',{method:'POST',signal,headers:{'content-type':'application/json'},body:JSON.stringify({...body,model:gm,geminiProxy:getGeminiAutoProxy(),thinkingLevel})})}catch{return signal?.aborted?ABORTED:{ok:false,quota:false,message:NET}}
+ try{res=await fetch('/api/grade',{method:'POST',signal,headers:{'content-type':'application/json'},body:JSON.stringify({...body,model:gm,thinkingLevel})})}catch{return signal?.aborted?ABORTED:{ok:false,quota:false,message:NET}}
  if(!(res.headers.get('content-type')??'').includes('ndjson')){
   try{const j=await res.json() as GradeResponse;if(signal?.aborted)return ABORTED;if('results' in j)return {ok:true,data:extract('',{t:'done',results:j.results,model:j.model,remaining:j.remaining}),model:j.model,remaining:j.remaining};return {ok:false,quota:j.error==='quota',message:j.message}}
   catch{return signal?.aborted?ABORTED:{ok:false,quota:false,message:NET}}}

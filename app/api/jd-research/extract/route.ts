@@ -29,7 +29,6 @@ export async function POST(req: Request) {
   const images = rawImages
    .filter((x): x is string => typeof x === 'string' && x.length <= 2_000_000 && IMG_RE.test(x))
    .slice(0, 4);
-  const geminiProxy = body.geminiProxy !== false;
 
   if (!url && !images.length) {
    throw new AuthError('请提供岗位链接或上传 JD 图片。', 400);
@@ -41,10 +40,10 @@ export async function POST(req: Request) {
    if (fromUrl) parts.push(fromUrl);
   }
   if (images.length) {
-   const siteQ = await consumeSiteAiQuota(req, user, 'gemini');
+   const siteQ = await consumeSiteAiQuota(req, user, 'deepseek');
    if (!siteQ.ok) throw new AuthError(siteQ.message, siteQ.status);
    try {
-    const fromImg = await extractJdFromImages(images, geminiProxy, true);
+    const fromImg = await extractJdFromImages(images);
     if (fromImg) parts.push(fromImg);
    } catch (imgErr) {
     await siteQ.refund();

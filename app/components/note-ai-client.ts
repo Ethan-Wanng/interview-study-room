@@ -1,9 +1,7 @@
 import type {TutorContext,TutorEvent,TutorMessage} from '@/lib/tutor-types';
-import {getTutorThinkingSpec} from '@/lib/thinking';
-import {getLocalBridgeConfig,isLocalTutorReady} from '@/lib/local-bridge-config';
+import {getLocalBridgeConfig} from '@/lib/local-bridge-config';
 import {streamTutorViaBridge} from '@/lib/local-bridge-client';
-import {getGeminiAutoProxy} from '../ai/gemini-proxy-pref';
-import {getModelThinkingLevel,getStoredNoteModel} from '../ai/thinking-pref';
+import {getActiveGlobalThinkingLevel,getGlobalAiModel,shouldUseLocalBridge} from '../ai/thinking-pref';
 
 // 流式调用 /api/tutor 或本地桥接处理笔记润色、规范化与选中文本 AI 问答
 export async function streamNoteAi(
@@ -14,11 +12,10 @@ export async function streamNoteAi(
  signal:AbortSignal,
 ):Promise<{ok:true;text:string;remaining?:number}|{ok:false;aborted?:boolean;message:string}>{
  const NET='AI 助手暂时连接失败，本次未扣除额度，请稍后重试。';
- const model=getStoredNoteModel();
+ const model=getGlobalAiModel();
  const localCfg=getLocalBridgeConfig();
- if(isLocalTutorReady(localCfg)&&(model==='auto'||model==='local')){
-  const {scopeKey,spec}=getTutorThinkingSpec(model,null,localCfg);
-  const thinkingLevel=spec.locked?'auto':getModelThinkingLevel(scopeKey,spec);
+ const thinkingLevel=getActiveGlobalThinkingLevel(model,localCfg);
+ if(shouldUseLocalBridge('tutor',model,localCfg)){
   let got='',think='';
   try{
    const out=await streamTutorViaBridge({
@@ -37,12 +34,6 @@ export async function streamNoteAi(
    return {ok:false,message:e instanceof Error&&e.message?e.message:NET};
   }
  }
- const thinkingLevel=model==='auto'||model==='custom'
-  ?'auto'
-  :(()=>{
-    const {scopeKey,spec}=getTutorThinkingSpec(model,null);
-    return spec.locked?'auto':getModelThinkingLevel(scopeKey,spec);
-   })();
  let res:Response;
  try{
   res=await fetch('/api/tutor',{
@@ -52,7 +43,6 @@ export async function streamNoteAi(
     context,
     messages,
     model,
-    geminiProxy:getGeminiAutoProxy(),
     thinkingLevel,
    }),
    signal,

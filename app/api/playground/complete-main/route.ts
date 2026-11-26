@@ -35,29 +35,18 @@ export async function POST(req:Request){
   const title=typeof b.title==='string'?b.title.slice(0,200):undefined;
   const expect=typeof b.expect==='string'?b.expect.slice(0,2000):undefined;
   const questionId=typeof b.questionId==='string'?b.questionId.slice(0,80):undefined;
-  const geminiProxy=b.geminiProxy!==false;
 
   let customCfg:RuntimeAiConfig|undefined;
   let refund:(()=>Promise<unknown>)|undefined;
-  let allowGemini=!user.is_guest;
-  if(!user.is_guest){
-   const custom=await prepareCustomAi(user.id,'tutor');
-   if(custom.mode==='blocked')return fail(custom.message,429);
-   if(custom.mode==='custom'){
-    customCfg=custom.config;
-    refund=()=>custom.refund();
-   }
-  }
-  if(!customCfg){
+  const custom=await prepareCustomAi(user.id,'tutor');
+  if(custom.mode==='blocked')return fail(custom.message,429);
+  if(custom.mode==='custom'){
+   customCfg=custom.config;
+   refund=()=>custom.refund();
+  }else{
    const dsQ=await consumeSiteAiQuota(req,user,'deepseek');
    if(!dsQ.ok)return fail(dsQ.message,dsQ.status);
-   const rList=[dsQ.refund];
-   if(allowGemini){
-    const gmQ=await consumeSiteAiQuota(req,user,'gemini');
-    if(gmQ.ok)rList.push(gmQ.refund);
-    else allowGemini=false;
-   }
-   refund=async()=>{await Promise.all(rList.map(fn=>fn().catch(()=>{})))};
+   refund=dsQ.refund;
   }
 
   try{
@@ -69,8 +58,6 @@ export async function POST(req:Request){
     expect,
     questionId,
     custom:customCfg,
-    geminiProxy,
-    allowGemini,
    });
    return Response.json({ok:true,code:completed},{headers:noCache});
   }catch(e){

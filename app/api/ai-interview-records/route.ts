@@ -15,12 +15,12 @@ const noCache = { 'Cache-Control': 'no-store' };
 
 function jdSecret(): string {
  const e = env as unknown as Record<string, string | undefined>;
- return (e?.GEMINI_API_KEY || e?.ADMIN_BOOTSTRAP_HASH || 'isr-jd-sig').slice(0, 48);
+ return (e?.DEEPSEEK_API_KEY || e?.ADMIN_BOOTSTRAP_HASH || 'isr-jd-sig').slice(0, 48);
 }
 
 function archSecret(): string {
  const e = env as unknown as Record<string, string | undefined>;
- return (e?.GEMINI_API_KEY || e?.ADMIN_BOOTSTRAP_HASH || 'isr-arch-sig').slice(0, 48);
+ return (e?.DEEPSEEK_API_KEY || e?.ADMIN_BOOTSTRAP_HASH || 'isr-arch-sig').slice(0, 48);
 }
 
 async function signResumeToken(kind: AiInterviewKind, userId: string, token: string): Promise<string> {

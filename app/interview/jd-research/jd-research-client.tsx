@@ -41,11 +41,11 @@ import {
 import SiteHeader from '../../components/site-header';
 import AddToNoteButton from '../../components/add-to-note';
 import { useI18n } from '../../components/i18n';
-import { getGeminiAutoProxy } from '../../ai/gemini-proxy-pref';
-import { isLocalDeepReady, LOCAL_PROVIDER_LABEL, useLocalBridgeConfig } from '@/lib/local-bridge-config';
+import { getActiveGlobalThinkingLevel, shouldUseLocalBridge, useGlobalAiModel } from '../../ai/thinking-pref';
+import { LOCAL_PROVIDER_LABEL, useLocalBridgeConfig } from '@/lib/local-bridge-config';
 import { streamDeepViaBridge } from '@/lib/local-bridge-client';
 import { aiQuizTypes, type AiQuiz } from '@/content/journey';
-import type { AntigravityUsage } from '@/lib/antigravity-agent';
+import type { AiTokenUsage as AntigravityUsage } from '@/lib/jd-research-types';
 import {
  countJdStudyQuizzes,
  reportToMarkdown,
@@ -315,8 +315,10 @@ export default function JdResearchClient({
 }) {
  const { locale } = useI18n();
  const L = (zh: string, en: string) => (locale === 'en' ? en : zh);
+ const [globalModel] = useGlobalAiModel();
  const [localCfg] = useLocalBridgeConfig();
- const useLocal = isLocalDeepReady(localCfg);
+ const useLocal = shouldUseLocalBridge('deep', globalModel, localCfg);
+ const thinkingLevel = getActiveGlobalThinkingLevel(globalModel, localCfg);
  const [usedToday, setUsedToday] = useState(dailyUsed ?? 0);
 
  const [kind, setKind] = useState<JdInputKind>('jd');
@@ -503,7 +505,7 @@ export default function JdResearchClient({
   setResumeTail('');
   setResumeModel('');
   try {
-   if (isLocalDeepReady(localCfg) && report) {
+   if (useLocal && report) {
     const pRes = await fetch('/api/jd-research/local-helper', {
      method: 'POST',
      headers: { 'content-type': 'application/json' },
@@ -524,6 +526,7 @@ export default function JdResearchClient({
      cfg: localCfg,
      system: pData.system,
      messages: [{ role: 'user', content: pData.user }],
+     thinkingLevel,
      jsonMode: true,
      onDelta: () => {},
     });
@@ -566,7 +569,8 @@ export default function JdResearchClient({
     body: JSON.stringify({
      recordId: activeId,
      stepIdx,
-     geminiProxy: getGeminiAutoProxy(),
+     model: globalModel,
+     thinkingLevel,
     }),
    });
    if (!r.ok || !r.body) {
@@ -632,7 +636,7 @@ export default function JdResearchClient({
   setResumeErr('');
   setResumeThoughts('');
   setResumeTail('');
-  setResumeModel('Antigravity Agent');
+  setResumeModel('');
 
   const ctl = new AbortController();
   resumeAbortRef.current = ctl;
@@ -644,7 +648,7 @@ export default function JdResearchClient({
   let accTh = '';
   let accTail = '';
   try {
-   if (isLocalDeepReady(localCfg)) {
+   if (useLocal) {
     setResumeModel(`${LOCAL_PROVIDER_LABEL[localCfg.provider]} · ${localCfg.model.trim() || 'default'}`);
     const pRes = await fetch('/api/jd-research/local-helper', {
      method: 'POST',
@@ -666,6 +670,7 @@ export default function JdResearchClient({
      cfg: localCfg,
      system: pData.system,
      messages: [{ role: 'user', content: pData.user }],
+     thinkingLevel,
      jsonMode: true,
      onModel: m => setResumeModel(m),
      onThink: d => {
@@ -714,7 +719,8 @@ export default function JdResearchClient({
     body: JSON.stringify({
      recordId: activeId,
      bypassCache: Boolean(opts?.bypassCache),
-     geminiProxy: getGeminiAutoProxy(),
+     model: globalModel,
+     thinkingLevel,
     }),
     signal: ctl.signal,
    });
@@ -885,7 +891,6 @@ export default function JdResearchClient({
      id: curInteractionId,
      sig: curSig,
      rid: rec.id,
-     geminiProxy: getGeminiAutoProxy() ? '1' : '0',
     });
     if (rec.payload?.cacheKey && rec.ckSig) {
      qs.set('ck', rec.payload.cacheKey);
@@ -1258,7 +1263,6 @@ export default function JdResearchClient({
     body: JSON.stringify({
      ...(urlVal ? { url: urlVal } : {}),
      ...(imgsVal.length ? { images: imgsVal } : {}),
-     geminiProxy: getGeminiAutoProxy(),
     }),
    });
    const d = (await r.json()) as { text?: string; error?: string };
@@ -1312,7 +1316,7 @@ export default function JdResearchClient({
   });
   setRawText('');
   setThoughts('');
-  setStreamModel('Antigravity Agent');
+  setStreamModel(useLocal ? LOCAL_PROVIDER_LABEL[localCfg.provider] : 'DeepSeek');
   setStreamThoughts('');
   setImportResult(null);
 
@@ -1330,7 +1334,6 @@ export default function JdResearchClient({
   let resolvedSrc = clean;
   let resolvedUrl = cleanUrl;
   let resolvedImages = [...images];
-  const geminiProxy = getGeminiAutoProxy();
 
   let accThoughts = '';
   let accTail = '';
@@ -1365,7 +1368,7 @@ export default function JdResearchClient({
    const r = await fetch('/api/jd-research', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ ...payload, geminiProxy }),
+    body: JSON.stringify({ ...payload, model: globalModel, thinkingLevel }),
     signal: ctl.signal,
    });
    let data: Record<string, unknown> = {};
@@ -1423,7 +1426,7 @@ export default function JdResearchClient({
    const r = await fetch('/api/jd-research', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ ...payload, action: actionName, geminiProxy }),
+    body: JSON.stringify({ ...payload, action: actionName, model: globalModel, thinkingLevel }),
     signal: ctl.signal,
    });
    if (!r.ok || !r.body) {
@@ -1540,14 +1543,17 @@ export default function JdResearchClient({
    optsStep: AntigravityStepConfig,
    watchMetaObj: Record<string, unknown>,
    markAgentRateLimited: boolean,
+   isDirectModelStep = false,
   ): Promise<boolean> => {
-   appendThought(
-    L(
-     `\n[⚡ Antigravity Agent 触发限流，切换 DeepSeek 接力完成「${optsStep.label}」…]\n`,
-     `\n[⚡ Antigravity Agent rate-limited, falling back to DeepSeek for ${optsStep.label}…]\n`,
-    ),
-   );
-   setStreamModel('DeepSeek V4.1 Flash（Agent限流兜底）');
+   if (!isDirectModelStep) {
+    appendThought(
+     L(
+      `\n[⚡ Antigravity Agent 触发限流，切换 DeepSeek 接力完成「${optsStep.label}」…]\n`,
+      `\n[⚡ Antigravity Agent rate-limited, falling back to DeepSeek for ${optsStep.label}…]\n`,
+     ),
+    );
+    setStreamModel('DeepSeek V4.1 Flash');
+   }
 
    for (let dsAtt = 0; dsAtt < 3 && !ctl.signal.aborted; dsAtt++) {
     let stepStartedSliceChars = 0;
@@ -1557,7 +1563,7 @@ export default function JdResearchClient({
       {
        ...watchMetaObj,
        recordId: curRecordId,
-       markAgentRateLimited: markAgentRateLimited && dsAtt === 0,
+       ...(markAgentRateLimited && dsAtt === 0 ? { markAgentRateLimited: true } : {}),
       },
       makeWatchEventHandler(optsStep, n => {
        stepStartedSliceChars = n;
@@ -1571,7 +1577,7 @@ export default function JdResearchClient({
      }
      if (dsAtt < 2) {
       appendThought(
-       `\n[↺ DeepSeek 接力「${optsStep.label}」第 ${dsAtt + 1} 次重试（${out.retryReason || '输出不完整'}）…]\n`,
+       `\n[↺ 「${optsStep.label}」第 ${dsAtt + 1} 次重试（${out.retryReason || '输出不完整'}）…]\n`,
       );
       await sleep(2500 * (dsAtt + 1));
      }
@@ -1580,7 +1586,7 @@ export default function JdResearchClient({
      const err = e as StepError;
      if (err.status === 401 || err.status === 403 || err.code === 'daily_quota_exceeded') throw e;
      if (dsAtt < 2) {
-      appendThought(`\n[↺ DeepSeek 接力「${optsStep.label}」第 ${dsAtt + 1} 次重连…]\n`);
+      appendThought(`\n[↺ 「${optsStep.label}」第 ${dsAtt + 1} 次重连…]\n`);
       await sleep(2500 * (dsAtt + 1));
      } else {
       throw e;
@@ -1625,6 +1631,9 @@ export default function JdResearchClient({
     }
 
     if (typeof startRes.model === 'string' && startRes.model) setStreamModel(startRes.model);
+    if (startRes.status === 'use_model_step') {
+     return await runDeepSeekFallbackStep(optsStep, optsStep.watchMeta(startRes), false, true);
+    }
     if (startRes.status === 'rate_limited_fallback') {
      return await runDeepSeekFallbackStep(optsStep, optsStep.watchMeta(startRes), false);
     }
@@ -1788,7 +1797,7 @@ export default function JdResearchClient({
   };
 
   try {
-   if (isLocalDeepReady(localCfg)) {
+   if (useLocal) {
     const localLabel = `${LOCAL_PROVIDER_LABEL[localCfg.provider]} · ${localCfg.model.trim() || 'default'}`;
     setStreamModel(localLabel);
     setConnState('connected');
@@ -1799,7 +1808,6 @@ export default function JdResearchClient({
       body: JSON.stringify({
        ...(resolvedUrl ? { url: resolvedUrl } : {}),
        ...(resolvedImages.length ? { images: resolvedImages } : {}),
-       geminiProxy,
       }),
       signal: ctl.signal,
      });
@@ -1846,6 +1854,7 @@ export default function JdResearchClient({
      cfg: localCfg,
      system: s1Prompts.system,
      messages: [{ role: 'user', content: s1Prompts.user }],
+     thinkingLevel,
      jsonMode: true,
      onModel: m => {
       finalModel = m;
@@ -1909,6 +1918,7 @@ export default function JdResearchClient({
        cfg: localCfg,
        system: pzPrompts.system,
        messages: [{ role: 'user', content: pzPrompts.user }],
+       thinkingLevel,
        jsonMode: true,
        onModel: m => {
         finalModel = m;
@@ -1957,6 +1967,7 @@ export default function JdResearchClient({
       cfg: localCfg,
       system: qPrompts.system,
       messages: [{ role: 'user', content: qPrompts.user }],
+      thinkingLevel,
       jsonMode: true,
       onModel: m => {
        finalModel = m;

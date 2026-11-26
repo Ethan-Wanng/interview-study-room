@@ -2,24 +2,17 @@ import { env } from 'cloudflare:workers';
 import { AuthError, assertSameOrigin, rateLimit, sessionUser } from '@/lib/site-auth';
 import { currentAdmin } from '@/lib/admin-auth';
 import { beijingDayWindow, refundDailyJdQuota, tryConsumeDailyJdQuota } from '@/lib/jd-daily-limit';
-import {
- ANTIGRAVITY_AGENT_ID,
- ANTIGRAVITY_MODEL_CHAIN,
- AntigravityError,
- antigravityModelLabel,
- isAntigravityRateLimitError,
- markAntigravityAgentRateLimited,
- pollAntigravityInteraction,
- startAntigravityInteraction,
- streamAntigravitySlice,
- type AntigravityUsage,
-} from '@/lib/antigravity-agent';
 import { readPromptCache, sha256Hex, writePromptCache } from '@/lib/prompt-cache';
 import { getAiInterviewRecord, saveAiInterviewRecord } from '@/lib/ai-interview-records';
 import {
+ combineTokenUsage,
+ parseRequestedDeepModel,
+ prepareDeepModelExecution,
+ resolveDeepModelLabel,
+} from '@/lib/deep-model-route';
+import {
  buildJdPhaseQuizzesInput,
  buildJdStage1Input,
- buildJdStage2Input,
  buildJdStage2QuestionsInput,
  combinePhaseQuizzes,
  createThinkJsonStreamSplitter,
@@ -27,7 +20,6 @@ import {
  getJdResearchPhaseQuizzesSystemPrompt,
  getJdResearchStage1SystemPrompt,
  getJdResearchStage2QuestionsSystemPrompt,
- getJdResearchStage2SystemPrompt,
  getReusedQuizzesForPhase,
  inspectJdStreamProgress,
  mergeStage1AndStage2Report,
@@ -35,15 +27,15 @@ import {
  parseAndEnrichJdReport,
  parsePhaseQuizzes,
 } from '@/lib/jd-research-server';
-import { extractJdFromImages, runDeepSeekJdFallbackStream } from '@/lib/gemini';
+import { extractJdFromImages, runSelectedDeepModelStream } from '@/lib/gemini';
 import { fetchJdTextFromUrl } from '@/lib/jd-extract';
 import type { AiQuiz } from '@/content/journey';
-import {
- hasStructuredStudyQuizzes,
- type JdInputKind,
- type JdQuestionItem,
- type JdReferenceResume,
- type JdResearchReport,
+import type {
+ AiTokenUsage,
+ JdInputKind,
+ JdQuestionItem,
+ JdReferenceResume,
+ JdResearchReport,
 } from '@/lib/jd-research-types';
 
 const IMG_RE = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/;
@@ -53,7 +45,7 @@ const noCache = { 'Cache-Control': 'no-store' };
 
 function signingSecret(): string {
  const e = env as unknown as Record<string, string | undefined>;
- return (e?.GEMINI_API_KEY || e?.ADMIN_BOOTSTRAP_HASH || 'isr-jd-sig').slice(0, 48);
+ return (e?.DEEPSEEK_API_KEY || e?.ADMIN_BOOTSTRAP_HASH || 'isr-jd-sig').slice(0, 48);
 }
 
 async function signToken(userId: string, token: string): Promise<string> {
@@ -65,7 +57,7 @@ type CachedJdPayload = {
  rawText: string;
  thoughts: string;
  model?: string;
- usage?: AntigravityUsage;
+ usage?: AiTokenUsage;
  durationMs?: number;
 };
 
@@ -74,7 +66,7 @@ type CachedStage1Payload = {
  rawText: string;
  thoughts: string;
  model?: string;
- usage?: AntigravityUsage;
+ usage?: AiTokenUsage;
 };
 
 type CachedPhasePayload = {
@@ -82,7 +74,7 @@ type CachedPhasePayload = {
  rawText: string;
  thoughts: string;
  model: string;
- usage?: AntigravityUsage;
+ usage?: AiTokenUsage;
 };
 
 type CachedQuestionsPayload = {
@@ -90,7 +82,7 @@ type CachedQuestionsPayload = {
  rawText: string;
  thoughts: string;
  model: string;
- usage?: AntigravityUsage;
+ usage?: AiTokenUsage;
 };
 
 type StoredJdRecordPayload = {
@@ -111,11 +103,11 @@ type StoredJdRecordPayload = {
  partialReport?: JdResearchReport | null;
  stage1RawText?: string;
  stage1Thoughts?: string;
- stage1Usage?: AntigravityUsage;
+ stage1Usage?: AiTokenUsage;
  report: JdResearchReport | null;
  rawText: string;
  thoughts: string;
- usage?: AntigravityUsage;
+ usage?: AiTokenUsage;
  imported?: { count: number; subject: string } | null;
  error?: string;
 };
@@ -133,17 +125,6 @@ function draftTitle(source: string, kind: JdInputKind): string {
 function makeSubtitle(rep: JdResearchReport | null): string {
  if (!rep) return '';
  return [rep.inferredLevel, rep.prepDays, rep.companyStyle].filter(Boolean).join(' · ').slice(0, 80);
-}
-
-function combineUsage(a?: AntigravityUsage, b?: AntigravityUsage): AntigravityUsage | undefined {
- if (!a && !b) return undefined;
- return {
-  totalTokens: (a?.totalTokens || 0) + (b?.totalTokens || 0),
-  inputTokens: (a?.inputTokens || 0) + (b?.inputTokens || 0),
-  cachedTokens: (a?.cachedTokens || 0) + (b?.cachedTokens || 0),
-  outputTokens: (a?.outputTokens || 0) + (b?.outputTokens || 0),
-  thoughtTokens: (a?.thoughtTokens || 0) + (b?.thoughtTokens || 0),
- };
 }
 
 function fullCacheKeyOf(hashHex: string): string {
@@ -177,83 +158,16 @@ function extractStreamQuestionTitles(buf: string): string[] {
  return qTitles;
 }
 
-const DEEPSEEK_FALLBACK_LABEL = 'DeepSeek V4.1 Flash（Agent限流兜底）';
-
-async function startAntigravityWithModelFallback(opts: {
- systemInstruction: string;
- input: string;
- maxTotalTokens: number;
- attemptOffset?: number;
- geminiProxy: boolean;
- signal?: AbortSignal;
-}) {
- const len = ANTIGRAVITY_MODEL_CHAIN.length;
- const startAt = Math.max(0, opts.attemptOffset || 0) % len;
- let triedCount = 0;
- let rateLimitCount = 0;
- let lastRateLimitErr: AntigravityError | undefined;
- let nonRateLimitErr: unknown;
-
- for (let step = 0; step < len; step++) {
-  const attemptIdx = (startAt + step) % len;
-  const agentModel = ANTIGRAVITY_MODEL_CHAIN[attemptIdx];
-  triedCount++;
-  try {
-   const started = await startAntigravityInteraction({
-    systemInstruction: opts.systemInstruction,
-    input: opts.input,
-    agentModel,
-    maxTotalTokens: opts.maxTotalTokens,
-    deferAgentCooldown: true,
-    geminiProxy: opts.geminiProxy,
-    signal: opts.signal,
-   });
-   return {
-    started,
-    modelLabel: antigravityModelLabel(agentModel),
-    attemptIdx,
-   };
-  } catch (e) {
-   if (opts.signal?.aborted) throw e;
-   if (e instanceof AntigravityError && (e.code === 'geo_blocked' || e.code === 'missing_key')) {
-    throw e;
-   }
-   if (isAntigravityRateLimitError(e)) {
-    rateLimitCount++;
-    lastRateLimitErr =
-     e instanceof AntigravityError
-      ? e
-      : new AntigravityError(e instanceof Error ? e.message : 'Agent 触发限流', 429, 'rate_limited');
-    if (e instanceof AntigravityError && e.rawDetail?.startsWith('local_d1_limit')) {
-     break;
-    }
-    continue;
-   }
-   nonRateLimitErr = e;
-  }
- }
-
- if (triedCount > 0 && rateLimitCount === triedCount && lastRateLimitErr) {
-  if (!lastRateLimitErr.rawDetail?.startsWith('local_d1_limit')) {
-   await markAntigravityAgentRateLimited(lastRateLimitErr.rawDetail || lastRateLimitErr.message);
-  }
-  throw lastRateLimitErr;
- }
- throw nonRateLimitErr instanceof Error
-  ? nonRateLimitErr
-  : new AntigravityError('启动 Antigravity Agent 失败，请重试。', 502, 'agent_error');
-}
-
 async function persistCompletedStage1(opts: {
  userId: string;
  recordId: string;
  freshRec: { title: string; subtitle: string; interactionId?: string; createdAt?: number; payload: StoredJdRecordPayload };
  hashHex: string;
- interactionId?: string;
  modelLabel: string;
  rawText: string;
  thoughts: string;
- usage?: AntigravityUsage;
+ usage?: AiTokenUsage;
+ writeCache?: boolean;
 }): Promise<Record<string, unknown> | null> {
  const s1Rep = parseAndEnrichJdReport(opts.rawText);
  if (!s1Rep || (!s1Rep.roadmap.length && !s1Rep.dimensions.length)) return null;
@@ -261,19 +175,21 @@ async function persistCompletedStage1(opts: {
  const rawJsonText = extracted.jsonRaw || opts.rawText;
  const cleanThoughts = (opts.thoughts || extracted.thoughts || '').trim();
  const s1CacheKey = stage1CacheKeyOf(opts.hashHex);
- await writePromptCache(
-  s1CacheKey,
-  'jd-stage1',
-  opts.modelLabel,
-  {
-   report: s1Rep,
-   rawText: rawJsonText,
-   thoughts: cleanThoughts,
-   model: opts.modelLabel,
-   usage: opts.usage,
-  } satisfies CachedStage1Payload,
-  7 * 24 * 3600_000,
- );
+ if (opts.writeCache !== false) {
+  await writePromptCache(
+   s1CacheKey,
+   'jd-stage1',
+   opts.modelLabel,
+   {
+    report: s1Rep,
+    rawText: rawJsonText,
+    thoughts: cleanThoughts,
+    model: opts.modelLabel,
+    usage: opts.usage,
+   } satisfies CachedStage1Payload,
+   7 * 24 * 3600_000,
+  );
+ }
  await saveAiInterviewRecord({
   id: opts.recordId,
   userId: opts.userId,
@@ -318,11 +234,11 @@ async function persistCompletedPhase(opts: {
  s1Rep: JdResearchReport;
  hashHex: string;
  phaseIndex: number;
- interactionId?: string;
  modelLabel: string;
  rawText: string;
  thoughts: string;
- usage?: AntigravityUsage;
+ usage?: AiTokenUsage;
+ writeCache?: boolean;
 }): Promise<Record<string, unknown> | null> {
  const generated = parsePhaseQuizzes(opts.rawText, opts.phaseIndex);
  if (generated.length < 4) return null;
@@ -332,19 +248,21 @@ async function persistCompletedPhase(opts: {
  const reused = getReusedQuizzesForPhase(opts.s1Rep, opts.phaseIndex);
  const quizzes = combinePhaseQuizzes(reused, generated, opts.phaseIndex);
  const phaseKey = phaseCacheKeyOf(opts.hashHex, opts.phaseIndex);
- await writePromptCache(
-  phaseKey,
-  'jd-phase',
-  opts.modelLabel,
-  {
-   quizzes,
-   rawText: rawJsonText,
-   thoughts: cleanThoughts,
-   model: opts.modelLabel,
-   usage: opts.usage,
-  } satisfies CachedPhasePayload,
-  7 * 24 * 3600_000,
- );
+ if (opts.writeCache !== false) {
+  await writePromptCache(
+   phaseKey,
+   'jd-phase',
+   opts.modelLabel,
+   {
+    quizzes,
+    rawText: rawJsonText,
+    thoughts: cleanThoughts,
+    model: opts.modelLabel,
+    usage: opts.usage,
+   } satisfies CachedPhasePayload,
+   7 * 24 * 3600_000,
+  );
+ }
  const updatedPartial: JdResearchReport = {
   ...opts.s1Rep,
   roadmap: opts.s1Rep.roadmap.map((st, idx) => (idx === opts.phaseIndex ? { ...st, quizzes } : st)),
@@ -383,11 +301,11 @@ async function persistCompletedQuestions(opts: {
  freshRec: { title: string; subtitle: string; interactionId?: string; createdAt?: number; payload: StoredJdRecordPayload };
  s1Rep: JdResearchReport;
  hashHex: string;
- interactionId?: string;
  modelLabel: string;
  rawText: string;
  thoughts: string;
- usage?: AntigravityUsage;
+ usage?: AiTokenUsage;
+ writeCache?: boolean;
 }): Promise<Record<string, unknown> | null> {
  const mergedQs = mergeStage1AndStage2Report(opts.s1Rep, opts.rawText).questions;
  if (!mergedQs.length) return null;
@@ -395,19 +313,21 @@ async function persistCompletedQuestions(opts: {
  const rawJsonText = extracted.jsonRaw || opts.rawText;
  const cleanThoughts = (opts.thoughts || extracted.thoughts || '').trim();
  const qKey = questionsCacheKeyOf(opts.hashHex);
- await writePromptCache(
-  qKey,
-  'jd-questions',
-  opts.modelLabel,
-  {
-   questions: mergedQs,
-   rawText: rawJsonText,
-   thoughts: cleanThoughts,
-   model: opts.modelLabel,
-   usage: opts.usage,
-  } satisfies CachedQuestionsPayload,
-  7 * 24 * 3600_000,
- );
+ if (opts.writeCache !== false) {
+  await writePromptCache(
+   qKey,
+   'jd-questions',
+   opts.modelLabel,
+   {
+    questions: mergedQs,
+    rawText: rawJsonText,
+    thoughts: cleanThoughts,
+    model: opts.modelLabel,
+    usage: opts.usage,
+   } satisfies CachedQuestionsPayload,
+   7 * 24 * 3600_000,
+  );
+ }
  const updatedPartial: JdResearchReport = {
   ...opts.s1Rep,
   questions: mergedQs,
@@ -511,9 +431,6 @@ function createJdStepNdjsonBridge(opts: {
  };
 }
 
-// Defaults exclusively to the Antigravity Managed Agent (`background: true` + resumable `last_event_id`
-// SSE slices with polling fallback + per-step D1 checkpointing), and switches a step to DeepSeek
-// V4.1 Flash ONLY when Antigravity Agent hits rate limiting (429 / quota / resource_exhausted).
 export async function POST(req: Request) {
  try {
   assertSameOrigin(req);
@@ -535,16 +452,16 @@ export async function POST(req: Request) {
   const rawAction = typeof body.action === 'string' ? body.action.trim() : 'start';
   const action =
    rawAction === 'start_step' ||
-   rawAction === 'watch' ||
    rawAction === 'deepseek_step' ||
+   rawAction === 'model_step' ||
    rawAction === 'finalize' ||
    rawAction === 'fail'
     ? rawAction
     : 'start';
-  const geminiProxy = body.geminiProxy !== false;
   const bypassCache = body.bypassCache === true;
+  const reqModel = parseRequestedDeepModel(body.model);
 
-  // ---- Action 1: start (returns full/stage1 cache hit immediately, or starts background Stage 1 Agent) ----
+  // ---- Action 1: start (returns full/stage1 cache hit immediately, or prepares v3-steps run) ----
   if (action === 'start') {
    await rateLimit('jd-research:' + user.id, 30);
 
@@ -557,7 +474,6 @@ export async function POST(req: Request) {
     .slice(0, 4);
    const existingRecordId =
     typeof body.recordId === 'string' && body.recordId.startsWith('jdr-') ? body.recordId.trim().slice(0, 80) : '';
-   const attemptOffset = Number.isFinite(Number(body.attempt)) ? Math.max(0, Math.floor(Number(body.attempt))) : 0;
 
    const parts: string[] = [];
    if (rawSource) parts.push(rawSource);
@@ -566,7 +482,7 @@ export async function POST(req: Request) {
     if (fromUrl) parts.push(fromUrl);
    }
    if (images.length) {
-    const fromImg = await extractJdFromImages(images, geminiProxy, true);
+    const fromImg = await extractJdFromImages(images);
     if (fromImg) parts.push(fromImg);
    }
    const source = parts.join('\n\n').slice(0, 14_000).trim();
@@ -578,6 +494,7 @@ export async function POST(req: Request) {
    const stage1CacheKey = stage1CacheKeyOf(hashHex);
    const recordId = existingRecordId || 'jdr-' + crypto.randomUUID();
    const initialTitle = draftTitle(source, kind);
+   const modelLabel = resolveDeepModelLabel(reqModel);
 
    const existingRec = existingRecordId
     ? await getAiInterviewRecord<StoredJdRecordPayload>(user.id, existingRecordId)
@@ -607,7 +524,6 @@ export async function POST(req: Request) {
 
    const startTimestamp = existingRec?.payload?.startedAt || Date.now();
 
-   // 1a. Check full-report D1 cache (0 tokens, instant response) — require every roadmap phase >= 4 quizzes & questions > 0
    if (!bypassCache) {
     const hit = await readPromptCache<CachedJdPayload>(cacheKey);
     if (
@@ -617,7 +533,7 @@ export async function POST(req: Request) {
      hit.payload.report.questions.length > 0
     ) {
      const rep = hit.payload.report;
-     const hitModel = hit.payload.model || hit.model || ANTIGRAVITY_AGENT_ID;
+     const hitModel = hit.payload.model || hit.model || modelLabel;
      const stored: StoredJdRecordPayload = {
       kind,
       source,
@@ -668,12 +584,11 @@ export async function POST(req: Request) {
     }
    }
 
-   // 1b. Check Stage 1 D1 checkpoint (`prompt_cache` or record's existing `partialReport`)
    let s1Rep: JdResearchReport | null = null;
    let s1RawText = '';
    let s1Thoughts = '';
-   let s1Model = antigravityModelLabel();
-   let s1Usage: AntigravityUsage | undefined;
+   let s1Model = modelLabel;
+   let s1Usage: AiTokenUsage | undefined;
 
    if (!bypassCache) {
     const s1Hit = await readPromptCache<CachedStage1Payload>(stage1CacheKey);
@@ -681,13 +596,13 @@ export async function POST(req: Request) {
      s1Rep = s1Hit.payload.report;
      s1RawText = s1Hit.payload.rawText || '';
      s1Thoughts = s1Hit.payload.thoughts || '';
-     s1Model = s1Hit.payload.model || s1Hit.model || antigravityModelLabel();
+     s1Model = s1Hit.payload.model || s1Hit.model || modelLabel;
      s1Usage = s1Hit.payload.usage;
     } else if (existingRec?.payload?.partialReport && existingRec.payload.partialReport.roadmap.length > 0) {
      s1Rep = existingRec.payload.partialReport;
      s1RawText = existingRec.payload.stage1RawText || '';
      s1Thoughts = existingRec.payload.stage1Thoughts || '';
-     s1Model = existingRec.payload.model || antigravityModelLabel();
+     s1Model = existingRec.payload.model || modelLabel;
      s1Usage = existingRec.payload.stage1Usage;
     }
    }
@@ -743,117 +658,51 @@ export async function POST(req: Request) {
     );
    }
 
-   // 1c. Start a new background Antigravity Agent interaction for Stage 1
-   try {
-    const { started, modelLabel, attemptIdx } = await startAntigravityWithModelFallback({
-     systemInstruction: getJdResearchStage1SystemPrompt(),
-     input: buildJdStage1Input({ kind, source }),
-     maxTotalTokens: 48_000,
-     attemptOffset,
-     geminiProxy,
-     signal: req.signal,
-    });
+   await saveAiInterviewRecord({
+    id: recordId,
+    userId: user.id,
+    kind: 'jd-research',
+    title: existingRec?.title || initialTitle,
+    subtitle: existingRec?.subtitle || '',
+    status: 'running',
+    interactionId: undefined,
+    payload: {
+     kind,
+     source,
+     hashHex,
+     pipeline: 'v3-steps',
+     startedAt: startTimestamp,
+     dailyDayKey: reservedDailyDay || undefined,
+     dailyRefunded: false,
+     model: modelLabel,
+     cacheKey,
+     stage1CacheKey,
+     stage: 1,
+     stage1Cached: false,
+     partialReport: existingRec?.payload?.partialReport ?? null,
+     stage1RawText: '',
+     stage1Thoughts: '',
+     report: null,
+     rawText: '',
+     thoughts: '',
+     imported: existingRec?.payload?.imported ?? null,
+    },
+    createdAt: existingRec?.createdAt,
+   });
 
-    await saveAiInterviewRecord({
-     id: recordId,
-     userId: user.id,
-     kind: 'jd-research',
-     title: initialTitle,
-     subtitle: '',
-     status: 'running',
-     interactionId: undefined,
-     payload: {
-      kind,
-      source,
-      hashHex,
-      pipeline: 'v3-steps',
-      startedAt: startTimestamp,
-      dailyDayKey: reservedDailyDay || undefined,
-      dailyRefunded: false,
-      model: modelLabel,
-      cacheKey,
-      stage1CacheKey,
-      stage: 1,
-      stage1Cached: false,
-      partialReport: existingRec?.payload?.partialReport ?? null,
-      stage1RawText: '',
-      stage1Thoughts: '',
-      report: null,
-      rawText: '',
-      thoughts: '',
-      imported: existingRec?.payload?.imported ?? null,
-     },
-     createdAt: existingRec?.createdAt,
-    });
-
-    return Response.json(
-     {
-      ok: true,
-      status: 'started',
-      step: 'stage1',
-      recordId,
-      hashHex,
-      title: initialTitle,
-      interactionId: started.id,
-      model: modelLabel,
-      attemptUsed: attemptIdx,
-      extractedSource: source,
-     },
-     { headers: noCache },
-    );
-   } catch (startErr) {
-    if (isAntigravityRateLimitError(startErr)) {
-     await saveAiInterviewRecord({
-      id: recordId,
-      userId: user.id,
-      kind: 'jd-research',
-      title: existingRec?.title || initialTitle,
-      subtitle: existingRec?.subtitle || '',
-      status: 'running',
-      interactionId: undefined,
-      payload: {
-       kind,
-       source,
-       hashHex,
-       pipeline: 'v3-steps',
-       startedAt: startTimestamp,
-       dailyDayKey: reservedDailyDay || undefined,
-       dailyRefunded: false,
-       model: DEEPSEEK_FALLBACK_LABEL,
-       cacheKey,
-       stage1CacheKey,
-       stage: 1,
-       stage1Cached: false,
-       partialReport: existingRec?.payload?.partialReport ?? null,
-       stage1RawText: '',
-       stage1Thoughts: '',
-       report: null,
-       rawText: '',
-       thoughts: '',
-       imported: existingRec?.payload?.imported ?? null,
-      },
-      createdAt: existingRec?.createdAt,
-     });
-     return Response.json(
-      {
-       ok: true,
-       status: 'rate_limited_fallback',
-       step: 'stage1',
-       recordId,
-       hashHex,
-       title: existingRec?.title || initialTitle,
-       model: DEEPSEEK_FALLBACK_LABEL,
-       reason: 'Antigravity Agent 触发限流，切换 DeepSeek 接力',
-       extractedSource: source,
-      },
-      { headers: noCache },
-     );
-    }
-    if (!req.signal?.aborted && !resumingToday && reservedDailyDay && !isAdmin) {
-     await refundDailyJdQuota(user.id, reservedDailyDay);
-    }
-    throw startErr;
-   }
+   return Response.json(
+    {
+     ok: true,
+     status: 'use_model_step',
+     step: 'stage1',
+     recordId,
+     hashHex,
+     title: existingRec?.title || initialTitle,
+     model: modelLabel,
+     extractedSource: source,
+    },
+    { headers: noCache },
+   );
   }
 
   // ---- Action 2: start_step (Stage 2 per-phase quizzes or interview questions, checkpoint-aware) ----
@@ -862,7 +711,6 @@ export async function POST(req: Request) {
    const recordId = typeof body.recordId === 'string' ? body.recordId.trim().slice(0, 80) : '';
    const step = body.step === 'questions' ? 'questions' : 'phase';
    const phaseIndex = Number.isInteger(Number(body.phaseIndex)) ? Number(body.phaseIndex) : 0;
-   const attemptOffset = Number.isFinite(Number(body.attempt)) ? Math.max(0, Math.floor(Number(body.attempt))) : 0;
 
    if (!recordId) throw new AuthError('缺少任务标识。', 400);
    const rec = await getAiInterviewRecord<StoredJdRecordPayload>(user.id, recordId);
@@ -872,6 +720,7 @@ export async function POST(req: Request) {
    const kind: JdInputKind = rec.payload.kind || 'jd';
    const source = rec.payload.source || '';
    const hashHex = rec.payload.hashHex || (await sha256Hex([kind, normalizeJdSourceForCache(source)]));
+   const modelLabel = resolveDeepModelLabel(reqModel);
 
    if (step === 'phase') {
     if (phaseIndex < 0 || phaseIndex >= s1Rep.roadmap.length) {
@@ -888,7 +737,7 @@ export async function POST(req: Request) {
         step: 'phase',
         phaseIndex,
         quizCount: hit.payload.quizzes.length,
-        model: hit.payload.model || hit.model || antigravityModelLabel(),
+        model: hit.payload.model || hit.model || modelLabel,
        },
        { headers: noCache },
       );
@@ -898,12 +747,12 @@ export async function POST(req: Request) {
       await writePromptCache(
        phaseKey,
        'jd-phase',
-       rec.payload.model || antigravityModelLabel(),
+       rec.payload.model || modelLabel,
        {
         quizzes: existingQuizzes,
         rawText: '',
         thoughts: '',
-        model: rec.payload.model || antigravityModelLabel(),
+        model: rec.payload.model || modelLabel,
        } satisfies CachedPhasePayload,
        7 * 24 * 3600_000,
       );
@@ -914,54 +763,25 @@ export async function POST(req: Request) {
         step: 'phase',
         phaseIndex,
         quizCount: existingQuizzes.length,
-        model: rec.payload.model || antigravityModelLabel(),
+        model: rec.payload.model || modelLabel,
        },
        { headers: noCache },
       );
      }
     }
 
-    const reusedQuizzes = getReusedQuizzesForPhase(s1Rep, phaseIndex);
-    try {
-     const { started, modelLabel, attemptIdx } = await startAntigravityWithModelFallback({
-      systemInstruction: getJdResearchPhaseQuizzesSystemPrompt(),
-      input: buildJdPhaseQuizzesInput({ kind, source, stage1: s1Rep, phaseIndex, reusedQuizzes }),
-      maxTotalTokens: 56_000,
-      attemptOffset,
-      geminiProxy,
-      signal: req.signal,
-     });
-     return Response.json(
-      {
-       ok: true,
-       status: 'started',
-       step: 'phase',
-       phaseIndex,
-       interactionId: started.id,
-       model: modelLabel,
-       attemptUsed: attemptIdx,
-      },
-      { headers: noCache },
-     );
-    } catch (e) {
-     if (isAntigravityRateLimitError(e)) {
-      return Response.json(
-       {
-        ok: true,
-        status: 'rate_limited_fallback',
-        step: 'phase',
-        phaseIndex,
-        model: DEEPSEEK_FALLBACK_LABEL,
-        reason: 'Antigravity Agent 触发限流，切换 DeepSeek 接力',
-       },
-       { headers: noCache },
-      );
-     }
-     throw e;
-    }
+    return Response.json(
+     {
+      ok: true,
+      status: 'use_model_step',
+      step: 'phase',
+      phaseIndex,
+      model: modelLabel,
+     },
+     { headers: noCache },
+    );
    }
 
-   // step === 'questions'
    const qKey = questionsCacheKeyOf(hashHex);
    if (!bypassCache) {
     const hit = await readPromptCache<CachedQuestionsPayload>(qKey);
@@ -973,7 +793,7 @@ export async function POST(req: Request) {
        step: 'questions',
        questionCount: hit.payload.questions.length,
        qTitles: hit.payload.questions.map(q => q.title),
-       model: hit.payload.model || hit.model || antigravityModelLabel(),
+       model: hit.payload.model || hit.model || modelLabel,
       },
       { headers: noCache },
      );
@@ -982,12 +802,12 @@ export async function POST(req: Request) {
      await writePromptCache(
       qKey,
       'jd-questions',
-      rec.payload.model || antigravityModelLabel(),
+      rec.payload.model || modelLabel,
       {
        questions: s1Rep.questions,
        rawText: '',
        thoughts: '',
-       model: rec.payload.model || antigravityModelLabel(),
+       model: rec.payload.model || modelLabel,
       } satisfies CachedQuestionsPayload,
       7 * 24 * 3600_000,
      );
@@ -998,281 +818,38 @@ export async function POST(req: Request) {
        step: 'questions',
        questionCount: s1Rep.questions.length,
        qTitles: s1Rep.questions.map(q => q.title),
-       model: rec.payload.model || antigravityModelLabel(),
+       model: rec.payload.model || modelLabel,
       },
       { headers: noCache },
      );
     }
    }
 
-   try {
-    const { started, modelLabel, attemptIdx } = await startAntigravityWithModelFallback({
-     systemInstruction: getJdResearchStage2QuestionsSystemPrompt(),
-     input: buildJdStage2QuestionsInput({ kind, source, stage1: s1Rep }),
-     maxTotalTokens: 56_000,
-     attemptOffset,
-     geminiProxy,
-     signal: req.signal,
-    });
-    return Response.json(
-     {
-      ok: true,
-      status: 'started',
-      step: 'questions',
-      interactionId: started.id,
-      model: modelLabel,
-      attemptUsed: attemptIdx,
-     },
-     { headers: noCache },
-    );
-   } catch (e) {
-    if (isAntigravityRateLimitError(e)) {
-     return Response.json(
-      {
-       ok: true,
-       status: 'rate_limited_fallback',
-       step: 'questions',
-       model: DEEPSEEK_FALLBACK_LABEL,
-       reason: 'Antigravity Agent 触发限流，切换 DeepSeek 接力',
-      },
-      { headers: noCache },
-     );
-    }
-    throw e;
-   }
+   return Response.json(
+    {
+     ok: true,
+     status: 'use_model_step',
+     step: 'questions',
+     model: modelLabel,
+    },
+    { headers: noCache },
+   );
   }
 
-  // ---- Action 3: watch (NDJSON 40s resumable SSE slice using background interactionId + lastEventId) ----
-  if (action === 'watch') {
-   await rateLimit('jd-research-watch:' + user.id, 300);
-   const recordId = typeof body.recordId === 'string' ? body.recordId.trim().slice(0, 80) : '';
-   const interactionId = typeof body.interactionId === 'string' ? body.interactionId.trim().slice(0, 180) : '';
-   const lastEventIdIn = typeof body.lastEventId === 'string' ? body.lastEventId.trim().slice(0, 200) : '';
-   const step = body.step === 'phase' ? 'phase' : body.step === 'questions' ? 'questions' : 'stage1';
-   const phaseIndex = Number.isInteger(Number(body.phaseIndex)) ? Number(body.phaseIndex) : 0;
-   const modelLabel = typeof body.model === 'string' && body.model.trim() ? body.model.trim().slice(0, 60) : antigravityModelLabel();
-
-   if (!recordId || !interactionId) throw new AuthError('缺少监听参数。', 400);
-   const rec = await getAiInterviewRecord<StoredJdRecordPayload>(user.id, recordId);
-   if (!rec) throw new AuthError('未找到调研记录。', 404);
-
-   const kind: JdInputKind = rec.payload.kind || 'jd';
-   const source = rec.payload.source || '';
-   const hashHex = rec.payload.hashHex || (await sha256Hex([kind, normalizeJdSourceForCache(source)]));
-
-   const enc = new TextEncoder();
-   let closed = false;
-   const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-     let lastSendAt = Date.now();
-     const send = (ev: Record<string, unknown>) => {
-      if (closed) return;
-      lastSendAt = Date.now();
-      try {
-       controller.enqueue(enc.encode(JSON.stringify(ev) + '\n'));
-      } catch {
-       closed = true;
-      }
-     };
-
-     let activeStep = 'thinking';
-     const pingTimer = setInterval(() => {
-      if (closed) return;
-      if (Date.now() - lastSendAt >= 2400) {
-       send({ type: 'ping', step: activeStep });
-      }
-     }, 2500);
-
-     try {
-      send({
-       type: 'connected',
-       recordId,
-       interactionId,
-       step,
-       phaseIndex: step === 'phase' ? phaseIndex : undefined,
-       model: modelLabel,
-      });
-
-      const bridge = createJdStepNdjsonBridge({
-       step,
-       phaseIndex,
-       send,
-       onActiveStep: st => {
-        activeStep = st;
-       },
-      });
-
-      const slice = await streamAntigravitySlice({
-       interactionId,
-       lastEventId: lastEventIdIn,
-       maxSliceMs: 35_000,
-       geminiProxy,
-       signal: req.signal,
-       onStep: st => {
-        activeStep = st;
-        send({ type: 'step', stepType: st });
-       },
-       onKeepAlive: () => {
-        send({ type: 'ping', step: activeStep });
-       },
-       onThoughtDelta: td => {
-        activeStep = 'thinking';
-        send({ type: 'thought', stage: step === 'stage1' ? 1 : 2, text: td });
-       },
-       onTextDelta: td => {
-        bridge.pushText(td);
-       },
-       onTextReset: () => {
-        bridge.reset();
-       },
-      });
-      bridge.flush();
-
-      if (req.signal?.aborted) return;
-
-      if (slice.status === 'in_progress') {
-       send({
-        type: 'continue',
-        interactionId,
-        lastEventId: slice.lastEventId,
-        hadProgress: Boolean(slice.hadProgress),
-       });
-       return;
-      }
-
-      if (slice.status === 'failed' || slice.status === 'cancelled') {
-       send({
-        type: 'retry_step',
-        step,
-        phaseIndex: step === 'phase' ? phaseIndex : undefined,
-        reason: slice.error || `Antigravity Agent 状态异常（${slice.status}）`,
-        rateLimited: Boolean(slice.rateLimited),
-       });
-       return;
-      }
-
-      // Completed! Parse, validate, and IMMEDIATELY persist checkpoint to D1 prompt_cache + record!
-      const freshRec = (await getAiInterviewRecord<StoredJdRecordPayload>(user.id, recordId)) || rec;
-
-      if (step === 'stage1') {
-       const doneEv = await persistCompletedStage1({
-        userId: user.id,
-        recordId,
-        freshRec,
-        hashHex,
-        interactionId,
-        modelLabel,
-        rawText: slice.text,
-        thoughts: slice.thoughts,
-        usage: slice.usage,
-       });
-       if (!doneEv) {
-        send({ type: 'retry_step', step: 'stage1', reason: '阶段一 JSON 解析不完整，自动重试' });
-        return;
-       }
-       send(doneEv);
-       return;
-      }
-
-      const s1Rep = freshRec.payload?.partialReport;
-      if (!s1Rep) {
-       send({ type: 'retry_step', step, reason: '缺少阶段一结果，请重试' });
-       return;
-      }
-
-      if (step === 'phase') {
-       const doneEv = await persistCompletedPhase({
-        userId: user.id,
-        recordId,
-        freshRec,
-        s1Rep,
-        hashHex,
-        phaseIndex,
-        interactionId,
-        modelLabel,
-        rawText: slice.text,
-        thoughts: slice.thoughts,
-        usage: slice.usage,
-       });
-       if (!doneEv) {
-        send({ type: 'retry_step', step: 'phase', phaseIndex, reason: '路径题库解析不完整，自动切换模型重试' });
-        return;
-       }
-       send(doneEv);
-       return;
-      }
-
-      const doneEv = await persistCompletedQuestions({
-       userId: user.id,
-       recordId,
-       freshRec,
-       s1Rep,
-       hashHex,
-       interactionId,
-       modelLabel,
-       rawText: slice.text,
-       thoughts: slice.thoughts,
-       usage: slice.usage,
-      });
-      if (!doneEv) {
-       send({ type: 'retry_step', step: 'questions', reason: '面试题库解析不完整，自动切换模型重试' });
-       return;
-      }
-      send(doneEv);
-     } catch (e) {
-      if (!req.signal?.aborted) {
-       send({
-        type: 'retry_step',
-        step,
-        phaseIndex: step === 'phase' ? phaseIndex : undefined,
-        reason: e instanceof Error ? e.message : '网络波动，自动重试',
-        rateLimited: isAntigravityRateLimitError(e),
-       });
-      }
-     } finally {
-      clearInterval(pingTimer);
-      if (!closed) {
-       closed = true;
-       try {
-        controller.close();
-       } catch {}
-      }
-     }
-    },
-    cancel() {
-     closed = true;
-    },
-   });
-
-   return new Response(stream, {
-    headers: {
-     'Content-Type': 'application/x-ndjson; charset=utf-8',
-     'Cache-Control': 'no-store, no-transform',
-     'X-Accel-Buffering': 'no',
-     'X-Content-Type-Options': 'nosniff',
-    },
-   });
-  }
-
-  // ---- Action 4: deepseek_step (NDJSON stream — ONLY triggered when Antigravity Agent hits 429/quota) ----
-  if (action === 'deepseek_step') {
+  // ---- Action 3: deepseek_step / model_step (NDJSON stream using selected site DeepSeek or custom API) ----
+  if (action === 'deepseek_step' || action === 'model_step') {
    await rateLimit('jd-research-ds:' + user.id, 90);
    const recordId = typeof body.recordId === 'string' ? body.recordId.trim().slice(0, 80) : '';
    const step = body.step === 'phase' ? 'phase' : body.step === 'questions' ? 'questions' : 'stage1';
    const phaseIndex = Number.isInteger(Number(body.phaseIndex)) ? Number(body.phaseIndex) : 0;
-   const markAgentRateLimitedFlag = body.markAgentRateLimited === true;
 
    if (!recordId) throw new AuthError('缺少任务标识。', 400);
-   if (markAgentRateLimitedFlag) {
-    await markAntigravityAgentRateLimited('watch_all_models_429');
-   }
    const rec = await getAiInterviewRecord<StoredJdRecordPayload>(user.id, recordId);
    if (!rec) throw new AuthError('未找到调研记录。', 404);
 
    const kind: JdInputKind = rec.payload.kind || 'jd';
    const source = rec.payload.source || '';
    const hashHex = rec.payload.hashHex || (await sha256Hex([kind, normalizeJdSourceForCache(source)]));
-   const modelLabel = DEEPSEEK_FALLBACK_LABEL;
 
    if (step !== 'stage1' && !rec.payload?.partialReport) {
     throw new AuthError('阶段一数据未就绪，请重试。', 404);
@@ -1281,6 +858,8 @@ export async function POST(req: Request) {
     throw new AuthError('路径索引超出范围。', 400);
    }
 
+   const exec = await prepareDeepModelExecution(req, user, body.model, body.thinkingLevel, { chargeSiteQuota: false });
+
    const enc = new TextEncoder();
    let closed = false;
    const stream = new ReadableStream<Uint8Array>({
@@ -1310,7 +889,7 @@ export async function POST(req: Request) {
        recordId,
        step,
        phaseIndex: step === 'phase' ? phaseIndex : undefined,
-       model: modelLabel,
+       model: exec.displayLabel,
       });
 
       if (!bypassCache) {
@@ -1321,7 +900,7 @@ export async function POST(req: Request) {
           type: 'stage1',
           recordId,
           stage1Cached: true,
-          model: s1Hit.payload.model || s1Hit.model || modelLabel,
+          model: s1Hit.payload.model || s1Hit.model || exec.displayLabel,
           partialReport: s1Hit.payload.report,
           thoughts: s1Hit.payload.thoughts || '',
           usage: s1Hit.payload.usage,
@@ -1337,7 +916,7 @@ export async function POST(req: Request) {
           phaseIndex,
           cached: true,
           quizCount: pHit.payload.quizzes.length,
-          model: pHit.payload.model || pHit.model || modelLabel,
+          model: pHit.payload.model || pHit.model || exec.displayLabel,
           thoughts: pHit.payload.thoughts || '',
           usage: pHit.payload.usage,
          });
@@ -1351,7 +930,7 @@ export async function POST(req: Request) {
           cached: true,
           questionCount: qHit.payload.questions.length,
           qTitles: qHit.payload.questions.map(q => q.title),
-          model: qHit.payload.model || qHit.model || modelLabel,
+          model: qHit.payload.model || qHit.model || exec.displayLabel,
           thoughts: qHit.payload.thoughts || '',
           usage: qHit.payload.usage,
          });
@@ -1359,6 +938,8 @@ export async function POST(req: Request) {
         }
        }
       }
+
+      const charged = await prepareDeepModelExecution(req, user, body.model, body.thinkingLevel);
 
       const freshRec = (await getAiInterviewRecord<StoredJdRecordPayload>(user.id, recordId)) || rec;
       const s1Rep = freshRec.payload?.partialReport;
@@ -1397,22 +978,30 @@ export async function POST(req: Request) {
        validate = text => mergeStage1AndStage2Report(s1Rep!, text).questions.length > 0;
       }
 
-      const dsOut = await runDeepSeekJdFallbackStream({
-       systemPrompt,
-       userInput,
-       maxTokens: step === 'stage1' ? 10240 : 12288,
-       thinkingLevel: 'low',
-       signal: req.signal,
-       validate,
-       onModel: m => send({ type: 'step', stepType: 'thinking', model: m }),
-       onThoughtDelta: td => {
-        activeStep = 'thinking';
-        send({ type: 'thought', stage: step === 'stage1' ? 1 : 2, text: td });
-       },
-       onTextDelta: td => bridge.pushText(td),
-       onReset: () => bridge.reset(),
-      });
-      bridge.flush();
+      let dsOut: Awaited<ReturnType<typeof runSelectedDeepModelStream>>;
+      try {
+       dsOut = await runSelectedDeepModelStream({
+        model: charged.model,
+        thinkingLevel: charged.thinkingLevel,
+        custom: charged.custom,
+        systemPrompt,
+        userInput,
+        maxTokens: step === 'stage1' ? 10240 : 12288,
+        signal: req.signal,
+        validate,
+        onModel: m => send({ type: 'step', stepType: 'thinking', model: m }),
+        onThoughtDelta: td => {
+         activeStep = 'thinking';
+         send({ type: 'thought', stage: step === 'stage1' ? 1 : 2, text: td });
+        },
+        onTextDelta: td => bridge.pushText(td),
+        onReset: () => bridge.reset(),
+       });
+       bridge.flush();
+      } catch (err) {
+       await charged.refund();
+       throw err;
+      }
 
       if (req.signal?.aborted) return;
 
@@ -1428,6 +1017,7 @@ export async function POST(req: Request) {
         rawText: dsOut.text,
         thoughts: dsOut.thoughts,
         usage: dsOut.usage,
+        writeCache: !charged.custom,
        });
       } else if (step === 'phase') {
        doneEv = await persistCompletedPhase({
@@ -1441,6 +1031,7 @@ export async function POST(req: Request) {
         rawText: dsOut.text,
         thoughts: dsOut.thoughts,
         usage: dsOut.usage,
+        writeCache: !charged.custom,
        });
       } else {
        doneEv = await persistCompletedQuestions({
@@ -1453,15 +1044,17 @@ export async function POST(req: Request) {
         rawText: dsOut.text,
         thoughts: dsOut.thoughts,
         usage: dsOut.usage,
+        writeCache: !charged.custom,
        });
       }
 
       if (!doneEv) {
+       await charged.refund();
        send({
         type: 'retry_step',
         step,
         phaseIndex: step === 'phase' ? phaseIndex : undefined,
-        reason: 'DeepSeek 兜底输出解析不完整，重试中',
+        reason: '模型输出解析不完整，重试中',
        });
        return;
       }
@@ -1472,7 +1065,7 @@ export async function POST(req: Request) {
         type: 'retry_step',
         step,
         phaseIndex: step === 'phase' ? phaseIndex : undefined,
-        reason: e instanceof Error ? e.message : 'DeepSeek 兜底网络波动，自动重试',
+        reason: e instanceof Error ? e.message : '网络波动，自动重试',
        });
       }
      } finally {
@@ -1500,7 +1093,7 @@ export async function POST(req: Request) {
    });
   }
 
-  // ---- Action 5: finalize (aggregates all saved D1 checkpoints into final completed report) ----
+  // ---- Action 4: finalize (aggregates all saved D1 checkpoints into final completed report) ----
   if (action === 'finalize') {
    const recordId = typeof body.recordId === 'string' ? body.recordId.trim().slice(0, 80) : '';
    if (!recordId) throw new AuthError('缺少任务标识。', 400);
@@ -1566,13 +1159,13 @@ export async function POST(req: Request) {
     if (m) modelSet.add(m);
    }
    if (qHit?.payload?.model || qHit?.model) modelSet.add(qHit?.payload?.model || qHit?.model || '');
-   const combinedModel = [...modelSet].filter(Boolean).join(' / ') || antigravityModelLabel();
+   const combinedModel = [...modelSet].filter(Boolean).join(' / ') || resolveDeepModelLabel(reqModel);
 
-   let totalUsage: AntigravityUsage | undefined = rec.payload.stage1Usage;
+   let totalUsage: AiTokenUsage | undefined = rec.payload.stage1Usage;
    for (const h of phaseHits) {
-    if (h?.payload?.usage) totalUsage = combineUsage(totalUsage, h.payload.usage);
+    if (h?.payload?.usage) totalUsage = combineTokenUsage(totalUsage, h.payload.usage);
    }
-   if (qHit?.payload?.usage) totalUsage = combineUsage(totalUsage, qHit.payload.usage);
+   if (qHit?.payload?.usage) totalUsage = combineTokenUsage(totalUsage, qHit.payload.usage);
 
    const s1Thoughts = rec.payload.stage1Thoughts || '';
    const s2ThoughtParts: string[] = [];
@@ -1678,7 +1271,7 @@ export async function POST(req: Request) {
    );
   }
 
-  // ---- Action 6: fail (refunds daily quota on unrecoverable system error, preserves all saved checkpoints) ----
+  // ---- Action 5: fail (refunds daily quota on unrecoverable system error, preserves all saved checkpoints) ----
   const recordId = typeof body.recordId === 'string' ? body.recordId.trim().slice(0, 80) : '';
   const errMsg =
    typeof body.error === 'string' && body.error.trim()
@@ -1710,7 +1303,6 @@ export async function POST(req: Request) {
   return Response.json({ ok: true }, { headers: noCache });
  } catch (e) {
   if (e instanceof AuthError) return Response.json({ error: e.message }, { status: e.status, headers: noCache });
-  if (e instanceof AntigravityError) return Response.json({ error: e.message, code: e.code }, { status: e.status, headers: noCache });
   return Response.json({ error: '深度调研服务暂时不可用，请重试。' }, { status: 503, headers: noCache });
  }
 }
@@ -1724,10 +1316,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const id = (url.searchParams.get('id') || '').trim();
   const sig = (url.searchParams.get('sig') || '').trim();
-  const ck = (url.searchParams.get('ck') || '').trim();
-  const ckSig = (url.searchParams.get('ckSig') || '').trim();
   const rid = (url.searchParams.get('rid') || '').trim();
-  const geminiProxy = url.searchParams.get('geminiProxy') !== '0';
 
   if (!id || !sig || id.length > 160) throw new AuthError('缺少任务标识。', 400);
   const prev = rid ? await getAiInterviewRecord<StoredJdRecordPayload>(user.id, rid) : null;
@@ -1739,7 +1328,6 @@ export async function GET(req: Request) {
    throw new AuthError('无权查询该调研任务。', 403);
   }
 
-  // If the record already completed (e.g. polled by another tab or background watcher), return immediately!
   if (prev?.status === 'completed' && prev.payload?.report) {
    return Response.json(
     {
@@ -1758,254 +1346,20 @@ export async function GET(req: Request) {
    );
   }
 
-  // Stepwise v3 records are orchestrated strictly by sequential client steps; never let legacy GET pollers
-  // overwrite them with a partial/single-pass result.
-  if (prev?.payload?.pipeline === 'v3-steps') {
-   return Response.json(
-    {
-     id: prev.interactionId || id,
-     recordId: rid || undefined,
-     status: prev.status === 'error' ? 'failed' : 'in_progress',
-     stage: prev.payload.stage === 2 ? 2 : 1,
-     stage1Cached: Boolean(prev.payload.stage1Cached),
-     partialReport: prev.payload.partialReport ?? null,
-     error: prev.payload.error,
-    },
-    { headers: noCache },
-   );
-  }
-
-  const activeInteractionId = prev?.interactionId || id;
-  const stage: 1 | 2 = prev?.payload?.stage === 2 ? 2 : 1;
-  const partialReport = prev?.payload?.partialReport ?? null;
-  const stage1Cached = Boolean(prev?.payload?.stage1Cached);
-
-  const polled = await pollAntigravityInteraction({ interactionId: activeInteractionId, geminiProxy });
-
-  if (polled.status === 'in_progress') {
-   const progress = inspectJdStreamProgress(stage, polled.text, partialReport, stage1Cached);
-   const combinedThoughts = [prev?.payload?.stage1Thoughts, polled.thoughts].filter(Boolean).join('\n\n');
-   return Response.json(
-    {
-     id: activeInteractionId,
-     recordId: rid || undefined,
-     status: 'in_progress',
-     stage,
-     stage1Cached,
-     partialReport,
-     progress,
-     text: polled.text,
-     thoughts: combinedThoughts,
-    },
-    { headers: noCache },
-   );
-  }
-
-  if (polled.status === 'completed') {
-   // ---- Stage 1 Completed: parse Profile + Roadmap, cache Stage 1, and transition to Stage 2 ----
-   if (stage === 1) {
-    const s1Report = parseAndEnrichJdReport(polled.text);
-    // If single-pass report already has both roadmap study quizzes and interview questions, finish directly
-    const alreadyComplete = Boolean(
-     s1Report && s1Report.questions.length > 0 && hasStructuredStudyQuizzes(s1Report),
-    );
-
-    if (!s1Report || (!s1Report.roadmap.length && !s1Report.dimensions.length)) {
-     if (rid && prev) {
-      await saveAiInterviewRecord({
-       id: rid,
-       userId: user.id,
-       kind: 'jd-research',
-       title: prev.title,
-       subtitle: prev.subtitle,
-       status: 'error',
-       interactionId: activeInteractionId,
-       payload: {
-        ...prev.payload,
-        rawText: polled.text,
-        thoughts: polled.thoughts,
-        error: '考点画像与复习路径解析失败，请点击「一键重试」重新生成。',
-       },
-       createdAt: prev.createdAt,
-      });
-     }
-     return Response.json(
-      {
-       id: activeInteractionId,
-       recordId: rid || undefined,
-       status: 'failed',
-       error: '考点画像与复习路径解析失败，请点击「一键重试」重新生成。',
-      },
-      { headers: noCache },
-     );
-    }
-
-    if (!alreadyComplete) {
-     const prevKind: JdInputKind = prev?.payload?.kind || 'jd';
-     const prevSource = prev?.payload?.source || '';
-     const s1CacheKey =
-      prev?.payload?.stage1CacheKey ||
-      (prevSource ? 'jd-s1-v2:' + (await sha256Hex([prevKind, normalizeJdSourceForCache(prevSource)])) : '');
-
-     if (s1CacheKey) {
-      await writePromptCache(
-       s1CacheKey,
-       'jd-stage1',
-       ANTIGRAVITY_AGENT_ID,
-       { report: s1Report, rawText: polled.text, thoughts: polled.thoughts, usage: polled.usage } satisfies CachedStage1Payload,
-       7 * 24 * 3600_000,
-      );
-     }
-
-     const started2 = await startAntigravityInteraction({
-      systemInstruction: getJdResearchStage2SystemPrompt(),
-      input: buildJdStage2Input({ kind: prevKind, source: prevSource, stage1: s1Report }),
-      geminiProxy,
-     });
-     const newSig = await signToken(user.id, started2.id);
-
-     if (rid) {
-      const nextPayload: StoredJdRecordPayload = {
-       kind: prevKind,
-       source: prevSource,
-       cacheKey: prev?.payload?.cacheKey || ck,
-       stage1CacheKey: s1CacheKey,
-       stage: 2,
-       stage1Cached: false,
-       partialReport: s1Report,
-       stage1RawText: polled.text,
-       stage1Thoughts: polled.thoughts,
-       stage1Usage: polled.usage,
-       report: null,
-       rawText: '',
-       thoughts: polled.thoughts,
-       imported: prev?.payload?.imported ?? null,
-      };
-      await saveAiInterviewRecord({
-       id: rid,
-       userId: user.id,
-       kind: 'jd-research',
-       title: s1Report.roleTitle || prev?.title || '深度调研报告',
-       subtitle: makeSubtitle(s1Report) || prev?.subtitle || '',
-       status: 'running',
-       interactionId: started2.id,
-       payload: nextPayload,
-       createdAt: prev?.createdAt,
-      });
-     }
-
-     return Response.json(
-      {
-       id: started2.id,
-       sig: newSig,
-       recordId: rid || undefined,
-       status: 'in_progress',
-       stage: 2,
-       stage1Cached: false,
-       partialReport: s1Report,
-       progress: inspectJdStreamProgress(2, '', s1Report, false),
-       text: '',
-       thoughts: polled.thoughts,
-      },
-      { headers: noCache },
-     );
-    }
-   }
-
-   // ---- Stage 2 (or Legacy Single-Pass) Completed: Merge Stage 1 + Stage 2 ----
-   const report = partialReport
-    ? mergeStage1AndStage2Report(partialReport, polled.text)
-    : parseAndEnrichJdReport(polled.text);
-
-   const combinedThoughts = [prev?.payload?.stage1Thoughts, polled.thoughts].filter(Boolean).join('\n\n');
-   const combinedRaw = [prev?.payload?.stage1RawText, polled.text].filter(Boolean).join('\n\n');
-   const combinedUsage = combineUsage(prev?.payload?.stage1Usage, polled.usage);
-
-   const effectiveCk = prev?.payload?.cacheKey || ck;
-   if (
-    report &&
-    (report.questions.length > 0 || hasStructuredStudyQuizzes(report)) &&
-    effectiveCk.startsWith('jd')
-   ) {
-    const canWriteCache =
-     (ckSig && ckSig === (await signToken(user.id, effectiveCk))) ||
-     Boolean(prev?.payload?.cacheKey);
-    if (canWriteCache) {
-     await writePromptCache(
-      effectiveCk,
-      'jd-research',
-      ANTIGRAVITY_AGENT_ID,
-      { report, rawText: combinedRaw, thoughts: combinedThoughts, usage: combinedUsage } satisfies CachedJdPayload,
-      7 * 24 * 3600_000,
-     );
-    }
-   }
-
-   if (rid) {
-    const merged: StoredJdRecordPayload = {
-     kind: prev?.payload?.kind || 'jd',
-     source: prev?.payload?.source || '',
-     cacheKey: effectiveCk,
-     stage1CacheKey: prev?.payload?.stage1CacheKey,
-     stage: 2,
-     cached: false,
-     stage1Cached,
-     partialReport: null,
-     report,
-     rawText: combinedRaw,
-     thoughts: combinedThoughts,
-     usage: combinedUsage,
-     imported: prev?.payload?.imported ?? null,
-    };
-    await saveAiInterviewRecord({
-     id: rid,
-     userId: user.id,
-     kind: 'jd-research',
-     title: report?.roleTitle || prev?.title || '深度调研报告',
-     subtitle: makeSubtitle(report) || prev?.subtitle || '',
-     status: report ? 'completed' : 'error',
-     interactionId: activeInteractionId,
-     payload: report ? merged : { ...merged, error: '报告结果解析不完整，可点击「一键重试」重新生成。' },
-     createdAt: prev?.createdAt,
-    });
-   }
-
-   return Response.json(
-    {
-     id: activeInteractionId,
-     recordId: rid || undefined,
-     status: 'completed',
-     cached: false,
-     stage1Cached,
-     report,
-     rawText: combinedRaw,
-     thoughts: combinedThoughts,
-     usage: combinedUsage,
-    },
-    { headers: noCache },
-   );
-  }
-
-  if ((polled.status === 'failed' || polled.status === 'cancelled') && rid) {
-   if (prev) {
-    await saveAiInterviewRecord({
-     id: rid,
-     userId: user.id,
-     kind: 'jd-research',
-     title: prev.title,
-     subtitle: prev.subtitle,
-     status: 'error',
-     interactionId: activeInteractionId,
-     payload: { ...prev.payload, error: polled.error || '调研任务中断，可点击一键重试' },
-     createdAt: prev.createdAt,
-    });
-   }
-  }
-
-  return Response.json(polled, { headers: noCache });
+  return Response.json(
+   {
+    id: prev?.interactionId || id,
+    recordId: rid || undefined,
+    status: prev?.status === 'error' ? 'failed' : 'in_progress',
+    stage: prev?.payload?.stage === 2 ? 2 : 1,
+    stage1Cached: Boolean(prev?.payload?.stage1Cached),
+    partialReport: prev?.payload?.partialReport ?? null,
+    error: prev?.payload?.error || '',
+   },
+   { headers: noCache },
+  );
  } catch (e) {
   if (e instanceof AuthError) return Response.json({ error: e.message }, { status: e.status, headers: noCache });
-  if (e instanceof AntigravityError) return Response.json({ error: e.message, code: e.code }, { status: e.status, headers: noCache });
   return Response.json({ error: '查询调研进度失败，请稍后重试。' }, { status: 503, headers: noCache });
  }
 }

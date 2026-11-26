@@ -24,17 +24,17 @@ function prepare(list:TutorMessage[]):TutorMessage[]{const out:TutorMessage[]=[]
 import {providerMeta} from '@/lib/ai-config';
 import {AiSettingsPanel,useAiConfigStatus} from './ai-settings';
 import ThinkBox from './think-box';
-import {getGeminiAutoProxy} from './gemini-proxy-pref';
-import {getModelThinkingLevel,notifyTutorModelChanged,useModelThinkingLevel} from './thinking-pref';
-import {getTutorThinkingSpec,THINKING_META,type ThinkingLevel} from '@/lib/thinking';
-import {getLocalBridgeConfig,isLocalTutorReady,LOCAL_BRIDGE_PROVIDERS,LOCAL_PROVIDER_LABEL,useLocalBridgeConfig,type LocalBridgeProvider} from '@/lib/local-bridge-config';
+import {getModelThinkingLevel,shouldUseLocalBridge,useGlobalAiModel,useModelThinkingLevel} from './thinking-pref';
+import {getGlobalThinkingSpec,THINKING_META,type ThinkingLevel} from '@/lib/thinking';
+import {getLocalBridgeConfig,hasBridgeTransport,LOCAL_BRIDGE_PROVIDERS,LOCAL_PROVIDER_LABEL,useLocalBridgeConfig,type LocalBridgeProvider} from '@/lib/local-bridge-config';
 import {probeBridgeProviders,streamTutorViaBridge} from '@/lib/local-bridge-client';
 import {markdownEditing} from './code-input';
 import AddToNoteButton from '../components/add-to-note';
 import {detectPlaygroundLang,normalizePlaygroundLang,type PlaygroundLang} from '@/lib/playground-bridge';
+import {classifySafeHref,splitBareUrlTrailing} from '@/lib/safe-href';
 import {InlineRunOutput,useInlineCodeRun} from '../components/inline-code-run';
 
-const KEEP=28,MODEL_KEY='ai-tutor-model';
+const KEEP=28;
 // 在同一道题（或同一张卡片）下保留临时对话，即使答题状态从“提示”切到“解析”或返回上一题也不丢失。
 const chatCache=new Map<string,TutorMessage[]>();
 
@@ -66,12 +66,60 @@ export function HeaderAiButton(){
  return <button type="button" className="header-pill" onClick={()=>dock.toggle()} title={L('打开 AI 问答','Ask the AI tutor')} aria-label={L('AI问答','Ask AI')}><Bot size={16}/><span>{L('AI问答','Ask AI')}</span></button>;
 }
 
-// Markdown 显示：规范解析围栏代码块（带语言标签与一键复制，横向滚动不折行破坏缩进）、标题、列表、行内代码、**加粗**、[文字](/站内链接)。
-// 链接只认站内地址（以 / 开头），AI 给出的外部网址按普通文字显示。
-const linkRe=/\[([^\]\n]+)\]\((\/[^)\s]*)\)/;
-function inlineCode(s:string){return s.split(/(`[^`\n]+`)/g).map((p,i)=>p.startsWith('`')&&p.endsWith('`')&&p.length>2?<code key={i}>{p.slice(1,-1)}</code>:<Fragment key={i}>{p}</Fragment>)}
-function inline(s:string){return s.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(\/[^)\s]*\))/g).map((p,i)=>{const link=p.match(linkRe);
- return p.startsWith('`')&&p.endsWith('`')&&p.length>2?<code key={i}>{p.slice(1,-1)}</code>:p.startsWith('**')&&p.endsWith('**')&&p.length>4?<b key={i}>{inlineCode(p.slice(2,-2))}</b>:link&&link[0]===p?<a key={i} className="tutor-link" href={link[2]}>{link[1]}</a>:<Fragment key={i}>{p}</Fragment>})}
+// Markdown 显示：规范解析围栏代码块（带语言标签与一键复制，横向滚动不折行破坏缩进）、标题、列表、行内代码、**加粗**、站内链接（/xxx）与外部安全链接（https://xxx）。
+const linkRe=/\[([^\]\n]+)\]\(([^)\s]+)\)/;
+const BARE_URL_RE=/https?:\/\/[^\s<>"'`\u4e00-\u9fff]+/g;
+function renderTextWithBareUrls(s:string,keyPrefix:string){
+ const out:React.ReactNode[]=[];
+ let last=0;
+ BARE_URL_RE.lastIndex=0;
+ let m:RegExpExecArray|null;
+ while((m=BARE_URL_RE.exec(s))!==null){
+  if(m.index>last)out.push(<Fragment key={`${keyPrefix}-t-${last}`}>{s.slice(last,m.index)}</Fragment>);
+  const {url,trailing}=splitBareUrlTrailing(m[0]);
+  const safe=classifySafeHref(url);
+  if(safe?.external){
+   out.push(<a key={`${keyPrefix}-u-${m.index}`} className="tutor-link tutor-ext-link" href={safe.href} target="_blank" rel="noopener noreferrer">{url}<ArrowUpRight size={12} aria-hidden="true"/></a>);
+   if(trailing)out.push(<Fragment key={`${keyPrefix}-tr-${m.index}`}>{trailing}</Fragment>);
+  }else{
+   out.push(<Fragment key={`${keyPrefix}-raw-${m.index}`}>{m[0]}</Fragment>);
+  }
+  last=m.index+m[0].length;
+ }
+ if(last===0)return s;
+ if(last<s.length)out.push(<Fragment key={`${keyPrefix}-end`}>{s.slice(last)}</Fragment>);
+ return out;
+}
+function inlineCode(s:string){return s.split(/(`[^`\n]+`)/g).map((p,i)=>p.startsWith('`')&&p.endsWith('`')&&p.length>2?<code key={i}>{p.slice(1,-1)}</code>:<Fragment key={i}>{renderTextWithBareUrls(p,`ic${i}`)}</Fragment>)}
+function renderInlineTokens(s:string,keyPrefix=''):React.ReactNode[]{
+ return s.split(/(`[^`\n]+`|\[[^\]\n]+\]\([^)\s]+\))/g).map((p,i)=>{
+  if(p.startsWith('`')&&p.endsWith('`')&&p.length>2)return <code key={`${keyPrefix}-c-${i}`}>{p.slice(1,-1)}</code>;
+  const link=p.match(linkRe);
+  if(link&&link[0]===p){
+   const safe=classifySafeHref(link[2]);
+   if(safe){
+    return safe.external
+     ?<a key={`${keyPrefix}-a-${i}`} className="tutor-link tutor-ext-link" href={safe.href} target="_blank" rel="noopener noreferrer">{inlineCode(link[1])}<ArrowUpRight size={12} aria-hidden="true"/></a>
+     :<a key={`${keyPrefix}-a-${i}`} className="tutor-link" href={safe.href}>{inlineCode(link[1])}</a>;
+   }
+  }
+  return <Fragment key={`${keyPrefix}-p-${i}`}>{renderTextWithBareUrls(p,`${keyPrefix}u${i}`)}</Fragment>;
+ });
+}
+function inline(s:string){return s.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\([^)\s]+\))/g).map((p,i)=>{
+ if(p.startsWith('`')&&p.endsWith('`')&&p.length>2)return <code key={i}>{p.slice(1,-1)}</code>;
+ if(p.startsWith('**')&&p.endsWith('**')&&p.length>4)return <b key={i}>{renderInlineTokens(p.slice(2,-2),`b${i}`)}</b>;
+ const link=p.match(linkRe);
+ if(link&&link[0]===p){
+  const safe=classifySafeHref(link[2]);
+  if(safe){
+   return safe.external
+    ?<a key={i} className="tutor-link tutor-ext-link" href={safe.href} target="_blank" rel="noopener noreferrer">{inlineCode(link[1])}<ArrowUpRight size={12} aria-hidden="true"/></a>
+    :<a key={i} className="tutor-link" href={safe.href}>{inlineCode(link[1])}</a>;
+  }
+ }
+ return <Fragment key={i}>{renderTextWithBareUrls(p,`i${i}`)}</Fragment>;
+})}
 
 type MdBlock={kind:'code';lang:string;code:string}|{kind:'text';text:string};
 function parseMdBlocks(src:string):MdBlock[]{
@@ -262,7 +310,7 @@ async function ask(context:TutorContext,messages:TutorMessage[],onSegments:(segs
  const NET='网络连接失败，这次没有扣次数，请重试。';
  const acc=createSegmentStream(onSegments);
  const localCfg=getLocalBridgeConfig();
- if(isLocalTutorReady(localCfg)&&(model==='auto'||model==='local')){
+ if(shouldUseLocalBridge('tutor',model,localCfg)){
   let modelName='';
   try{
    const out=await streamTutorViaBridge({
@@ -289,7 +337,7 @@ async function ask(context:TutorContext,messages:TutorMessage[],onSegments:(segs
   }
  }
  let res:Response;
- try{res=await fetch('/api/tutor',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({context,messages,model,geminiProxy:getGeminiAutoProxy(),thinkingLevel:thinkingLevel??'auto'}),signal})}catch{if(signal?.aborted)return {ok:false,aborted:true,message:''};return {ok:false,message:NET}}
+ try{res=await fetch('/api/tutor',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({context,messages,model,thinkingLevel:thinkingLevel??'auto'}),signal})}catch{if(signal?.aborted)return {ok:false,aborted:true,message:''};return {ok:false,message:NET}}
  if(!(res.headers.get('content-type')??'').includes('ndjson')){try{const j=await res.json() as {message?:string};return {ok:false,message:j.message??NET}}catch{return {ok:false,message:NET}}}
  let done:{remaining:number;model?:string}|null=null,err='',modelName='';
  const reader=res.body!.getReader(),onAbort=()=>{void reader.cancel().catch(()=>{})};
@@ -358,7 +406,7 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
  },[site,setOpen]);
  const {status:aiStatus}=useAiConfigStatus();
  const [localCfg,updateLocal]=useLocalBridgeConfig();
- const localTutorActive=isLocalTutorReady(localCfg);
+ const localTutorActive=Boolean(localCfg.enabled&&hasBridgeTransport(localCfg));
  const localSpecCfg=localTutorActive?localCfg:null;
  const isGuest=Boolean(aiStatus?.isGuest);
  const hasCustom=!isGuest&&!!aiStatus?.settings?.enabled&&!!aiStatus?.settings?.hasKey,customBadge=hasCustom?providerMeta(aiStatus!.settings!.provider).badge:'';
@@ -398,19 +446,16 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
   return()=>{alive=false};
  },[open,localTutorActive,localCfg.port,localCfg.url,localCfg.relayCode,localCfg.relayLinked,localCfg.token,localCfg.provider,localCfg.model,localCfg.providerModels,updateLocal]);
  // 选模型：默认（本地客户端或专属 API 优先，否则 DeepSeek V4.1 Flash）、本地客户端模型分组、站点模型、自己的专属 API。选择记在浏览器里。
- const customSpecCfg=useMemo(()=>(hasCustom&&aiStatus?.settings?{provider:aiStatus.settings.provider,model:aiStatus.settings.model}:null),[hasCustom,aiStatus?.settings]);
- const [model,setModelState]=useState<string>(()=>{try{const raw=localStorage.getItem(MODEL_KEY)||'auto',v=raw==='gemini-flash'?'gemini-4':raw;return v==='auto'||v==='custom'||v==='local'||TUTOR_MODELS.some(m=>m.id===v)?v:'auto'}catch{return 'auto'}}),modelRef=useRef(model); // 以前存的旧模型名（deepseek-chat 等）已经没有了，回到默认
- const visibleTutorModels=useMemo(()=>isGuest?TUTOR_MODELS.filter(m=>m.provider!=='gemini'):TUTOR_MODELS,[isGuest]);
- const effectiveModel=
-  !localTutorActive&&model==='local'?'auto'
-  :(isGuest&&TUTOR_MODELS.find(m=>m.id===model)?.provider==='gemini'?'auto':model);
- const isUsingLocalTutor=localTutorActive&&(effectiveModel==='auto'||effectiveModel==='local');
- const {scopeKey:thinkScope,spec:thinkSpec}=getTutorThinkingSpec(effectiveModel,customSpecCfg,localSpecCfg);
+ const customSpecCfg=useMemo(()=>(hasCustom&&aiStatus?.settings?{provider:aiStatus.settings.provider,model:aiStatus.settings.model}:null),[hasCustom,aiStatus]);
+ const [model,setGlobalModel]=useGlobalAiModel(),modelRef=useRef(model);
+ useEffect(()=>{modelRef.current=model},[model]);
+ const effectiveModel=!localTutorActive&&model==='local'?'auto':(!hasCustom&&aiStatus&&model==='custom'?'auto':model);
+ const isUsingLocalTutor=shouldUseLocalBridge('tutor',effectiveModel,localCfg);
+ const {scopeKey:thinkScope,spec:thinkSpec}=getGlobalThinkingSpec(effectiveModel,customSpecCfg,isUsingLocalTutor?localSpecCfg:null,isGuest);
  const [thinking,setThinking]=useModelThinkingLevel(thinkScope,thinkSpec);
  const customRef=useRef(customSpecCfg);useEffect(()=>{customRef.current=customSpecCfg},[customSpecCfg]);
  const localRef=useRef(localSpecCfg);useEffect(()=>{localRef.current=localSpecCfg},[localSpecCfg]);
- const setModel=(v:string)=>{modelRef.current=v;setModelState(v);try{localStorage.setItem(MODEL_KEY,v)}catch{};notifyTutorModelChanged()};
- useEffect(()=>{if(model==='custom'&&aiStatus&&!hasCustom)setModel('auto');if(isGuest&&TUTOR_MODELS.find(m=>m.id===model)?.provider==='gemini')setModel('auto')},[aiStatus,hasCustom,isGuest,model]); // eslint-disable-line react-hooks/exhaustive-deps
+ const setModel=(v:string)=>{modelRef.current=v;setGlobalModel(v)};
  const localModelGroups=useMemo(()=>{
   if(!localTutorActive)return [] as {provider:LocalBridgeProvider;models:{id:string;label:string;thinkingLevels?:string[];defaultThinkingLevel?:string}[]}[];
   const groups:{provider:LocalBridgeProvider;models:{id:string;label:string;thinkingLevels?:string[];defaultThinkingLevel?:string}[]}[]=[];
@@ -461,9 +506,7 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
    <option value="auto">
     {hasCustom
      ?L(`默认（我的 ${customBadge}）`,`Default (my ${customBadge})`)
-     :isGuest
-      ?L('默认（DeepSeek）','Default (DeepSeek)')
-      :L('默认（自动 · DeepSeek / Gemini 4）','Default (Auto · DeepSeek / Gemini 4)')}
+     :L('默认（DeepSeek）','Default (DeepSeek)')}
    </option>
   )}
   {localModelGroups.map(g=>(
@@ -477,12 +520,12 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
   ))}
   {localTutorActive?(
    <optgroup label={L('站点模型','Site Models')}>
-    {visibleTutorModels.map(m=><option key={m.id} value={m.id} title={L(m.note[0],m.note[1])}>{L(m.label[0],m.label[1])}{m.vision?L(' · 识图',' · images'):''}</option>)}
+    {TUTOR_MODELS.map(m=><option key={m.id} value={m.id} title={L(m.note[0],m.note[1])}>{L(m.label[0],m.label[1])}{m.vision?L(' · 识图',' · images'):''}</option>)}
     {hasCustom&&<option value="custom">{L(`我的 API：${customBadge}`,`My API: ${customBadge}`)}</option>}
    </optgroup>
   ):(
    <>
-    {visibleTutorModels.map(m=><option key={m.id} value={m.id} title={L(m.note[0],m.note[1])}>{L(m.label[0],m.label[1])}{m.vision?L(' · 识图',' · images'):''}</option>)}
+    {TUTOR_MODELS.map(m=><option key={m.id} value={m.id} title={L(m.note[0],m.note[1])}>{L(m.label[0],m.label[1])}{m.vision?L(' · 识图',' · images'):''}</option>)}
     {hasCustom&&<option value="custom">{L(`我的 API：${customBadge}`,`My API: ${customBadge}`)}</option>}
    </>
   )}
@@ -585,7 +628,7 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
    const at=all.length;let sent=prepare(all).slice(-KEEP);while(sent[0]?.role!=='user')sent=sent.slice(1); // 对话太长时只带最近的部分，第一条必须是学习者发的
    const ctl=new AbortController();abortRef.current=ctl;
    setAnswerAt(at);setLive('');setLiveSegs([]);setLiveModel('');
-   const curSpec=getTutorThinkingSpec(modelRef.current,customRef.current,localRef.current);
+   const curSpec=getGlobalThinkingSpec(modelRef.current,customRef.current,localRef.current);
    const curThinking=curSpec.spec.locked?'auto':getModelThinkingLevel(curSpec.scopeKey,curSpec.spec);
    const r=await ask(context,sent,segs=>{if(sessionGen.current===gen){setLiveSegs(segs);setLive(segs.filter(s=>s.kind==='text').map(s=>s.text).join('\n\n'))}},modelRef.current,m=>{if(sessionGen.current===gen)setLiveModel(m)},ctl.signal,curThinking);
    if(abortRef.current===ctl)abortRef.current=null;

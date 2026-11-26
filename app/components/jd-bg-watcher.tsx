@@ -2,7 +2,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowUpRight, CheckCircle2, Loader2, X } from 'lucide-react';
 import { useI18n } from './i18n';
-import { getGeminiAutoProxy } from '../ai/gemini-proxy-pref';
 import {
  loadJdBgTasks,
  notifyJdTaskDone,
@@ -68,7 +67,6 @@ export default function JdBgWatcher() {
      id: task.interactionId,
      sig: task.sig,
      rid: task.recordId,
-     geminiProxy: getGeminiAutoProxy() ? '1' : '0',
     });
     if (task.cacheKey && task.ckSig) {
      qs.set('ck', task.cacheKey);

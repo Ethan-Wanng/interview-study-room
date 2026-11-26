@@ -34,6 +34,11 @@ export function groupReleasesByDay(releases:Release[]):ReleaseDay[]{
 }
 
 export const RELEASES:Release[]=[
+ {version:'2026.11.27-1',date:'2026-11-27',title:'全站统一模型与思考强度选择器、外链渲染修复与自主代理入口',changes:[
+  '修复 AI 问答、规范回答、学习笔记与高阶架构评审中的外部网页链接格式与安全点击跳转支持',
+  '顶栏新增全站统一 AI 模型与思考强度选择器：一次切换即可同步应用于 AI 问答、笔记、评分、AI 重出/补题、JD 深度调研、参考简历、项目深挖与高阶架构评审（支持 DeepSeek、我的 API 与本地客户端）',
+  '移除站点内置 Google 代理与 Google API 直连，云端统一保留 DeepSeek，并在设置与本地客户端教程提供 https://huarun.win/ 入口供自行配置本机代理',
+ ]},
  {version:'2026.11.26-3',date:'2026-11-26',title:'本地客户端升级：同源云端中继、自动唤醒、免 npm 一键安装 CLI 与独立安装包',changes:[
   '手机与跨设备连接全面切换为同源云端中继（exhan.dpdns.org Durable Object WebSocket）：同一账号电脑与手机自动免扫码配对，游客支持 6 位连接码，彻底摆脱 trycloudflare 域名波动',
   '新增桌面端自动唤醒（interview-bridge://）与无窗口开机自启，无需每次打开终端运行命令',
