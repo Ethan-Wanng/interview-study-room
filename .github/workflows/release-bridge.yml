@@ -55,8 +55,16 @@ jobs:
         shell: pwsh
         run: |
           Copy-Item (Get-Command node).Source "${{ matrix.asset }}" -Force
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $signtool) { throw "signtool.exe not found" }
+          & $signtool remove /s "${{ matrix.asset }}"
+          if ($LASTEXITCODE -ne 0) { throw "signtool remove failed with exit $LASTEXITCODE" }
           npx --yes postject@1.0.0-alpha.6 "${{ matrix.asset }}" NODE_SEA_BLOB sea-prep.blob --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
+          $sig = Get-AuthenticodeSignature ".\${{ matrix.asset }}"
+          Write-Host "Authenticode status: $($sig.Status)"
+          if ($sig.Status -ne 'NotSigned') { throw "Unexpected signature status: $($sig.Status)" }
           & ".\${{ matrix.asset }}" --help
+          if ($LASTEXITCODE -ne 0) { throw "Binary --help exited with $LASTEXITCODE" }
 
       - name: Build standalone binary (macOS)
         if: matrix.platform == 'darwin'
