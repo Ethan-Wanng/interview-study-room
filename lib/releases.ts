@@ -18,9 +18,9 @@ export function compareSemver(a?:string|null,b?:string|null):number{
 
 // 本地桥接（interview-study-bridge）最新推荐版本。每次发布 bridge 新版本时同步更新此处，已配置本地客户端的用户会自动收到站内广播与铃铛提醒。
 export const BRIDGE_RELEASE:BridgeRelease={
- version:'0.1.3',
+ version:'1.0.4',
  date:'2026-11-26',
- title:'本地桥接升级至 v0.1.3',
+ title:'本地桥接升级至 v1.0.4',
  changes:[
   'Antigravity（ACP）改为逐模型探测真实思考强度：Gemini 4 Carbon / Argon 仅保留低 / 中 / 高，Orchestrator 与 GPT-OSS 120B 自动隐藏思考条',
   'Codex 完整透传各模型思考强度（含 GPT-6 / GPT-5.6 的 Max 与 Ultra 档位）',
@@ -34,8 +34,8 @@ export function groupReleasesByDay(releases:Release[]):ReleaseDay[]{
 }
 
 export const RELEASES:Release[]=[
- {version:'2026.11.26-1',date:'2026-11-26',title:'本地桥接升级 v0.1.3 与更新广播、专题代码题五语言参考答案、交错思考持久化',changes:[
-  '本地桥接（interview-study-bridge）发布 v0.1.3：Antigravity 逐模型探测真实思考强度（修复 Gemini 4 Carbon 误显极高、自动隐藏不支持思考的模型），Codex 完整支持 Max / Ultra 档位',
+ {version:'2026.11.26-1',date:'2026-11-26',title:'本地桥接升级 v1.0.4 与更新广播、专题代码题五语言参考答案、交错思考持久化',changes:[
+  '本地桥接（interview-study-bridge）发布 v1.0.4：Antigravity 逐模型探测真实思考强度（修复 Gemini 4 Carbon 误显极高、自动隐藏不支持思考的模型），Codex 完整支持 Max / Ultra 档位',
   '新增本地桥接更新自动广播与铃铛通知：每次桥接发布新版本，已启用本地客户端的用户将自动收到更新提醒与一键复制升级命令（npx -y interview-study-bridge@latest）',
   '修复 JD 专题与单题「AI 重出」中代码题参考答案只有 Python 的问题：生成、渲染、运行调试、笔记收藏与 Markdown 导出全面支持 Python / Go / Java / JS/TS / Rust 五语言切换',
   'AI 问答顶栏新增分组模型下拉框，可直接一键切换本地客户端与模型；交错思考分段结构现已持久化到历史记录，重开不揉成一团并修复思考框星号渲染',
