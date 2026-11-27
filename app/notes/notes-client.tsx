@@ -58,6 +58,13 @@ import SiteHeader from '../components/site-header';
 import {useI18n} from '../components/i18n';
 import {streamNoteAi} from '../components/note-ai-client';
 import {
+ createThrottledCheckpoint,
+ makeCheckpointKey,
+ readAiCheckpoint,
+ removeAiCheckpoint,
+ writeAiCheckpoint,
+} from '@/lib/ai-checkpoint';
+import {
  addNoteEntry,
  createNotebook,
  deleteNotebook,
@@ -76,7 +83,7 @@ import {
 } from '@/lib/notes-store';
 import {detectPlaygroundLang,normalizePlaygroundLang,type PlaygroundLang} from '@/lib/playground-bridge';
 import {InlineRunOutput,useInlineCodeRun} from '../components/inline-code-run';
-import type {TutorContext} from '@/lib/tutor-types';
+import type {TutorContext,TutorMessage} from '@/lib/tutor-types';
 
 type SelectionInfo={
  text:string;
@@ -521,12 +528,23 @@ export default function NotesClient({username}:{username:string}){
  const [aiPrompt,setAiPrompt]=useState('');
  const [aiTaskTitle,setAiTaskTitle]=useState('');
  const [aiBusy,setAiBusy]=useState(false);
+ const [aiInterrupted,setAiInterrupted]=useState(false);
+ const [aiLastUserPrompt,setAiLastUserPrompt]=useState('');
  const [aiOutput,setAiOutput]=useState('');
  const [aiThink,setAiThink]=useState('');
  const [aiRemaining,setAiRemaining]=useState<number|null>(null);
  const [aiError,setAiError]=useState('');
  const [noticeMsg,setNoticeMsg]=useState('');
  const aiAbortRef=useRef<AbortController|null>(null);
+ const aiCpRef=useRef<ReturnType<typeof createThrottledCheckpoint<{
+  taskTitle:string;
+  targetText:string;
+  range:{start:number;end:number}|null;
+  prompt:string;
+  userPromptText:string;
+  output:string;
+  think:string;
+ }>>|null>(null);
 
  const editorRef=useRef<HTMLTextAreaElement|null>(null);
  const pageBodyRef=useRef<HTMLDivElement|null>(null);
@@ -543,7 +561,39 @@ export default function NotesClient({username}:{username:string}){
   setNoteSelectionHighlight(null);
   if(flipRafRef.current!==null)cancelAnimationFrame(flipRafRef.current);
   aiAbortRef.current?.abort();
+  if(aiCpRef.current){aiCpRef.current.flush('interrupted');aiCpRef.current.dispose();aiCpRef.current=null}
  },[]);
+
+ useEffect(()=>{
+  if(!pageKey)return;
+  const cpKey=makeCheckpointKey('note-ai',pageKey);
+  const cp=readAiCheckpoint<{
+   taskTitle:string;
+   targetText:string;
+   range:{start:number;end:number}|null;
+   prompt:string;
+   userPromptText:string;
+   output:string;
+   think:string;
+  }>(cpKey);
+  let alive=true;
+  queueMicrotask(()=>{
+   if(!alive)return;
+   if(!cp||(!cp.data.output.trim()&&cp.status==='done')){
+    return;
+   }
+   setAiTaskTitle(cp.data.taskTitle);
+   setAiTargetText(cp.data.targetText);
+   setAiRange(cp.data.range);
+   setAiPrompt(cp.data.prompt);
+   setAiLastUserPrompt(cp.data.userPromptText);
+   setAiOutput(cp.data.output);
+   setAiThink(cp.data.think);
+   setAiInterrupted(cp.status==='running'||cp.status==='interrupted');
+   setAiOpen(true);
+  });
+  return()=>{alive=false};
+ },[pageKey]);
 
  const showNotice=(msg:string)=>{
   setNoticeMsg(msg);
@@ -1049,14 +1099,19 @@ export default function NotesClient({username}:{username:string}){
   commitPageChange({content:lines.join('\n')},true);
  };
 
- // 启动内置 AI 辅助：规范化 / 精简 / 扩写举例 / 再让 AI 改 / 选中文本自由问答
- const triggerAiAction=async(mode:'normalize'|'concise'|'example'|'refine'|'ask',customQuestion?:string)=>{
+ // 启动内置 AI 辅助：规范化 / 精简 / 扩写举例 / 再让 AI 改 / 选中文本自由问答 / 断点续写
+ const triggerAiAction=async(mode:'normalize'|'concise'|'example'|'refine'|'ask'|'continue',customQuestion?:string)=>{
   if(!activeBook||!activePage)return;
+  const curPageKey=`${activeBook.id}:${activePage.id}`;
+  const cpKey=makeCheckpointKey('note-ai',curPageKey);
+  const isContinue=mode==='continue';
   const rawTarget=(selection?.text||aiTargetText||activePage.content).trim();
   if(!rawTarget){
    showNotice(L('请先在笔记中写一点内容或选中一段文字','Please select or write some text first'));
    return;
   }
+  const nextRange=selection?{start:selection.start,end:selection.end}:(aiRange??{start:0,end:activePage.content.length});
+  const nextTarget=selection?selection.text:(aiTargetText||activePage.content);
   if(selection){
    setAiTargetText(selection.text);
    setAiRange({start:selection.start,end:selection.end});
@@ -1067,37 +1122,66 @@ export default function NotesClient({username}:{username:string}){
 
   setAiOpen(true);
   setAiError('');
+  setAiInterrupted(false);
 
   if(mode==='ask'&&!customQuestion?.trim()){
    setAiTaskTitle(L('选中文本 AI 问答','Ask AI About Selected Text'));
    return;
   }
 
+  let taskTitleVal=aiTaskTitle;
   let promptText='';
-  if(mode==='normalize'){
-   setAiTaskTitle(L('✨ AI 规范化笔记','✨ AI Standardize Note'));
+  if(isContinue){
+   promptText=aiLastUserPrompt||`请处理下面这段学习笔记：\n${rawTarget}`;
+  }else if(mode==='normalize'){
+   taskTitleVal=L('✨ AI 规范化笔记','✨ AI Standardize Note');
+   setAiTaskTitle(taskTitleVal);
    promptText=`请帮我把下面这段学习笔记进行【规范化整理】。\n要求：\n1. 修正口语化或不够严谨的表述，使用准确的专业术语；\n2. 提炼出清晰的层级结构（使用小标题、要点列表、加粗关键词或简短代码块）；\n3. 保留核心知识点，直接输出规范化后的 Markdown 笔记正文（不要多余寒暄）：\n\n【待规范化原文】：\n${rawTarget}`;
   }else if(mode==='concise'){
-   setAiTaskTitle(L('✂️ AI 精简与速记提炼','✂️ AI Condense & Key Points'));
+   taskTitleVal=L('✂️ AI 精简与速记提炼','✂️ AI Condense & Key Points');
+   setAiTaskTitle(taskTitleVal);
    promptText=`请把下面这段较长的笔记【精简浓缩】为面试速记卡格式。\n要求：\n1. 用 3～5 条最精炼的要点概括核心结论；\n2. 附一句好记的“一句话总结 / 记忆口诀”；\n3. 直接输出 Markdown 正文：\n\n【待精简原文】：\n${rawTarget}`;
   }else if(mode==='example'){
-   setAiTaskTitle(L('💡 AI 补充通俗解释与代码示例','💡 AI Explain with Example'));
+   taskTitleVal=L('💡 AI 补充通俗解释与代码示例','💡 AI Explain with Example');
+   setAiTaskTitle(taskTitleVal);
    promptText=`请针对下面这段笔记内容，补充一个通俗易懂的原理解释和一段简短直观的代码示例（或对比案例），方便直接贴进笔记复习：\n\n【选中笔记内容】：\n${rawTarget}`;
   }else if(mode==='refine'){
-   setAiTaskTitle(L('🔄 再让 AI 改写润色','🔄 AI Refine Note'));
+   taskTitleVal=L('🔄 再让 AI 改写润色','🔄 AI Refine Note');
+   setAiTaskTitle(taskTitleVal);
    const extra=customQuestion?.trim()||'请换一种更清晰精炼、易于复习的方式重新润色这版笔记，保留关键知识点与代码，直接输出 Markdown 正文。';
    promptText=`原始笔记内容：\n${rawTarget}\n\n上一版润色结果：\n${aiOutput}\n\n请在此基础上继续修改润色：${extra}`;
   }else{
-   setAiTaskTitle(L('🤖 选中文本 AI 问答','🤖 AI Q&A on Selection'));
+   taskTitleVal=L('🤖 选中文本 AI 问答','🤖 AI Q&A on Selection');
+   setAiTaskTitle(taskTitleVal);
    promptText=`我在这页笔记中选中了以下片段：\n"""\n${rawTarget}\n"""\n\n我的问题是：${customQuestion!.trim()}`;
   }
 
   aiAbortRef.current?.abort();
   const ctl=new AbortController();
   aiAbortRef.current=ctl;
+  const baseOut=isContinue?aiOutput:'';
+  const baseThink=isContinue?aiThink:'';
+  setAiLastUserPrompt(promptText);
   setAiBusy(true);
-  setAiOutput('');
-  setAiThink('');
+  if(!isContinue){
+   setAiOutput('');
+   setAiThink('');
+  }
+
+  aiCpRef.current?.dispose();
+  const cp=createThrottledCheckpoint<{
+   taskTitle:string;
+   targetText:string;
+   range:{start:number;end:number}|null;
+   prompt:string;
+   userPromptText:string;
+   output:string;
+   think:string;
+  }>(cpKey,'note-ai',450);
+  aiCpRef.current=cp;
+  let curOut=baseOut,curThink=baseThink;
+  cp.update({taskTitle:taskTitleVal,targetText:nextTarget,range:nextRange,prompt:aiPrompt,userPromptText:promptText,output:curOut,think:curThink},'running');
+  cp.flush('running');
 
   const context:TutorContext={
    kind:'lesson',
@@ -1108,25 +1192,63 @@ export default function NotesClient({username}:{username:string}){
    },
   };
 
+  const messages:TutorMessage[]=isContinue&&baseOut.trim()
+   ?[{role:'user',text:promptText},{role:'model',text:baseOut},{role:'user',text:'请从上次中断处无缝继续输出，不要重复已输出的内容。'}]
+   :[{role:'user',text:promptText}];
+
   const res=await streamNoteAi(
    context,
-   [{role:'user',text:promptText}],
-   text=>setAiOutput(text),
-   think=>setAiThink(think),
+   messages,
+   text=>{
+    curOut=baseOut?`${baseOut}${text}`:text;
+    cp.update({taskTitle:taskTitleVal,targetText:nextTarget,range:nextRange,prompt:aiPrompt,userPromptText:promptText,output:curOut,think:curThink},'running');
+    setAiOutput(curOut);
+   },
+   think=>{
+    curThink=baseThink&&think?`${baseThink}\n\n${think}`:think||baseThink;
+    cp.update({taskTitle:taskTitleVal,targetText:nextTarget,range:nextRange,prompt:aiPrompt,userPromptText:promptText,output:curOut,think:curThink},'running');
+    setAiThink(curThink);
+   },
    ctl.signal,
   );
   if(aiAbortRef.current===ctl)aiAbortRef.current=null;
   setAiBusy(false);
   if(res.ok){
+   const finalOut=baseOut?`${baseOut}${res.text}`:res.text;
+   setAiOutput(finalOut);
+   setAiInterrupted(false);
+   cp.dispose();
+   if(aiCpRef.current===cp)aiCpRef.current=null;
+   writeAiCheckpoint({
+    key:cpKey,
+    kind:'note-ai',
+    status:'done',
+    startedAt:Date.now(),
+    updatedAt:Date.now(),
+    data:{taskTitle:taskTitleVal,targetText:nextTarget,range:nextRange,prompt:aiPrompt,userPromptText:promptText,output:finalOut,think:curThink},
+   });
    setAiRemaining(typeof res.remaining==='number'?res.remaining:null);
   }else if(!res.aborted){
+   if(curOut.trim()||curThink.trim()||promptText){
+    cp.update({taskTitle:taskTitleVal,targetText:nextTarget,range:nextRange,prompt:aiPrompt,userPromptText:promptText,output:curOut,think:curThink},'interrupted');
+    cp.flush('interrupted');
+    setAiInterrupted(true);
+   }else{
+    cp.clear();
+   }
+   if(aiCpRef.current===cp)aiCpRef.current=null;
    setAiError(res.message);
+  }else{
+   cp.clear();
+   if(aiCpRef.current===cp)aiCpRef.current=null;
   }
  };
 
  // 将 AI 生成结果写回笔记（替换选中文本 / 插入到选中文本下方 / 追加到本页末尾）
  const applyAiResultToNote=(way:'replace'|'insert-below'|'append-end')=>{
   if(!activeBook||!activePage||!aiOutput.trim())return;
+  removeAiCheckpoint(makeCheckpointKey('note-ai',`${activeBook.id}:${activePage.id}`));
+  setAiInterrupted(false);
   const full=activePage.content;
   const cleanOut=aiOutput.trim();
   let nextContent=full;
@@ -2058,7 +2180,7 @@ export default function NotesClient({username}:{username:string}){
               <button type="button" disabled={aiBusy} onClick={()=>void triggerAiAction('example')}>
                <Sparkles size={13}/><span>{L('补例子/代码','Add Example')}</span>
               </button>
-              <button type="button" className="nb-ai-close" onClick={()=>{aiAbortRef.current?.abort();setAiOpen(false)}}>
+              <button type="button" className="nb-ai-close" onClick={()=>{aiAbortRef.current?.abort();aiCpRef.current?.dispose();aiCpRef.current=null;setAiOpen(false)}}>
                <X size={16}/>
               </button>
              </div>
@@ -2100,7 +2222,7 @@ export default function NotesClient({username}:{username:string}){
 
             {aiError&&<p className="ai-grade-error" style={{margin:'4px 0'}}>{aiError}</p>}
 
-            {(aiOutput||aiBusy)&&(
+            {(aiOutput||aiBusy||aiInterrupted)&&(
              <div className="nb-ai-result">
               <div className="nb-ai-output">
                {aiOutput?parseNoteMarkdown(aiOutput).map((b,bi)=>{
@@ -2114,7 +2236,20 @@ export default function NotesClient({username}:{username:string}){
                }):<p className="muted">{L('AI 正在为你整理规范笔记…','AI is drafting your note…')}</p>}
               </div>
 
-              {!aiBusy&&aiOutput&&(
+              {!aiBusy&&aiInterrupted&&(
+               <div className="nb-ai-apply-bar">
+                <button type="button" className="button primary" onClick={()=>void triggerAiAction('continue')}>
+                 <RotateCcw size={14}/>
+                 <span>{L('继续生成','Continue')}</span>
+                </button>
+                <button type="button" className="button secondary" onClick={()=>{aiAbortRef.current?.abort();aiCpRef.current?.clear();aiCpRef.current=null;if(pageKey)removeAiCheckpoint(makeCheckpointKey('note-ai',pageKey));setAiInterrupted(false);setAiOutput('');setAiThink('');setAiRemaining(null);setAiError('');setAiOpen(false)}}>
+                 <X size={14}/>
+                 <span>{L('清除','Clear')}</span>
+                </button>
+               </div>
+              )}
+
+              {!aiBusy&&!aiInterrupted&&aiOutput&&(
                <div className="nb-ai-apply-bar">
                 <button type="button" className="button primary" onClick={()=>applyAiResultToNote('replace')}>
                  <Check size={14}/>
@@ -2132,7 +2267,7 @@ export default function NotesClient({username}:{username:string}){
                  <RotateCcw size={14}/>
                  <span>{L('再让 AI 改','Refine')}</span>
                 </button>
-                <button type="button" className="button secondary" onClick={()=>{aiAbortRef.current?.abort();setAiOutput('');setAiThink('');setAiRemaining(null);setAiError('');setAiOpen(false)}}>
+                <button type="button" className="button secondary" onClick={()=>{aiAbortRef.current?.abort();aiCpRef.current?.clear();aiCpRef.current=null;if(pageKey)removeAiCheckpoint(makeCheckpointKey('note-ai',pageKey));setAiInterrupted(false);setAiOutput('');setAiThink('');setAiRemaining(null);setAiError('');setAiOpen(false)}}>
                  <X size={14}/>
                  <span>{L('取消','Cancel')}</span>
                 </button>

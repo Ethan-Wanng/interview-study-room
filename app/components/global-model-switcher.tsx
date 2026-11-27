@@ -162,6 +162,10 @@ export default function GlobalModelSwitcher({username}:{username:string}){
  const selectLocalModel=(pid:LocalBridgeProvider,mid:string)=>{
   const matched=localCfg.providerModels?.[pid]?.find(m=>m.id===mid);
   updateLocal({
+   enabled:true,
+   allowTutor:true,
+   allowGrade:true,
+   allowDeep:true,
    provider:pid,
    model:mid==='default'?'':mid,
    thinkingLevels:matched?.thinkingLevels??[],

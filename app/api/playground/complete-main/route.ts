@@ -1,8 +1,6 @@
 import {assertSameOrigin,AuthError,rateLimit,sessionUser} from '@/lib/site-auth';
-import {consumeSiteAiQuota} from '@/lib/site-ai-quota';
-import {prepareCustomAi} from '@/db/ai-config';
+import {prepareDeepModelExecution} from '@/lib/deep-model-route';
 import {completePlaygroundCode} from '@/lib/gemini';
-import type {RuntimeAiConfig} from '@/lib/ai-config';
 import type {PlaygroundLang} from '@/lib/playground-bridge';
 
 export const dynamic='force-dynamic';
@@ -36,18 +34,7 @@ export async function POST(req:Request){
   const expect=typeof b.expect==='string'?b.expect.slice(0,2000):undefined;
   const questionId=typeof b.questionId==='string'?b.questionId.slice(0,80):undefined;
 
-  let customCfg:RuntimeAiConfig|undefined;
-  let refund:(()=>Promise<unknown>)|undefined;
-  const custom=await prepareCustomAi(user.id,'tutor');
-  if(custom.mode==='blocked')return fail(custom.message,429);
-  if(custom.mode==='custom'){
-   customCfg=custom.config;
-   refund=()=>custom.refund();
-  }else{
-   const dsQ=await consumeSiteAiQuota(req,user,'deepseek');
-   if(!dsQ.ok)return fail(dsQ.message,dsQ.status);
-   refund=dsQ.refund;
-  }
+  const exec=await prepareDeepModelExecution(req,user,b.model,b.thinkingLevel);
 
   try{
    const completed=await completePlaygroundCode({
@@ -57,11 +44,13 @@ export async function POST(req:Request){
     title,
     expect,
     questionId,
-    custom:customCfg,
+    model:exec.model==='auto'||b.model==='auto'?'deepseek-flash':exec.model,
+    thinkingLevel:b.model==='auto'||b.model===undefined?'off':exec.thinkingLevel,
+    custom:exec.custom,
    });
    return Response.json({ok:true,code:completed},{headers:noCache});
   }catch(e){
-   await refund?.().catch(()=>{});
+   await exec.refund().catch(()=>{});
    return fail(e instanceof Error?e.message:'AI 补全暂不可用，请稍后重试。',502);
   }
  }catch(e){

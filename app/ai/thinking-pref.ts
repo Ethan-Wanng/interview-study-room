@@ -1,7 +1,7 @@
 'use client';
 import {useSyncExternalStore} from 'react';
 import {parseGradeModel} from '@/lib/grade-types';
-import {isLocalDeepReady,isLocalGradeReady,isLocalTutorReady,type LocalBridgeConfig} from '@/lib/local-bridge-config';
+import {getLocalBridgeConfig,hasBridgeTransport,isLocalDeepReady,isLocalGradeReady,isLocalTutorReady,type LocalBridgeConfig} from '@/lib/local-bridge-config';
 import {
  clampThinkingToSpec,
  getGlobalThinkingSpec,
@@ -133,7 +133,8 @@ export function shouldUseLocalBridge(
  localCfg:LocalBridgeConfig,
 ):boolean{
  const m=normalizeGlobalModelId(globalModel);
- if(m!=='auto'&&m!=='local')return false;
+ if(m==='local')return Boolean(localCfg.enabled&&hasBridgeTransport(localCfg));
+ if(m!=='auto')return false;
  if(scene==='tutor')return isLocalTutorReady(localCfg);
  if(scene==='grade')return isLocalGradeReady(localCfg);
  return isLocalDeepReady(localCfg);
@@ -146,9 +147,27 @@ export function getActiveGlobalThinkingLevel(
  isGuest=false,
 ):ThinkingLevel{
  const m=normalizeGlobalModelId(globalModel);
- const localForModel=(m==='local'||m==='auto')?localCfg:null;
+ const localForModel=(m==='local'||(m==='auto'&&localCfg.enabled&&hasBridgeTransport(localCfg)))?localCfg:null;
  const {scopeKey,spec}=getGlobalThinkingSpec(m,custom,localForModel,isGuest);
  return spec.locked?'auto':getModelThinkingLevel(scopeKey,spec);
+}
+
+export function resolveLiveAiSelection(
+ scene:'tutor'|'grade'|'deep',
+ custom?:{provider:string;model?:string}|null,
+ isGuest=false,
+):{
+ model:string;
+ localCfg:LocalBridgeConfig;
+ useLocal:boolean;
+ thinkingLevel:ThinkingLevel;
+}{
+ const model=getGlobalAiModel();
+ const localCfg=getLocalBridgeConfig();
+ const useLocal=shouldUseLocalBridge(scene,model,localCfg);
+ const {scopeKey,spec}=getGlobalThinkingSpec(useLocal?'local':model,custom,useLocal?localCfg:null,isGuest);
+ const thinkingLevel=spec.locked?'auto':getModelThinkingLevel(scopeKey,spec);
+ return {model,localCfg,useLocal,thinkingLevel};
 }
 
 export function getStoredTutorModel():string{return getGlobalAiModel()}

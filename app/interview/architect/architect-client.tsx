@@ -7,10 +7,12 @@ import {ArrowLeft,Check,ChevronDown,ChevronUp,Copy,History,Loader2,Lock,Plus,Rot
 import SiteHeader from '../../components/site-header';
 import AddToNoteButton from '../../components/add-to-note';
 import {useI18n} from '../../components/i18n';
-import {getActiveGlobalThinkingLevel,shouldUseLocalBridge,useGlobalAiModel} from '../../ai/thinking-pref';
+import {ensureAiConfigStatus,getCachedCustomAiSpec} from '../../ai/ai-settings';
+import {resolveLiveAiSelection} from '../../ai/thinking-pref';
 import {classifySafeHref,splitBareUrlTrailing} from '@/lib/safe-href';
 import {LOCAL_PROVIDER_LABEL,useLocalBridgeConfig} from '@/lib/local-bridge-config';
 import {streamDeepViaBridge} from '@/lib/local-bridge-client';
+import {createThrottledCheckpoint,makeCheckpointKey,readAiCheckpoint,removeAiCheckpoint} from '@/lib/ai-checkpoint';
 
 const DESIGN_SYSTEM=`你是顶级互联网大厂（P8/Staff 级别）系统设计与架构面试官。请对候选人的架构方案进行深度、务实、直击要害的技术评审（不要执行 shell 命令或写文件，直接基于专业架构经验作答，必要时可核查最新主流工程实践）。
 输出结构请使用清晰 Markdown：
@@ -141,10 +143,8 @@ const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
  export default function ArchitectClient({username}:{username:string}){
  const {locale}=useI18n();
  const L=(zh:string,en:string)=>locale==='en'?en:zh;
- const [globalModel]=useGlobalAiModel();
  const [localCfg]=useLocalBridgeConfig();
- const useLocal=shouldUseLocalBridge('deep',globalModel,localCfg);
- const thinkingLevel=getActiveGlobalThinkingLevel(globalModel,localCfg,null,!username);
+ const useLocalLive=resolveLiveAiSelection('deep',getCachedCustomAiSpec(),!username).useLocal;
 
  const [mode,setMode]=useState<Mode>('design');
  const [topic,setTopic]=useState(PRESETS[0].topicZh);
@@ -161,18 +161,42 @@ const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
 
  const pollAbortRef=useRef<AbortController|null>(null);
  const timerRef=useRef<number|null>(null);
+ const archCpRef=useRef<ReturnType<typeof createThrottledCheckpoint<{
+  mode:Mode;
+  topic:string;
+  recordId:string;
+  userText:string;
+  text:string;
+  thoughts:string;
+ }>>|null>(null);
 
- const stopActive=()=>{
+ const stopActive=(clearCheckpoint=false)=>{
   pollAbortRef.current?.abort();
   pollAbortRef.current=null;
   if(timerRef.current!==null){
    window.clearInterval(timerRef.current);
    timerRef.current=null;
   }
+  if(archCpRef.current){
+   if(clearCheckpoint)archCpRef.current.clear();
+   else{
+    archCpRef.current.flush('interrupted');
+    archCpRef.current.dispose();
+   }
+   archCpRef.current=null;
+  }
   setBusy(false);
  };
 
- useEffect(()=>()=>{stopActive()},[]);
+ useEffect(()=>()=>{
+  pollAbortRef.current?.abort();
+  if(timerRef.current!==null)window.clearInterval(timerRef.current);
+  if(archCpRef.current){
+   archCpRef.current.flush('interrupted');
+   archCpRef.current.dispose();
+   archCpRef.current=null;
+  }
+ },[]);
 
  const refreshRecords=async():Promise<CloudRecord[]>=>{
   try{
@@ -266,21 +290,29 @@ const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
  };
 
  const hydrateRecord=(rec:CloudRecord)=>{
-  stopActive();
+  stopActive(false);
   setError('');
   setRecordId(rec.id);
   setMode(rec.payload?.mode==='mock'?'mock':'design');
   setTopic(rec.payload?.topic||rec.title||PRESETS[0].topicZh);
   const rawTurns=Array.isArray(rec.payload?.turns)?rec.payload.turns:[];
   const withSig=rawTurns.map(t=>t.interactionId&&t.interactionId===rec.interactionId&&rec.sig?{...t,sig:rec.sig}:t);
-  setTurns(withSig);
   const running=withSig.find(t=>t.status==='running');
-  if(running&&rec.interactionId&&rec.sig){
+  if(rec.status==='completed'||!running){
+   removeAiCheckpoint(makeCheckpointKey('architect',rec.id));
+  }
+  const cp=!running&&rec.status!=='completed'?readAiCheckpoint<{mode:Mode;topic:string;recordId:string;userText:string;text:string;thoughts:string}>(makeCheckpointKey('architect',rec.id)):null;
+  if(cp&&(cp.status==='running'||cp.status==='interrupted')&&(cp.data.text||cp.data.thoughts||cp.data.userText)){
+   setTurns([...withSig,{id:'cp-'+cp.updatedAt,userText:cp.data.userText,status:'error',text:cp.data.text,thoughts:cp.data.thoughts,error:L('上次生成已中断，点击「继续生成」接续完成','Interrupted — continue to resume')}]);
+   return;
+  }
+  setTurns(withSig);
+  if(running){
    void pollExistingTurn({
     recId:rec.id,
     turnId:running.id,
-    interactionId:rec.interactionId,
-    sig:rec.sig,
+    interactionId:rec.interactionId||rec.id,
+    sig:rec.sig||'poll',
     cacheKey:rec.payload?.cacheKey,
     ckSig:rec.ckSig,
     startedAt:rec.updatedAt||rec.createdAt,
@@ -297,18 +329,46 @@ const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
   if(qTopic)setTopic(qTopic.slice(0,200));
 
   (async()=>{
+   try{
+    const rawDraft=window.localStorage.getItem('isr-arch-draft:v1');
+    if(rawDraft&&!qTopic){
+     const d=JSON.parse(rawDraft) as {topic?:string;answer?:string;followup?:string};
+     if(d.topic&&!qTopic)setTopic(d.topic.slice(0,200));
+     if(d.answer)setAnswer(d.answer.slice(0,12000));
+     if(d.followup)setFollowup(d.followup.slice(0,8000));
+    }
+   }catch{}
    const items=await refreshRecords();
-   if(!alive||qTopic||!items.length)return;
-   hydrateRecord(items[0]);
+   if(!alive||qTopic)return;
+   if(items.length){
+    hydrateRecord(items[0]);
+    return;
+   }
+   const newCp=readAiCheckpoint<{mode:Mode;topic:string;recordId:string;userText:string;text:string;thoughts:string}>(makeCheckpointKey('architect','new'));
+   if(newCp&&(newCp.status==='running'||newCp.status==='interrupted')&&(newCp.data.text||newCp.data.userText)){
+    setMode(newCp.data.mode);
+    setTopic(newCp.data.topic);
+    setTurns([{id:'cp-'+newCp.updatedAt,userText:newCp.data.userText,status:'error',text:newCp.data.text,thoughts:newCp.data.thoughts,error:L('上次生成已中断，点击「继续生成」接续完成','Interrupted — continue to resume')}]);
+   }
   })();
   return()=>{alive=false};
   // eslint-disable-next-line react-hooks/exhaustive-deps
  },[username]);
 
+ useEffect(()=>{
+  try{
+   if(answer.trim()||followup.trim()){
+    window.localStorage.setItem('isr-arch-draft:v1',JSON.stringify({topic,answer,followup}));
+   }else{
+    window.localStorage.removeItem('isr-arch-draft:v1');
+   }
+  }catch{}
+ },[topic,answer,followup]);
+
  const lastSession=turns.slice().reverse().find(t=>t.status==='done'&&t.interactionId&&t.sig);
  const lastDoneTurn=turns.slice().reverse().find(t=>t.status==='done');
 
- const runTurn=async(userInput:string,prev?:{interactionId?:string;sig?:string;followupContext?:string})=>{
+ const runTurn=async(userInput:string,prev?:{interactionId?:string;sig?:string;followupContext?:string;continueTurn?:Turn})=>{
   const cleanTopic=topic.trim();
   const cleanAns=userInput.trim();
   if(!cleanAns){
@@ -320,14 +380,21 @@ const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
    return;
   }
 
-  stopActive();
+  stopActive(true);
   setError('');
   setBusy(true);
   setElapsed(0);
 
-  const localTurnId='t-'+Date.now();
-  setTurns(list=>[...list,{id:localTurnId,userText:cleanAns,status:'running',text:'',thoughts:''}]);
-  if(prev)setFollowup('');
+  const contTurn=prev?.continueTurn;
+  const localTurnId=contTurn?.id||('t-'+Date.now());
+  const baseText=contTurn?.text||'';
+  const baseThoughts=contTurn?.thoughts||'';
+  if(contTurn){
+   setTurns(list=>list.map(t=>t.id===localTurnId?{...t,status:'running',error:undefined}:t));
+  }else{
+   setTurns(list=>[...list,{id:localTurnId,userText:cleanAns,status:'running',text:'',thoughts:''}]);
+  }
+  if(prev&&!contTurn)setFollowup('');
 
   const ctl=new AbortController();
   pollAbortRef.current=ctl;
@@ -337,10 +404,26 @@ const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
   },1000);
 
   const patchTurn=(patch:Partial<Turn>)=>setTurns(list=>list.map(t=>t.id===localTurnId?{...t,...patch}:t));
+  const cpKey=makeCheckpointKey('architect',recordId||'new');
+  const cp=createThrottledCheckpoint<{
+   mode:Mode;
+   topic:string;
+   recordId:string;
+   userText:string;
+   text:string;
+   thoughts:string;
+  }>(cpKey,'architect',450);
+  archCpRef.current=cp;
+  let curText=baseText,curThoughts=baseThoughts;
+  cp.update({mode,topic:cleanTopic,recordId:recordId||'',userText:cleanAns,text:curText,thoughts:curThoughts},'running');
+  cp.flush('running');
 
   try{
-   if(useLocal){
-    const doneTurns=turns.filter(t=>t.status==='done');
+   if(!getCachedCustomAiSpec())await ensureAiConfigStatus();
+   if(ctl.signal.aborted)return;
+   const sel=resolveLiveAiSelection('deep',getCachedCustomAiSpec(),!username);
+   if(sel.useLocal){
+    const doneTurns=turns.filter(t=>t.status==='done'&&t.id!==localTurnId);
     const msgs:{role:'user'|'assistant';content:string}[]=[];
     doneTurns.forEach((t,i)=>{
      msgs.push({
@@ -357,18 +440,26 @@ const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
       ?`【${mode==='mock'?'高阶模拟面试题':'系统设计题目'}】\n${cleanTopic}\n\n【候选人方案 / 回答】\n${cleanAns}`
       :`【候选人追问 / 补充回答】\n${cleanAns}\n\n请延续上一轮评审语境继续点评与深入追问。`,
     });
-    let accText='',accThink='';
+    if(contTurn&&baseText.trim()){
+     msgs.push({role:'assistant',content:baseText});
+     msgs.push({role:'user',content:'请从上次中断处无缝继续输出，不要重复已输出的内容。'});
+    }
+    let accText=baseText,accThink=baseThoughts;
     const out=await streamDeepViaBridge({
-     cfg:localCfg,
+     cfg:sel.localCfg,
      system:mode==='mock'?MOCK_SYSTEM:DESIGN_SYSTEM,
      messages:msgs,
-     thinkingLevel,
-     onThink:d=>{accThink+=d;patchTurn({thoughts:accThink})},
-     onDelta:d=>{accText+=d;patchTurn({text:accText})},
+     thinkingLevel:sel.thinkingLevel,
+     onThink:d=>{accThink+=d;curThoughts=accThink;cp.update({mode,topic:cleanTopic,recordId:recordId||'',userText:cleanAns,text:curText,thoughts:curThoughts},'running');patchTurn({thoughts:accThink})},
+     onDelta:d=>{accText+=d;curText=accText;cp.update({mode,topic:cleanTopic,recordId:recordId||'',userText:cleanAns,text:curText,thoughts:curThoughts},'running');patchTurn({text:accText})},
      signal:ctl.signal,
     });
-    const finalTurn:Turn={id:localTurnId,userText:cleanAns,status:'done',text:out.text,thoughts:out.think};
+    const finalText=baseText?`${baseText}${out.text}`:out.text;
+    const finalThoughts=baseThoughts&&out.think?`${baseThoughts}\n\n${out.think}`:out.think||baseThoughts;
+    const finalTurn:Turn={id:localTurnId,userText:cleanAns,status:'done',text:finalText,thoughts:finalThoughts};
     patchTurn(finalTurn);
+    cp.clear();
+    if(archCpRef.current===cp)archCpRef.current=null;
     if(username){
      const nextRecId=recordId||'arch-'+crypto.randomUUID();
      if(!recordId)setRecordId(nextRecId);
@@ -381,13 +472,13 @@ const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
        id:nextRecId,
        kind:'architect',
        title:cleanTopic||modeLabel,
-       subtitle:`${modeLabel} · ${LOCAL_PROVIDER_LABEL[localCfg.provider]}`,
+       subtitle:`${modeLabel} · ${LOCAL_PROVIDER_LABEL[sel.localCfg.provider]}`,
        status:'completed',
        payload:{mode,topic:cleanTopic,turns:nextTurns},
       }),
      }).then(()=>{void refreshRecords()}).catch(()=>{});
     }
-    stopActive();
+    stopActive(true);
     return;
    }
    const r=await fetch('/api/architect-review',{
@@ -397,12 +488,12 @@ const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
      mode,
      topic:cleanTopic,
      answer:cleanAns,
-     recordId:prev?recordId:'',
+     recordId:prev&&!contTurn?recordId:recordId||'',
      previousInteractionId:prev?.interactionId,
      prevSig:prev?.sig,
      followupContext:prev?.followupContext,
-     model:globalModel,
-     thinkingLevel,
+     model:sel.model,
+     thinkingLevel:sel.thinkingLevel,
     }),
     signal:ctl.signal,
    });
@@ -423,9 +514,11 @@ const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
    if(d.recordId)setRecordId(d.recordId);
 
    if(d.status==='completed'&&d.text){
+    cp.clear();
+    if(archCpRef.current===cp)archCpRef.current=null;
     patchTurn({status:'done',text:d.text,thoughts:d.thoughts||'',cached:Boolean(d.cached),usage:d.usage});
     void refreshRecords();
-    stopActive();
+    stopActive(true);
     return;
    }
    if(!d.id||!d.sig)throw new Error(L('未返回任务 ID','Missing interaction ID'));
@@ -442,17 +535,23 @@ const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
    });
   }catch(e){
    if(ctl.signal.aborted){
+    cp.clear();
+    if(archCpRef.current===cp)archCpRef.current=null;
     patchTurn({status:'error',error:L('已取消','Cancelled')});
    }else{
+    cp.update({mode,topic:cleanTopic,recordId:recordId||'',userText:cleanAns,text:curText,thoughts:curThoughts},'interrupted');
+    cp.flush('interrupted');
+    if(archCpRef.current===cp)archCpRef.current=null;
     const msg=(e as Error).message||L('评审失败','Review failed');
-    patchTurn({status:'error',error:msg});
+    patchTurn({status:'error',text:curText,thoughts:curThoughts,error:msg});
    }
-   stopActive();
+   stopActive(false);
   }
  };
 
  const resetAll=()=>{
-  stopActive();
+  stopActive(true);
+  removeAiCheckpoint(makeCheckpointKey('architect',recordId||'new'));
   setRecordId('');
   setTurns([]);
   setAnswer('');
@@ -557,7 +656,7 @@ const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
       {error&&<p className="ai-grade-error" style={{margin:0}}>{error}</p>}
 
       <div className="arch-actions">
-       {username||useLocal?(
+       {username||useLocalLive?(
         <button type="button" className="button primary" disabled={busy||!answer.trim()||!topic.trim()} onClick={()=>void runTurn(answer)}>
          <Sparkles size={15}/>
          <span>{L('开始深度点评','Start Review')}</span>
@@ -568,7 +667,7 @@ const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
          <span>{L('登录后开始点评','Sign in to Review')}</span>
         </a>
        )}
-       {useLocal&&(
+       {useLocalLive&&(
         <span className="jdr-quota-pill local">
          {L(`本地 · ${LOCAL_PROVIDER_LABEL[localCfg.provider]} · 不消耗站内额度`,`Local · ${LOCAL_PROVIDER_LABEL[localCfg.provider]}`)}
         </span>
@@ -607,7 +706,7 @@ const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
               <Loader2 size={16} className="ai-spin"/>
               <span>{L(`深度评审中 · ${elapsed}s`,`Reviewing · ${elapsed}s`)}</span>
              </span>
-             <button type="button" className="button secondary arch-stop-btn" onClick={stopActive}>
+             <button type="button" className="button secondary arch-stop-btn" onClick={()=>stopActive(true)}>
               <Square size={12} fill="currentColor"/>
               <span>{L('取消','Stop')}</span>
              </button>
@@ -616,7 +715,29 @@ const fmtTok=(n:number)=>n>=1000?`${(n/1000).toFixed(1)}K`:String(n);
             {turn.text&&<ReviewMarkdown text={turn.text}/>}
            </>
           ):turn.status==='error'?(
-           <p className="ai-grade-error" style={{margin:0}}>{turn.error}</p>
+           <div className="arch-interrupted">
+            <p className="ai-grade-error" style={{margin:0}}>{turn.error}</p>
+            {turn.thoughts&&<pre className="arch-thoughts-body" style={{marginTop:8}}>{turn.thoughts}</pre>}
+            {turn.text&&<ReviewMarkdown text={turn.text}/>}
+            <div className="arch-reply-btns" style={{marginTop:10}}>
+             <button
+              type="button"
+              className="button primary"
+              onClick={()=>void runTurn(turn.userText,{continueTurn:turn})}
+             >
+              <RotateCcw size={14}/>
+              <span>{L('继续生成','Continue')}</span>
+             </button>
+             <button
+              type="button"
+              className="button secondary"
+              onClick={()=>{removeAiCheckpoint(makeCheckpointKey('architect',recordId||'new'));setTurns(list=>list.filter(x=>x.id!==turn.id))}}
+             >
+              <X size={14}/>
+              <span>{L('清除','Clear')}</span>
+             </button>
+            </div>
+           </div>
           ):(
            <>
             {turn.thoughts&&(

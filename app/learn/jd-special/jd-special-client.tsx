@@ -43,12 +43,19 @@ import KeywordText, { EnWords } from '../../components/keyword-text';
 import { Annotated } from '../../interview/annotated';
 import { AnnotatedAnswerBox } from '../../ai/grade-view';
 import { requestGrade, type GradeThinkState } from '../../ai/grade-client';
-import { getActiveGlobalThinkingLevel, shouldUseLocalBridge, useGlobalAiModel } from '../../ai/thinking-pref';
+import { ensureAiConfigStatus, getCachedCustomAiSpec } from '../../ai/ai-settings';
+import { resolveLiveAiSelection } from '../../ai/thinking-pref';
 import { useI18n } from '../../components/i18n';
 import { aiQuizTypes, type AiQuiz } from '@/content/journey';
 import { answerBlocks } from '@/lib/my-questions';
-import { useLocalBridgeConfig } from '@/lib/local-bridge-config';
 import { streamDeepViaBridge } from '@/lib/local-bridge-client';
+import {
+ listAiCheckpoints,
+ makeCheckpointKey,
+ readAiCheckpoint,
+ removeAiCheckpoint,
+ writeAiCheckpoint,
+} from '@/lib/ai-checkpoint';
 import type { PlaygroundLang } from '@/lib/playground-bridge';
 import type { GradeItem, GradeResult } from '@/lib/grade-types';
 import type { AiTokenUsage as AntigravityUsage } from '@/lib/jd-research-types';
@@ -220,10 +227,6 @@ export default function JdSpecialClient({
  }, [topics]);
 
  const [activeTopicId, setActiveTopicId] = useState<string>(topics[0]?.id || '');
- const [globalModel] = useGlobalAiModel();
- const [localCfg] = useLocalBridgeConfig();
- const useLocal = shouldUseLocalBridge('deep', globalModel, localCfg);
- const thinkingLevel = getActiveGlobalThinkingLevel(globalModel, localCfg);
  const [tab, setTab] = useState<ViewTab>('practice');
  const [stepIdx, setStepIdx] = useState(0);
  const [dimIdx, setDimIdx] = useState(0);
@@ -531,23 +534,34 @@ export default function JdSpecialClient({
   setRegenNonce(prev => ({ ...prev, [targetKey]: (prev[targetKey] || 0) + 1 }));
  };
 
- const regenerateCurrentQuiz = async () => {
-  if (!topic || !currentEntry || regenKey) return;
-  const targetKey = currentEntry.key;
+ const regenerateQuizEntry = async (targetTopic: JdSpecialTopic, targetEntry: { stepIdx: number; quiz: AiQuiz; key: string }) => {
+  if (regenKey) return;
+  const targetKey = targetEntry.key;
+  const cpKey = makeCheckpointKey('jd-regen', `${targetTopic.id}:${targetEntry.stepIdx}:${targetEntry.quiz.id}`);
+  writeAiCheckpoint({
+   key: cpKey,
+   kind: 'jd-regen',
+   status: 'running',
+   startedAt: Date.now(),
+   updatedAt: Date.now(),
+   data: { topicId: targetTopic.id, stepIdx: targetEntry.stepIdx, quizId: targetEntry.quiz.id },
+  });
   setRegenKey(targetKey);
   setRegenErr('');
   try {
-   if (useLocal) {
+   if (!getCachedCustomAiSpec()) await ensureAiConfigStatus();
+   const sel = resolveLiveAiSelection('deep', getCachedCustomAiSpec(), !username);
+   if (sel.useLocal) {
     const pRes = await fetch('/api/jd-research/local-helper', {
      method: 'POST',
      headers: { 'content-type': 'application/json' },
      body: JSON.stringify({
       action: 'prompts',
       task: 'study-regen-quiz',
-      report: topic.report,
-      stepIdx: currentEntry.stepIdx,
-      quizId: currentEntry.quiz.id,
-      source: topic.source || topic.title,
+      report: targetTopic.report,
+      stepIdx: targetEntry.stepIdx,
+      quizId: targetEntry.quiz.id,
+      source: targetTopic.source || targetTopic.title,
      }),
     });
     const pData = (await pRes.json()) as {
@@ -561,10 +575,10 @@ export default function JdSpecialClient({
      throw new Error(pData.error || L('准备本地提示词失败', 'Failed to prepare prompt'));
     }
     const out = await streamDeepViaBridge({
-     cfg: localCfg,
+     cfg: sel.localCfg,
      system: pData.system,
      messages: [{ role: 'user', content: pData.user }],
-     thinkingLevel,
+     thinkingLevel: sel.thinkingLevel,
      jsonMode: true,
      onDelta: () => {},
     });
@@ -575,10 +589,10 @@ export default function JdSpecialClient({
       action: 'parse',
       task: 'study-regen-quiz',
       rawText: out.text,
-      stepIdx: currentEntry.stepIdx,
+      stepIdx: targetEntry.stepIdx,
       qIdx: pData.qIdx,
-      fallbackId: currentEntry.quiz.id,
-      fallbackDimension: currentEntry.quiz.dimension,
+      fallbackId: targetEntry.quiz.id,
+      fallbackDimension: targetEntry.quiz.dimension,
       targetType: pData.targetType,
      }),
     });
@@ -587,23 +601,24 @@ export default function JdSpecialClient({
      throw new Error(parseData.error || L('重出题目解析失败，请重试', 'Regeneration failed'));
     }
     const nextReport: JdResearchReport = {
-     ...topic.report,
-     roadmap: topic.report.roadmap.map((s, idx) =>
-      idx === currentEntry.stepIdx
+     ...targetTopic.report,
+     roadmap: targetTopic.report.roadmap.map((s, idx) =>
+      idx === targetEntry.stepIdx
        ? { ...s, quizzes: (s.quizzes ?? []).map((q, qi) => (qi === pData.qIdx ? parseData.quiz! : q)) }
        : s,
      ),
     };
-    fetch('/api/ai-interview-records', {
+    await fetch('/api/ai-interview-records', {
      method: 'POST',
      headers: { 'content-type': 'application/json' },
      body: JSON.stringify({
-      id: topic.id,
+      id: targetTopic.id,
       kind: 'jd-research',
       patch: true,
       payload: { report: nextReport },
      }),
     }).catch(() => {});
+    removeAiCheckpoint(cpKey);
     applyRegeneratedReport(targetKey, nextReport);
     return;
    }
@@ -612,11 +627,11 @@ export default function JdSpecialClient({
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-     recordId: topic.id,
-     stepIdx: currentEntry.stepIdx,
-     quizId: currentEntry.quiz.id,
-     model: globalModel,
-     thinkingLevel,
+     recordId: targetTopic.id,
+     stepIdx: targetEntry.stepIdx,
+     quizId: targetEntry.quiz.id,
+     model: sel.model,
+     thinkingLevel: sel.thinkingLevel,
     }),
    });
    const d = (await r.json()) as {
@@ -628,20 +643,38 @@ export default function JdSpecialClient({
    if (!r.ok || !d.ok || !d.report) {
     throw new Error(d.error || L('重出题目失败，请重试', 'Regeneration failed'));
    }
+   removeAiCheckpoint(cpKey);
    applyRegeneratedReport(targetKey, d.report, d.usage);
   } catch (e) {
+   removeAiCheckpoint(cpKey);
    setRegenErr((e as Error).message || L('重出题目失败，请重试', 'Regeneration failed'));
   } finally {
    setRegenKey('');
   }
  };
 
+ const regenerateCurrentQuiz = async () => {
+  if (!topic || !currentEntry) return;
+  await regenerateQuizEntry(topic, currentEntry);
+ };
+
  const fillMissingPhase = async (targetStepIdx: number) => {
   if (!topic || fillingStepIdx !== null) return;
+  const cpKey = makeCheckpointKey('jd-fill', `${topic.id}:${targetStepIdx}`);
+  writeAiCheckpoint({
+   key: cpKey,
+   kind: 'jd-fill',
+   status: 'running',
+   startedAt: Date.now(),
+   updatedAt: Date.now(),
+   data: { topicId: topic.id, stepIdx: targetStepIdx },
+  });
   setFillingStepIdx(targetStepIdx);
   setFillErr('');
   try {
-   if (useLocal) {
+   if (!getCachedCustomAiSpec()) await ensureAiConfigStatus();
+   const sel = resolveLiveAiSelection('deep', getCachedCustomAiSpec(), !username);
+   if (sel.useLocal) {
     const pRes = await fetch('/api/jd-research/local-helper', {
      method: 'POST',
      headers: { 'content-type': 'application/json' },
@@ -664,10 +697,10 @@ export default function JdSpecialClient({
      throw new Error(pData.error || L('补题提示词准备失败', 'Failed to prepare prompt'));
     }
     const out = await streamDeepViaBridge({
-     cfg: localCfg,
+     cfg: sel.localCfg,
      system: pData.system,
      messages: [{ role: 'user', content: pData.user }],
-     thinkingLevel,
+     thinkingLevel: sel.thinkingLevel,
      jsonMode: true,
      onDelta: () => {},
     });
@@ -692,7 +725,7 @@ export default function JdSpecialClient({
       idx === targetStepIdx ? { ...s, quizzes: parseData.quizzes } : s,
      ),
     };
-    fetch('/api/ai-interview-records', {
+    await fetch('/api/ai-interview-records', {
      method: 'POST',
      headers: { 'content-type': 'application/json' },
      body: JSON.stringify({
@@ -702,6 +735,7 @@ export default function JdSpecialClient({
       payload: { report: doneReport },
      }),
     }).catch(() => {});
+    removeAiCheckpoint(cpKey);
     setTopicList(prev => prev.map(t => (t.id === topic.id ? { ...t, report: doneReport } : t)));
     setShowGroupResult(false);
     setWrongOnlyKeys(null);
@@ -716,8 +750,8 @@ export default function JdSpecialClient({
     body: JSON.stringify({
      recordId: topic.id,
      stepIdx: targetStepIdx,
-     model: globalModel,
-     thinkingLevel,
+     model: sel.model,
+     thinkingLevel: sel.thinkingLevel,
     }),
    });
    if (!r.ok || !r.body) {
@@ -766,6 +800,7 @@ export default function JdSpecialClient({
    if (!doneReport) {
     throw new Error(L('补题未返回完整题库，请再试一次', 'Incomplete result — please try again'));
    }
+   removeAiCheckpoint(cpKey);
    setTopicList(prev =>
     prev.map(t =>
      t.id === topic.id ? { ...t, report: doneReport!, usage: doneUsage ?? t.usage } : t,
@@ -774,11 +809,51 @@ export default function JdSpecialClient({
    setQIndex(0);
    syncUrl(topic.id, tab, safeStepIdx, safeDimIdx, 0);
   } catch (e) {
+   removeAiCheckpoint(cpKey);
    setFillErr((e as Error).message || L('补题失败，请重试', 'Generation failed'));
   } finally {
    setFillingStepIdx(null);
   }
  };
+
+ const resumedSpecialCpRef = useRef<string>('');
+ useEffect(() => {
+  if (!topic) return;
+  const fillCps = listAiCheckpoints<{ topicId: string; stepIdx: number }>('jd-fill', 10 * 60_000);
+  for (const cp of fillCps) {
+   if (cp.data.topicId !== topic.id) continue;
+   const step = topic.report.roadmap[cp.data.stepIdx];
+   if (!step || (step.quizzes?.length ?? 0) >= 4) {
+    removeAiCheckpoint(cp.key);
+    continue;
+   }
+   if (resumedSpecialCpRef.current !== cp.key && fillingStepIdx === null) {
+    resumedSpecialCpRef.current = cp.key;
+    void fillMissingPhase(cp.data.stepIdx);
+    return;
+   }
+  }
+  const regenCps = listAiCheckpoints<{ topicId: string; stepIdx: number; quizId: string }>('jd-regen', 10 * 60_000);
+  for (const cp of regenCps) {
+   if (cp.data.topicId !== topic.id) continue;
+   const step = topic.report.roadmap[cp.data.stepIdx];
+   const quiz = step?.quizzes?.find(q => q.id === cp.data.quizId);
+   if (!quiz) {
+    removeAiCheckpoint(cp.key);
+    continue;
+   }
+   if (resumedSpecialCpRef.current !== cp.key && !regenKey) {
+    resumedSpecialCpRef.current = cp.key;
+    void regenerateQuizEntry(topic, {
+     stepIdx: cp.data.stepIdx,
+     quiz,
+     key: `${topic.id}:s${cp.data.stepIdx}:${quiz.id}`,
+    });
+    return;
+   }
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [topic?.id]);
 
  const toggleLegacyMastered = () => {
   if (!legacyKey) return;

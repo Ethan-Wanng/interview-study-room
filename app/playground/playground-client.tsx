@@ -10,6 +10,10 @@ import {codeEditing} from '../ai/code-input';
 import AiDock,{type DockRequest} from '../ai/ai-dock';
 import {PLAYGROUND_EXAMPLES,PLAYGROUND_LANGS} from '@/content/playground-examples';
 import {runPlaygroundCode,type PlaygroundRunResult} from '@/lib/playground-runner';
+import {PLAYGROUND_COMPLETE_SYSTEM_PROMPT,buildPlaygroundCompleteUserPrompt,stripOuterFence} from '@/lib/ai-prompts';
+import {streamDeepViaBridge} from '@/lib/local-bridge-client';
+import {ensureAiConfigStatus,getCachedAiConfigStatus,getCachedCustomAiSpec} from '../ai/ai-settings';
+import {resolveLiveAiSelection} from '../ai/thinking-pref';
 import {
  outputsMatchExpected,
  PG_LAST_LANG_KEY,
@@ -287,33 +291,54 @@ export default function PlaygroundClient({
   if(!targetCode.trim())return null;
   setAiFixing(true);
   if(!silent)setStatusMsg('');
-  try{
-   const r=await fetch('/api/playground/complete-main',{
-    method:'POST',
-    headers:{'content-type':'application/json'},
-    body:JSON.stringify({
-     lang:targetLang,
-     code:targetCode,
-     error:errorText,
-     title:ctx?.title||L(curEx.title[0],curEx.title[1]),
-     expect:ctx?.expect,
-     questionId:ctx?.questionId,
-    }),
-   });
-   const d=await r.json() as {ok?:boolean;code?:string;error?:string};
-   if(!r.ok||!d.ok||!d.code){
-    throw new Error(d.error||L('AI 补全暂不可用，请稍后重试。','AI completion unavailable.'));
+   try{
+   if(!getCachedAiConfigStatus())await ensureAiConfigStatus();
+   const sel=resolveLiveAiSelection('tutor',getCachedCustomAiSpec(),Boolean(getCachedAiConfigStatus()?.isGuest));
+   let nextCode='';
+   if(sel.useLocal){
+    const out=await streamDeepViaBridge({
+     cfg:sel.localCfg,
+     system:PLAYGROUND_COMPLETE_SYSTEM_PROMPT,
+     messages:[{role:'user',content:buildPlaygroundCompleteUserPrompt({lang:targetLang,code:targetCode,error:errorText,title:ctx?.title||L(curEx.title[0],curEx.title[1]),expect:ctx?.expect,questionId:ctx?.questionId})}],
+     thinkingLevel:sel.thinkingLevel,
+     onDelta:()=>{},
+    });
+    const cleaned=stripOuterFence(out.text);
+    if(cleaned.trim().length<8){
+     throw new Error(L('AI 补全暂不可用，请稍后重试。','AI completion unavailable.'));
+    }
+    nextCode=cleaned;
+   }else{
+    const r=await fetch('/api/playground/complete-main',{
+     method:'POST',
+     headers:{'content-type':'application/json'},
+     body:JSON.stringify({
+      lang:targetLang,
+      code:targetCode,
+      error:errorText,
+      title:ctx?.title||L(curEx.title[0],curEx.title[1]),
+      expect:ctx?.expect,
+      questionId:ctx?.questionId,
+      model:sel.model,
+      thinkingLevel:sel.thinkingLevel,
+     }),
+    });
+    const d=await r.json() as {ok?:boolean;code?:string;error?:string};
+    if(!r.ok||!d.ok||!d.code){
+     throw new Error(d.error||L('AI 补全暂不可用，请稍后重试。','AI completion unavailable.'));
+    }
+    nextCode=d.code;
    }
-   setCodes(prev=>({...prev,[targetLang]:d.code!}));
+   setCodes(prev=>({...prev,[targetLang]:nextCode}));
    if(ctx&&ctx.lang===targetLang){
-    setActiveLaunch(prev=>prev&&prev.id===ctx.id?{...prev,code:d.code!}:prev);
+    setActiveLaunch(prev=>prev&&prev.id===ctx.id?{...prev,code:nextCode}:prev);
    }else if(!ctx){
-    saveDraft(targetLang,exByLang[targetLang],d.code!);
+    saveDraft(targetLang,exByLang[targetLang],nextCode);
    }
    if(autoRunAfter){
-    void runCodeRef.current(targetLang,d.code!);
+    void runCodeRef.current(targetLang,nextCode);
    }
-   return d.code;
+   return nextCode;
   }catch(e){
    if(!silent)setStatusMsg(e instanceof Error?e.message:L('AI 补全失败，请稍后重试。','AI completion failed.'));
    return null;

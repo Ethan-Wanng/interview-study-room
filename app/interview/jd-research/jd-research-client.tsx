@@ -41,9 +41,17 @@ import {
 import SiteHeader from '../../components/site-header';
 import AddToNoteButton from '../../components/add-to-note';
 import { useI18n } from '../../components/i18n';
-import { getActiveGlobalThinkingLevel, shouldUseLocalBridge, useGlobalAiModel } from '../../ai/thinking-pref';
+import { ensureAiConfigStatus, getCachedCustomAiSpec } from '../../ai/ai-settings';
+import { resolveLiveAiSelection, shouldUseLocalBridge, useGlobalAiModel } from '../../ai/thinking-pref';
 import { LOCAL_PROVIDER_LABEL, useLocalBridgeConfig } from '@/lib/local-bridge-config';
 import { streamDeepViaBridge } from '@/lib/local-bridge-client';
+import {
+ createThrottledCheckpoint,
+ makeCheckpointKey,
+ readAiCheckpoint,
+ removeAiCheckpoint,
+ writeAiCheckpoint,
+} from '@/lib/ai-checkpoint';
 import { aiQuizTypes, type AiQuiz } from '@/content/journey';
 import type { AiTokenUsage as AntigravityUsage } from '@/lib/jd-research-types';
 import {
@@ -318,7 +326,6 @@ export default function JdResearchClient({
  const [globalModel] = useGlobalAiModel();
  const [localCfg] = useLocalBridgeConfig();
  const useLocal = shouldUseLocalBridge('deep', globalModel, localCfg);
- const thinkingLevel = getActiveGlobalThinkingLevel(globalModel, localCfg);
  const [usedToday, setUsedToday] = useState(dailyUsed ?? 0);
 
  const [kind, setKind] = useState<JdInputKind>('jd');
@@ -392,22 +399,48 @@ export default function JdResearchClient({
  const fileInputRef = useRef<HTMLInputElement | null>(null);
  const printRef = useRef<HTMLDivElement | null>(null);
  const resumePrintRef = useRef<HTMLDivElement | null>(null);
+ const researchCpRef = useRef<ReturnType<typeof createThrottledCheckpoint<{
+  recordId: string;
+  kind: JdInputKind;
+  source: string;
+  stageKey: JdStageKey;
+  thoughts: string;
+  tail: string;
+  model: string;
+ }>> | null>(null);
+ const resumeCpRef = useRef<ReturnType<typeof createThrottledCheckpoint<{
+  recordId: string;
+  bypassCache: boolean;
+  thoughts: string;
+  tail: string;
+  model: string;
+ }>> | null>(null);
+ const autoResumedRef = useRef<Set<string>>(new Set());
 
- const stopResume = () => {
+ const stopResume = (clearCheckpoint = false) => {
   resumeAbortRef.current?.abort();
   resumeAbortRef.current = null;
   if (resumeTimerRef.current !== null) {
    window.clearInterval(resumeTimerRef.current);
    resumeTimerRef.current = null;
   }
+  if (resumeCpRef.current) {
+   if (clearCheckpoint) resumeCpRef.current.clear();
+   else {
+    resumeCpRef.current.flush('interrupted');
+    resumeCpRef.current.dispose();
+   }
+   resumeCpRef.current = null;
+  }
   setGeneratingResume(false);
  };
 
- const stopActive = () => {
-  stopResume();
+ const stopActive = (clearCheckpoint = false) => {
+  stopResume(clearCheckpoint);
   bgModeRef.current = false;
   if (streamingRecordIdRef.current) {
    removeJdBgTask(streamingRecordIdRef.current);
+   if (clearCheckpoint) removeAiCheckpoint(makeCheckpointKey('jd-research', streamingRecordIdRef.current));
    streamingRecordIdRef.current = '';
   }
   abortRef.current?.abort();
@@ -415,6 +448,14 @@ export default function JdResearchClient({
   if (timerRef.current !== null) {
    window.clearInterval(timerRef.current);
    timerRef.current = null;
+  }
+  if (researchCpRef.current) {
+   if (clearCheckpoint) researchCpRef.current.clear();
+   else {
+    researchCpRef.current.flush('interrupted');
+    researchCpRef.current.dispose();
+   }
+   researchCpRef.current = null;
   }
   setBusy(false);
  };
@@ -430,6 +471,16 @@ export default function JdResearchClient({
     resumeTimerRef.current = null;
    }
    resumeAbortRef.current?.abort();
+   if (resumeCpRef.current) {
+    resumeCpRef.current.flush('interrupted');
+    resumeCpRef.current.dispose();
+    resumeCpRef.current = null;
+   }
+   if (researchCpRef.current) {
+    researchCpRef.current.flush('interrupted');
+    researchCpRef.current.dispose();
+    researchCpRef.current = null;
+   }
    // If a stream is active when navigating away, let it continue in background instead of aborting
    if (streamingRecordIdRef.current) {
     bgModeRef.current = true;
@@ -493,11 +544,45 @@ export default function JdResearchClient({
    setSelected(sel);
    setExpandedQ({ 0: true });
    setTargetSubject('mine');
+   if (recId) {
+    if (rep.resume) {
+     removeAiCheckpoint(makeCheckpointKey('jd-resume', recId));
+    } else {
+     const rCp = readAiCheckpoint<{
+      recordId: string;
+      bypassCache: boolean;
+      thoughts: string;
+      tail: string;
+      model: string;
+     }>(makeCheckpointKey('jd-resume', recId), 20 * 60_000);
+     if (rCp && (rCp.status === 'running' || rCp.status === 'interrupted') && !autoResumedRef.current.has(`resume:${recId}`)) {
+      autoResumedRef.current.add(`resume:${recId}`);
+      setTab('resume');
+      void generateResume({
+       bypassCache: rCp.data.bypassCache,
+       targetRecordId: recId,
+       targetReport: rep,
+       initialThoughts: rCp.data.thoughts,
+       initialTail: rCp.data.tail,
+       initialModel: rCp.data.model,
+      });
+     }
+    }
+   }
   }
  };
 
  const fillRoadmapPhase = async (stepIdx: number) => {
   if (!activeId || fillingStepIdx !== null) return;
+  const cpKey = makeCheckpointKey('jd-fill', `${activeId}:${stepIdx}`);
+  writeAiCheckpoint({
+   key: cpKey,
+   kind: 'jd-fill',
+   status: 'running',
+   startedAt: Date.now(),
+   updatedAt: Date.now(),
+   data: { recordId: activeId, stepIdx },
+  });
   setFillingStepIdx(stepIdx);
   setFillStepErr('');
   setResumeErr('');
@@ -505,7 +590,9 @@ export default function JdResearchClient({
   setResumeTail('');
   setResumeModel('');
   try {
-   if (useLocal && report) {
+   if (!getCachedCustomAiSpec()) await ensureAiConfigStatus();
+   const sel = resolveLiveAiSelection('deep', getCachedCustomAiSpec(), !username);
+   if (sel.useLocal && report) {
     const pRes = await fetch('/api/jd-research/local-helper', {
      method: 'POST',
      headers: { 'content-type': 'application/json' },
@@ -523,10 +610,10 @@ export default function JdResearchClient({
      throw new Error(pData.error || L('补题失败，请重试', 'Generation failed'));
     }
     const out = await streamDeepViaBridge({
-     cfg: localCfg,
+     cfg: sel.localCfg,
      system: pData.system,
      messages: [{ role: 'user', content: pData.user }],
-     thinkingLevel,
+     thinkingLevel: sel.thinkingLevel,
      jsonMode: true,
      onDelta: () => {},
     });
@@ -549,7 +636,7 @@ export default function JdResearchClient({
      ...report,
      roadmap: report.roadmap.map((step, idx) => (idx === stepIdx ? { ...step, quizzes: parseData.quizzes } : step)),
     };
-    fetch('/api/ai-interview-records', {
+    await fetch('/api/ai-interview-records', {
      method: 'POST',
      headers: { 'content-type': 'application/json' },
      body: JSON.stringify({
@@ -559,6 +646,7 @@ export default function JdResearchClient({
       payload: { report: doneReport },
      }),
     }).catch(() => {});
+    removeAiCheckpoint(cpKey);
     setReport(doneReport);
     void refreshRecords();
     return;
@@ -569,8 +657,8 @@ export default function JdResearchClient({
     body: JSON.stringify({
      recordId: activeId,
      stepIdx,
-     model: globalModel,
-     thinkingLevel,
+     model: sel.model,
+     thinkingLevel: sel.thinkingLevel,
     }),
    });
    if (!r.ok || !r.body) {
@@ -618,25 +706,36 @@ export default function JdResearchClient({
    if (!doneReport) {
     throw new Error(L('补题未返回完整题库，请再试一次', 'Incomplete result — please try again'));
    }
+   removeAiCheckpoint(cpKey);
    setReport(doneReport);
    if (doneUsage) setReportUsage(doneUsage);
    void refreshRecords();
   } catch (e) {
+   removeAiCheckpoint(cpKey);
    setFillStepErr((e as Error).message || L('补题失败，请重试', 'Generation failed'));
   } finally {
    setFillingStepIdx(null);
   }
  };
 
- const generateResume = async (opts?: { bypassCache?: boolean }) => {
-  if (!activeId || generatingResume || !report) return;
-  stopResume();
+ const generateResume = async (opts?: {
+  bypassCache?: boolean;
+  targetRecordId?: string;
+  targetReport?: JdResearchReport;
+  initialThoughts?: string;
+  initialTail?: string;
+  initialModel?: string;
+ }) => {
+  const rid = opts?.targetRecordId ?? activeId;
+  const targetRep = opts?.targetReport ?? report;
+  if (!rid || generatingResume || !targetRep) return;
+  stopResume(false);
   setGeneratingResume(true);
   setResumeElapsed(0);
   setResumeErr('');
-  setResumeThoughts('');
-  setResumeTail('');
-  setResumeModel('');
+  setResumeThoughts(opts?.initialThoughts ?? '');
+  setResumeTail(opts?.initialTail ?? '');
+  setResumeModel(opts?.initialModel ?? '');
 
   const ctl = new AbortController();
   resumeAbortRef.current = ctl;
@@ -645,11 +744,43 @@ export default function JdResearchClient({
    setResumeElapsed(Math.floor((Date.now() - t0) / 1000));
   }, 1000);
 
-  let accTh = '';
-  let accTail = '';
+  const cpKey = makeCheckpointKey('jd-resume', rid);
+  const cp = createThrottledCheckpoint<{
+   recordId: string;
+   bypassCache: boolean;
+   thoughts: string;
+   tail: string;
+   model: string;
+  }>(cpKey, 'jd-resume', 450);
+  resumeCpRef.current = cp;
+
+  let accTh = opts?.initialThoughts ?? '';
+  let accTail = opts?.initialTail ?? '';
+  let curModel = opts?.initialModel ?? '';
+  const saveCp = (status: 'running' | 'interrupted' = 'running') => {
+   cp.update(
+    {
+     recordId: rid,
+     bypassCache: Boolean(opts?.bypassCache),
+     thoughts: accTh.slice(-16_000),
+     tail: accTail,
+     model: curModel,
+    },
+    status,
+    curModel || undefined,
+   );
+  };
+  saveCp('running');
+  cp.flush('running');
+
   try {
-   if (useLocal) {
-    setResumeModel(`${LOCAL_PROVIDER_LABEL[localCfg.provider]} · ${localCfg.model.trim() || 'default'}`);
+   if (!getCachedCustomAiSpec()) await ensureAiConfigStatus();
+   if (ctl.signal.aborted) return;
+   const sel = resolveLiveAiSelection('deep', getCachedCustomAiSpec(), !username);
+   if (sel.useLocal) {
+    curModel = `${LOCAL_PROVIDER_LABEL[sel.localCfg.provider]} · ${sel.localCfg.model.trim() || 'default'}`;
+    setResumeModel(curModel);
+    saveCp('running');
     const pRes = await fetch('/api/jd-research/local-helper', {
      method: 'POST',
      headers: { 'content-type': 'application/json' },
@@ -657,8 +788,8 @@ export default function JdResearchClient({
       action: 'prompts',
       task: 'resume',
       kind,
-      source: source || report.roleTitle,
-      report,
+      source: source || targetRep.roleTitle,
+      report: targetRep,
      }),
      signal: ctl.signal,
     });
@@ -667,19 +798,25 @@ export default function JdResearchClient({
      throw new Error(pData.error || L('生成参考简历失败，请重试', 'Resume generation failed'));
     }
     const out = await streamDeepViaBridge({
-     cfg: localCfg,
+     cfg: sel.localCfg,
      system: pData.system,
      messages: [{ role: 'user', content: pData.user }],
-     thinkingLevel,
+     thinkingLevel: sel.thinkingLevel,
      jsonMode: true,
-     onModel: m => setResumeModel(m),
+     onModel: m => {
+      curModel = m;
+      setResumeModel(m);
+      saveCp('running');
+     },
      onThink: d => {
       accTh += d;
       setResumeThoughts(accTh);
+      saveCp('running');
      },
      onDelta: d => {
       accTail = (accTail + d).replace(/\s+/g, ' ').slice(-180);
       setResumeTail(accTail);
+      saveCp('running');
      },
      signal: ctl.signal,
     });
@@ -690,7 +827,7 @@ export default function JdResearchClient({
       action: 'parse',
       task: 'resume',
       rawText: out.text,
-      roleTitle: report.roleTitle,
+      roleTitle: targetRep.roleTitle,
      }),
      signal: ctl.signal,
     });
@@ -698,17 +835,19 @@ export default function JdResearchClient({
     if (!parseRes.ok || !parseData.resume) {
      throw new Error(parseData.error || L('参考简历生成未完成，请重试', 'Incomplete resume — please retry'));
     }
-    const doneReport: JdResearchReport = { ...report, resume: parseData.resume };
-    fetch('/api/ai-interview-records', {
+    const doneReport: JdResearchReport = { ...targetRep, resume: parseData.resume };
+    await fetch('/api/ai-interview-records', {
      method: 'POST',
      headers: { 'content-type': 'application/json' },
      body: JSON.stringify({
-      id: activeId,
+      id: rid,
       kind: 'jd-research',
       patch: true,
       payload: { report: doneReport },
      }),
     }).catch(() => {});
+    cp.clear();
+    if (resumeCpRef.current === cp) resumeCpRef.current = null;
     setReport(doneReport);
     void refreshRecords();
     return;
@@ -717,10 +856,10 @@ export default function JdResearchClient({
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-     recordId: activeId,
+     recordId: rid,
      bypassCache: Boolean(opts?.bypassCache),
-     model: globalModel,
-     thinkingLevel,
+     model: sel.model,
+     thinkingLevel: sel.thinkingLevel,
     }),
     signal: ctl.signal,
    });
@@ -761,20 +900,27 @@ export default function JdResearchClient({
      } catch {
       continue;
      }
-     if (ev.model) setResumeModel(ev.model);
+     if (ev.model) {
+      curModel = ev.model;
+      setResumeModel(ev.model);
+      saveCp('running');
+     }
      if (ev.type === 'reset') {
       accTail = '';
       setResumeTail('');
+      saveCp('running');
       continue;
      }
      if (ev.type === 'thought' && typeof ev.text === 'string' && ev.text) {
       accTh += ev.text;
       setResumeThoughts(accTh);
+      saveCp('running');
       continue;
      }
      if (ev.type === 'delta' && typeof ev.text === 'string' && ev.text) {
       accTail = (accTail + ev.text).replace(/\s+/g, ' ').slice(-180);
       setResumeTail(accTail);
+      saveCp('running');
       continue;
      }
      if (ev.type === 'error') {
@@ -789,11 +935,15 @@ export default function JdResearchClient({
    if (!doneReport?.resume) {
     throw new Error(L('参考简历生成未完成，请重试', 'Incomplete resume — please retry'));
    }
+   cp.clear();
+   if (resumeCpRef.current === cp) resumeCpRef.current = null;
    setReport(doneReport);
    if (doneUsage) setReportUsage(doneUsage);
    void refreshRecords();
   } catch (e) {
    if (!ctl.signal.aborted) {
+    saveCp('interrupted');
+    cp.flush('interrupted');
     setResumeErr((e as Error).message || L('生成参考简历失败，请重试', 'Resume generation failed'));
    }
   } finally {
@@ -801,6 +951,10 @@ export default function JdResearchClient({
    if (resumeTimerRef.current !== null) {
     window.clearInterval(resumeTimerRef.current);
     resumeTimerRef.current = null;
+   }
+   if (resumeCpRef.current === cp) {
+    cp.dispose();
+    resumeCpRef.current = null;
    }
    setGeneratingResume(false);
   }
@@ -1072,16 +1226,48 @@ export default function JdResearchClient({
     }
    }
 
-   if (!alive || wantNew || !items.length) return;
+   if (!alive || wantNew || !items.length) {
+    try {
+     const rawDraft = window.localStorage.getItem('isr-jdr-draft:v1');
+     if (rawDraft) {
+      const d = JSON.parse(rawDraft) as { kind?: JdInputKind; source?: string; jdUrl?: string };
+      if (d.kind === 'experience' || d.kind === 'jd') setKind(d.kind);
+      if (d.source) setSource(d.source.slice(0, 14_000));
+      if (d.jdUrl) setJdUrl(d.jdUrl.slice(0, 2000));
+     }
+    } catch {}
+    return;
+   }
    const target = (wantId ? items.find(x => x.id === wantId) : null) || items[0];
-   if (target.status === 'running' && target.interactionId && target.sig && target.payload?.pipeline !== 'v3-steps') {
+   if (target.status === 'running' && target.interactionId && target.sig && target.payload?.pipeline !== 'v3-steps' && target.payload?.pipeline !== 'local-bridge') {
     void pollLegacyTask(target);
    } else if (target.status === 'running') {
+    const srcText = target.payload?.source || '';
     setActiveId(target.id);
     setPartialReport(target.payload?.partialReport ?? null);
     if (target.payload?.kind) setKind(target.payload.kind);
-    if (target.payload?.source) setSource(target.payload.source);
-    setError(L('上次调研未完成（已完成步骤已缓存），请点击「一键重试」继续', 'Previous run interrupted — click Retry to resume'));
+    if (srcText) setSource(srcText);
+    const cp = readAiCheckpoint<{
+     recordId: string;
+     kind: JdInputKind;
+     source: string;
+     stageKey: JdStageKey;
+     thoughts: string;
+     tail: string;
+     model: string;
+    }>(makeCheckpointKey('jd-research', target.id), 25 * 60_000);
+    if (cp && (cp.status === 'running' || cp.status === 'interrupted') && !autoResumedRef.current.has(`research:${target.id}`) && (srcText.trim().length >= 15 || cp.data.source.trim().length >= 15)) {
+     autoResumedRef.current.add(`research:${target.id}`);
+     void runResearch({
+      reuseRecordId: target.id,
+      overrideSource: srcText || cp.data.source,
+      initialThoughts: cp.data.thoughts || target.payload?.thoughts || '',
+      initialTail: cp.data.tail || '',
+      existingPartial: target.payload?.partialReport ?? null,
+     });
+    } else {
+     setError(L('上次调研未完成（已完成步骤已缓存），请点击「一键重试」继续', 'Previous run interrupted — click Retry to resume'));
+    }
    } else if (target.status === 'error') {
     setActiveId(target.id);
     if (target.payload?.kind) setKind(target.payload.kind);
@@ -1277,9 +1463,27 @@ export default function JdResearchClient({
   }
  };
 
+ useEffect(() => {
+  if (report || busy) return;
+  try {
+   if (source.trim() || jdUrl.trim()) {
+    window.localStorage.setItem('isr-jdr-draft:v1', JSON.stringify({ kind, source: source.slice(0, 14_000), jdUrl: jdUrl.slice(0, 2000) }));
+   } else {
+    window.localStorage.removeItem('isr-jdr-draft:v1');
+   }
+  } catch {}
+ }, [kind, source, jdUrl, report, busy]);
+
  const canSubmitResearch = source.trim().length >= 20 || /^https?:\/\//i.test(jdUrl.trim()) || images.length > 0;
 
- const runResearch = async (opts?: { bypassCache?: boolean; reuseRecordId?: string; overrideSource?: string }) => {
+ const runResearch = async (opts?: {
+  bypassCache?: boolean;
+  reuseRecordId?: string;
+  overrideSource?: string;
+  initialThoughts?: string;
+  initialTail?: string;
+  existingPartial?: JdResearchReport | null;
+ }) => {
   const clean = (opts?.overrideSource ?? source).trim();
   const cleanUrl = jdUrl.trim();
   if (clean.length < 20 && !/^https?:\/\//i.test(cleanUrl) && images.length === 0) {
@@ -1287,7 +1491,11 @@ export default function JdResearchClient({
    return;
   }
 
-  stopActive();
+  if (!getCachedCustomAiSpec()) await ensureAiConfigStatus();
+  const sel = resolveLiveAiSelection('deep', getCachedCustomAiSpec(), !username);
+
+  stopActive(false);
+  try { window.localStorage.removeItem('isr-jdr-draft:v1'); } catch {}
   bgModeRef.current = false;
   setError('');
   setBgTip('');
@@ -1295,7 +1503,7 @@ export default function JdResearchClient({
   setElapsed(0);
   setConnState('connecting');
   setStreamChars(0);
-  setStreamTail('');
+  setStreamTail(opts?.initialTail ?? '');
   setPingBeats(0);
   setReport(null);
   setReportDurationMs(undefined);
@@ -1304,7 +1512,7 @@ export default function JdResearchClient({
   setResumeThoughts('');
   setResumeTail('');
   setResumeModel('');
-  setPartialReport(null);
+  setPartialReport(opts?.existingPartial ?? null);
   setLiveProgress({
    stage: 1,
    activeKey: 'profile',
@@ -1315,9 +1523,9 @@ export default function JdResearchClient({
    qTitles: [],
   });
   setRawText('');
-  setThoughts('');
-  setStreamModel(useLocal ? LOCAL_PROVIDER_LABEL[localCfg.provider] : 'DeepSeek');
-  setStreamThoughts('');
+  setThoughts(opts?.initialThoughts ?? '');
+  setStreamModel(sel.useLocal ? LOCAL_PROVIDER_LABEL[sel.localCfg.provider] : 'DeepSeek');
+  setStreamThoughts(opts?.initialThoughts ?? '');
   setImportResult(null);
 
   const ctl = new AbortController();
@@ -1335,12 +1543,41 @@ export default function JdResearchClient({
   let resolvedUrl = cleanUrl;
   let resolvedImages = [...images];
 
-  let accThoughts = '';
-  let accTail = '';
+  let accThoughts = opts?.initialThoughts ?? '';
+  let accTail = opts?.initialTail ?? '';
   let completedCharsBase = 0;
-  const stage1Ref: { value: JdResearchReport | null } = { value: null };
+  const stage1Ref: { value: JdResearchReport | null } = { value: opts?.existingPartial ?? null };
   let phaseQuizCounts: number[] = [];
   let liveQTitles: string[] = [];
+
+  const syncResearchCp = (status: 'running' | 'interrupted' = 'running', modelLabel = '') => {
+   if (!curRecordId) return;
+   const cpKey = makeCheckpointKey('jd-research', curRecordId);
+   if (!researchCpRef.current) {
+    researchCpRef.current = createThrottledCheckpoint<{
+     recordId: string;
+     kind: JdInputKind;
+     source: string;
+     stageKey: JdStageKey;
+     thoughts: string;
+     tail: string;
+     model: string;
+    }>(cpKey, 'jd-research', 500);
+   }
+   researchCpRef.current.update(
+    {
+     recordId: curRecordId,
+     kind,
+     source: resolvedSrc,
+     stageKey: curStageKey,
+     thoughts: accThoughts.slice(-16_000),
+     tail: accTail,
+     model: modelLabel,
+    },
+    status,
+    modelLabel || undefined,
+   );
+  };
 
   const sleep = (ms: number) =>
    new Promise<void>(resolve => {
@@ -1360,6 +1597,7 @@ export default function JdResearchClient({
    accThoughts += chunk;
    setStreamThoughts(accThoughts);
    setConnState(prev => (prev === 'streaming' ? prev : 'thinking'));
+   syncResearchCp('running');
   };
 
   type StepError = Error & { status?: number; code?: string };
@@ -1368,7 +1606,7 @@ export default function JdResearchClient({
    const r = await fetch('/api/jd-research', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ ...payload, model: globalModel, thinkingLevel }),
+    body: JSON.stringify({ ...payload, model: sel.model, thinkingLevel: sel.thinkingLevel }),
     signal: ctl.signal,
    });
    let data: Record<string, unknown> = {};
@@ -1426,7 +1664,7 @@ export default function JdResearchClient({
    const r = await fetch('/api/jd-research', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ ...payload, action: actionName, model: globalModel, thinkingLevel }),
+    body: JSON.stringify({ ...payload, action: actionName, model: sel.model, thinkingLevel: sel.thinkingLevel }),
     signal: ctl.signal,
    });
    if (!r.ok || !r.body) {
@@ -1548,8 +1786,8 @@ export default function JdResearchClient({
    if (!isDirectModelStep) {
     appendThought(
      L(
-      `\n[⚡ Antigravity Agent 触发限流，切换 DeepSeek 接力完成「${optsStep.label}」…]\n`,
-      `\n[⚡ Antigravity Agent rate-limited, falling back to DeepSeek for ${optsStep.label}…]\n`,
+      `\n[⚡ 触发限流，切换 DeepSeek 接力完成「${optsStep.label}」…]\n`,
+      `\n[⚡ Rate-limited, falling back to DeepSeek for ${optsStep.label}…]\n`,
      ),
     );
     setStreamModel('DeepSeek V4.1 Flash');
@@ -1625,7 +1863,7 @@ export default function JdResearchClient({
      }
      attempt++;
      if (attempt >= maxAttempts) throw e;
-     appendThought(`\n[↺ ${optsStep.label} 第 ${attempt} 次耐心重试 Antigravity Agent…]\n`);
+     appendThought(`\n[↺ ${optsStep.label} 第 ${attempt} 次重连…]\n`);
      await sleep(Math.min(15_000, 2500 * attempt));
      continue;
     }
@@ -1780,13 +2018,13 @@ export default function JdResearchClient({
     if (attempt < maxAttempts) {
      if (lastAttemptWasRateLimit) {
       appendThought(
-       `\n[↺ ${optsStep.label} 切换下一个 Antigravity 模型试探（${lastFailureReason || '触发限流'}）…]\n`,
+       `\n[↺ ${optsStep.label} 切换备用通道重试（${lastFailureReason || '触发限流'}）…]\n`,
       );
       lastAttemptWasRateLimit = false;
       await sleep(800);
      } else {
       appendThought(
-       `\n[↺ ${optsStep.label} 第 ${attempt}/${maxAttempts} 次耐心重连 Antigravity Agent（${lastFailureReason || '超时重试'}）…]\n`,
+       `\n[↺ ${optsStep.label} 第 ${attempt}/${maxAttempts} 次重连（${lastFailureReason || '超时重试'}）…]\n`,
       );
       await sleep(Math.min(12_000, 2500 * attempt));
      }
@@ -1796,9 +2034,9 @@ export default function JdResearchClient({
    return false;
   };
 
-  try {
-   if (useLocal) {
-    const localLabel = `${LOCAL_PROVIDER_LABEL[localCfg.provider]} · ${localCfg.model.trim() || 'default'}`;
+   try {
+   if (sel.useLocal) {
+    const localLabel = `${LOCAL_PROVIDER_LABEL[sel.localCfg.provider]} · ${sel.localCfg.model.trim() || 'default'}`;
     setStreamModel(localLabel);
     setConnState('connected');
     if (resolvedSrc.length < 15 && (resolvedUrl || resolvedImages.length > 0)) {
@@ -1840,48 +2078,88 @@ export default function JdResearchClient({
     curRecordId = localRecId;
     streamingRecordIdRef.current = localRecId;
     setActiveId(localRecId);
+    syncResearchCp('running', localLabel);
+    researchCpRef.current?.flush('running');
 
-    // Stage 1 via Local Bridge
+    const saveLocalCheckpointRecord = async (nextPartial: JdResearchReport, statusVal: 'running' | 'completed' = 'running', extraPayload: Record<string, unknown> = {}) => {
+     await fetch('/api/ai-interview-records', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+       id: localRecId,
+       kind: 'jd-research',
+       title: nextPartial.roleTitle || curTitle,
+       subtitle: [nextPartial.inferredLevel, nextPartial.prepDays].filter(Boolean).join(' · ') || L('本地客户端调研', 'Local Client'),
+       status: statusVal,
+       payload: {
+        kind,
+        source: resolvedSrc,
+        pipeline: 'local-bridge',
+        startedAt: t0,
+        model: finalModel,
+        ...(statusVal === 'completed' ? { report: nextPartial } : { partialReport: nextPartial }),
+        thoughts: accThoughts.slice(-16_000),
+        ...extraPayload,
+       },
+      }),
+     }).catch(() => {});
+    };
+
+    // Stage 1 via Local Bridge (or reuse checkpoint)
     let runningChars = 0;
     let finalModel = localLabel;
-    const s1Prompts = await callHelper<{ system: string; user: string }>({
-     action: 'prompts',
-     task: 'stage1',
-     kind,
-     source: resolvedSrc,
-    });
-    const s1Out = await streamDeepViaBridge({
-     cfg: localCfg,
-     system: s1Prompts.system,
-     messages: [{ role: 'user', content: s1Prompts.user }],
-     thinkingLevel,
-     jsonMode: true,
-     onModel: m => {
-      finalModel = m;
-      setStreamModel(m);
-     },
-     onThink: d => appendThought(d),
-     onDelta: d => {
-      runningChars += d.length;
-      setStreamChars(runningChars);
-      setConnState('streaming');
-      accTail = (accTail + d).replace(/\s+/g, ' ').slice(-220);
-      setStreamTail(accTail);
-     },
-     signal: ctl.signal,
-    });
-    const s1Parsed = await callHelper<{ report: JdResearchReport }>({
-     action: 'parse',
-     task: 'stage1',
-     rawText: s1Out.text,
-    });
-    const s1Report = s1Parsed.report;
+    const existingRec = opts?.reuseRecordId ? records.find(r => r.id === opts.reuseRecordId) : undefined;
+    const existingPartial = opts?.existingPartial ?? existingRec?.payload?.partialReport ?? null;
+    let s1Report: JdResearchReport;
+    if (existingPartial && existingPartial.roadmap.length > 0 && !opts?.bypassCache) {
+     s1Report = existingPartial;
+     appendThought(L('✓ 已命中断点缓存（阶段一，0 Token）\n', '✓ Resumed Stage 1 from checkpoint\n'));
+    } else {
+     const s1Prompts = await callHelper<{ system: string; user: string }>({
+      action: 'prompts',
+      task: 'stage1',
+      kind,
+      source: resolvedSrc,
+     });
+     const s1Out = await streamDeepViaBridge({
+      cfg: sel.localCfg,
+      system: s1Prompts.system,
+      messages: [{ role: 'user', content: s1Prompts.user }],
+      thinkingLevel: sel.thinkingLevel,
+      jsonMode: true,
+      onModel: m => {
+       finalModel = m;
+       setStreamModel(m);
+       syncResearchCp('running', m);
+      },
+      onThink: d => appendThought(d),
+      onDelta: d => {
+       runningChars += d.length;
+       setStreamChars(runningChars);
+       setConnState('streaming');
+       accTail = (accTail + d).replace(/\s+/g, ' ').slice(-220);
+       setStreamTail(accTail);
+       syncResearchCp('running', finalModel);
+      },
+      signal: ctl.signal,
+     });
+     const s1Parsed = await callHelper<{ report: JdResearchReport }>({
+      action: 'parse',
+      task: 'stage1',
+      rawText: s1Out.text,
+     });
+     s1Report = s1Parsed.report;
+     await saveLocalCheckpointRecord(s1Report, 'running');
+    }
     setPartialReport(s1Report);
     curTitle = s1Report.roleTitle || curTitle;
 
     const totalPhases = s1Report.roadmap.length;
-    const phaseQuizLists: (AiQuiz[] | null)[] = Array.from({ length: totalPhases }, () => null);
+    const phaseQuizLists: (AiQuiz[] | null)[] = s1Report.roadmap.map(s =>
+     !opts?.bypassCache && (s.quizzes?.length ?? 0) >= 4 ? s.quizzes! : null,
+    );
     const updateLocalProg = (activeKey: JdStageKey) => {
+     curStageKey = activeKey;
      setLiveProgress({
       stage: 2,
       activeKey,
@@ -1892,16 +2170,23 @@ export default function JdResearchClient({
       dimCount: s1Report.dimensions.length,
       stageCount: totalPhases,
       quizCount: phaseQuizLists.reduce((n, list) => n + (list?.length ?? 0), 0),
-      questionCount: 0,
-      qTitles: [],
+      questionCount: existingPartial?.questions?.length ?? 0,
+      qTitles: (existingPartial?.questions ?? []).map(q => q.title),
      });
+     syncResearchCp('running', finalModel);
     };
     updateLocalProg('quizzes');
 
-    // Stage 2A: per-phase study quizzes sequentially on local client
+    let workingPartial: JdResearchReport = { ...s1Report };
+
+    // Stage 2A: per-phase study quizzes sequentially on local client (with D1 checkpoint per phase)
     for (let pi = 0; pi < totalPhases; pi++) {
      if (ctl.signal.aborted) return;
      const step = s1Report.roadmap[pi];
+     if (phaseQuizLists[pi]) {
+      appendThought(L(`\n── 路径 ${pi + 1}/${totalPhases}：已命中断点缓存（${phaseQuizLists[pi]!.length} 题）──\n`, `\n── Phase ${pi + 1}/${totalPhases}: cached (${phaseQuizLists[pi]!.length}) ──\n`));
+      continue;
+     }
      accTail = '';
      setStreamTail('');
      appendThought(`\n\n── 路径 ${pi + 1}/${totalPhases}：${step.phase} · ${step.title} ──\n`);
@@ -1915,14 +2200,15 @@ export default function JdResearchClient({
        phaseIndex: pi,
       });
       const pzOut = await streamDeepViaBridge({
-       cfg: localCfg,
+       cfg: sel.localCfg,
        system: pzPrompts.system,
        messages: [{ role: 'user', content: pzPrompts.user }],
-       thinkingLevel,
+       thinkingLevel: sel.thinkingLevel,
        jsonMode: true,
        onModel: m => {
         finalModel = m;
         setStreamModel(m);
+        syncResearchCp('running', m);
        },
        onThink: d => appendThought(d),
        onDelta: d => {
@@ -1930,6 +2216,7 @@ export default function JdResearchClient({
         setStreamChars(runningChars);
         accTail = (accTail + d).replace(/\s+/g, ' ').slice(-220);
         setStreamTail(accTail);
+        syncResearchCp('running', finalModel);
        },
        signal: ctl.signal,
       });
@@ -1941,6 +2228,11 @@ export default function JdResearchClient({
        reusedQuizzes: pzPrompts.reusedQuizzes || [],
       });
       phaseQuizLists[pi] = pzParsed.quizzes;
+      workingPartial = {
+       ...workingPartial,
+       roadmap: workingPartial.roadmap.map((st, idx) => (idx === pi ? { ...st, quizzes: pzParsed.quizzes } : st)),
+      };
+      await saveLocalCheckpointRecord(workingPartial, 'running');
       appendThought(L(`✓ 完成 ${pzParsed.quizzes.length} 题\n`, `✓ ${pzParsed.quizzes.length} quizzes\n`));
       updateLocalProg('quizzes');
      } catch (e) {
@@ -1953,80 +2245,79 @@ export default function JdResearchClient({
     updateLocalProg('questions');
     accTail = '';
     setStreamTail('');
-    appendThought(L('\n\n── 生成高频面试专题题库 ──\n', '\n\n── Generating interview questions ──\n'));
     let questionsRawText = '';
-    try {
-     const qPrompts = await callHelper<{ system: string; user: string }>({
-      action: 'prompts',
-      task: 'questions',
-      kind,
-      source: resolvedSrc,
-      stage1: s1Report,
-     });
-     const qOut = await streamDeepViaBridge({
-      cfg: localCfg,
-      system: qPrompts.system,
-      messages: [{ role: 'user', content: qPrompts.user }],
-      thinkingLevel,
-      jsonMode: true,
-      onModel: m => {
-       finalModel = m;
-       setStreamModel(m);
-      },
-      onThink: d => appendThought(d),
-      onDelta: d => {
-       runningChars += d.length;
-       setStreamChars(runningChars);
-       accTail = (accTail + d).replace(/\s+/g, ' ').slice(-220);
-       setStreamTail(accTail);
-      },
-      signal: ctl.signal,
-     });
-     questionsRawText = qOut.text;
-    } catch (e) {
-     if (ctl.signal.aborted) throw e;
-    }
-
-    const merged = await callHelper<{ report: JdResearchReport }>({
-     action: 'parse',
-     task: 'merge-stage2',
-     stage1: s1Report,
-     phaseQuizLists,
-     questionsRawText,
-    });
-    const finalReport = merged.report;
-    const durationMs = Math.max(1000, Date.now() - t0);
-    const subtitle = [finalReport.inferredLevel, finalReport.prepDays].filter(Boolean).join(' · ') || L('本地客户端调研', 'Local Client');
-
-    await fetch('/api/ai-interview-records', {
-     method: 'POST',
-     headers: { 'content-type': 'application/json' },
-     body: JSON.stringify({
-      id: localRecId,
-      kind: 'jd-research',
-      title: finalReport.roleTitle || curTitle,
-      subtitle,
-      status: 'completed',
-      payload: {
+    const existingQuestions = !opts?.bypassCache && (existingPartial?.questions?.length ?? 0) > 0 ? existingPartial!.questions : null;
+    if (existingQuestions) {
+     appendThought(L(`\n\n── 面试专题题库：已命中断点缓存（${existingQuestions.length} 题）──\n`, `\n\n── Questions: cached (${existingQuestions.length}) ──\n`));
+    } else {
+     appendThought(L('\n\n── 生成高频面试专题题库 ──\n', '\n\n── Generating interview questions ──\n'));
+     try {
+      const qPrompts = await callHelper<{ system: string; user: string }>({
+       action: 'prompts',
+       task: 'questions',
        kind,
        source: resolvedSrc,
-       pipeline: 'local-bridge',
-       startedAt: t0,
-       durationMs,
-       model: finalModel,
-       report: finalReport,
-       thoughts: accThoughts,
-      },
-     }),
-    }).catch(() => {});
+       stage1: s1Report,
+      });
+      const qOut = await streamDeepViaBridge({
+       cfg: sel.localCfg,
+       system: qPrompts.system,
+       messages: [{ role: 'user', content: qPrompts.user }],
+       thinkingLevel: sel.thinkingLevel,
+       jsonMode: true,
+       onModel: m => {
+        finalModel = m;
+        setStreamModel(m);
+        syncResearchCp('running', m);
+       },
+       onThink: d => appendThought(d),
+       onDelta: d => {
+        runningChars += d.length;
+        setStreamChars(runningChars);
+        accTail = (accTail + d).replace(/\s+/g, ' ').slice(-220);
+        setStreamTail(accTail);
+        syncResearchCp('running', finalModel);
+       },
+       signal: ctl.signal,
+      });
+      questionsRawText = qOut.text;
+     } catch (e) {
+      if (ctl.signal.aborted) throw e;
+     }
+    }
 
+    let finalReport: JdResearchReport;
+    if (existingQuestions && !questionsRawText) {
+     finalReport = {
+      ...workingPartial,
+      roadmap: workingPartial.roadmap.map((st, idx) =>
+       phaseQuizLists[idx] ? { ...st, quizzes: phaseQuizLists[idx]! } : st,
+      ),
+      questions: existingQuestions,
+     };
+    } else {
+     const merged = await callHelper<{ report: JdResearchReport }>({
+      action: 'parse',
+      task: 'merge-stage2',
+      stage1: s1Report,
+      phaseQuizLists,
+      questionsRawText,
+     });
+     finalReport = merged.report;
+    }
+    const durationMs = Math.max(1000, Date.now() - t0);
+    await saveLocalCheckpointRecord(finalReport, 'completed', { durationMs });
+
+    researchCpRef.current?.clear();
+    researchCpRef.current = null;
+    removeAiCheckpoint(makeCheckpointKey('jd-research', localRecId));
     streamingRecordIdRef.current = '';
     applyReportView(localRecId, finalReport, '', accThoughts, finalModel, null, resolvedSrc, {
      durationMs,
      kind,
     });
     void refreshRecords();
-    stopActive();
+    stopActive(true);
     return;
    }
 
@@ -2423,7 +2714,12 @@ export default function JdResearchClient({
 
    const doneId = finalRes.recordId || curRecordId;
    streamingRecordIdRef.current = '';
-   if (doneId) removeJdBgTask(doneId);
+   if (doneId) {
+    removeJdBgTask(doneId);
+    removeAiCheckpoint(makeCheckpointKey('jd-research', doneId));
+   }
+   researchCpRef.current?.clear();
+   researchCpRef.current = null;
    const finalThoughts = finalRes.thoughts || accThoughts;
    if (!bgModeRef.current) {
     if (!finalRes.cached) setUsedToday(u => u + 1);
@@ -2432,7 +2728,7 @@ export default function JdResearchClient({
      finalRes.report ?? null,
      finalRes.rawText || '',
      finalThoughts,
-     finalRes.model || 'Antigravity Agent',
+     finalRes.model || 'DeepSeek',
      null,
      resolvedSrc,
      {
@@ -2451,11 +2747,14 @@ export default function JdResearchClient({
     });
    }
    void refreshRecords();
-   stopActive();
+   stopActive(true);
   } catch (e) {
    streamingRecordIdRef.current = '';
    if (curRecordId) removeJdBgTask(curRecordId);
    if (!ctl.signal.aborted) {
+    researchCpRef.current?.flush('interrupted');
+    researchCpRef.current?.dispose();
+    researchCpRef.current = null;
     const msg = (e as Error).message || L('调研失败，已完成步骤已保存，点击「一键重试」继续', 'Research failed — click Retry');
     if (curRecordId) {
      void fetch('/api/jd-research', {
@@ -2976,7 +3275,7 @@ export default function JdResearchClient({
           <Minimize2 size={13} />
           <span>{L('后台生成', 'Run in Background')}</span>
          </button>
-         <button type="button" className="button secondary arch-stop-btn" onClick={stopActive}>
+         <button type="button" className="button secondary arch-stop-btn" onClick={() => stopActive(true)}>
           <Square size={12} fill="currentColor" />
           <span>{L('停止', 'Stop')}</span>
          </button>
@@ -3682,7 +3981,7 @@ export default function JdResearchClient({
               {resumeModel && <span className="jdr-model-pill">{resumeModel}</span>}
              </div>
              <div className="jdr-run-btns">
-              <button type="button" className="button secondary arch-stop-btn" onClick={stopResume}>
+              <button type="button" className="button secondary arch-stop-btn" onClick={() => stopResume(true)}>
                <Square size={12} fill="currentColor" />
                <span>{L('停止', 'Stop')}</span>
               </button>

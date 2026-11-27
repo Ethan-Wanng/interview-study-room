@@ -3,9 +3,9 @@ import type {AiQuiz} from '@/content/journey';
 import {GRADE_LIMITS,parseGradeModel,pointScores,type GradeEvent,type GradeItem,type GradeMark,type GradeMarkKind,type GradeModelId,type GradeResponse,type GradeResult} from '@/lib/grade-types';
 import {getGradeThinkingSpec} from '@/lib/thinking';
 import {filterStarterMarks} from '@/lib/starter-diff';
-import {getLocalBridgeConfig} from '@/lib/local-bridge-config';
 import {streamGradeViaBridge,streamStandardViaBridge} from '@/lib/local-bridge-client';
-import {getGlobalAiModel,getModelThinkingLevel,setGlobalAiModel,shouldUseLocalBridge,useGlobalAiModel} from './thinking-pref';
+import {ensureAiConfigStatus,getCachedAiConfigStatus,getCachedCustomAiSpec} from './ai-settings';
+import {getGlobalAiModel,getModelThinkingLevel,resolveLiveAiSelection,setGlobalAiModel,useGlobalAiModel} from './thinking-pref';
 
 // 统一跟随全站模型选择（globalModel），同时保留原导出函数名兼容既有评分入口。
 export const GRADE_MODEL_KEY='ai-global-model-v1';
@@ -80,12 +80,22 @@ async function runGradeNdjson<T>(
  signal?:AbortSignal,
 ):Promise<NdjsonOutcome<T>>{
  if(signal?.aborted)return ABORTED;
- const rawGm=parseGradeModel(body.model);
- const localCfg=getLocalBridgeConfig();
- const useLocal=shouldUseLocalBridge('grade',rawGm,localCfg);
+ if(!getCachedAiConfigStatus()){
+  await ensureAiConfigStatus();
+  if(signal?.aborted)return ABORTED;
+ }
+ const cfgStatus=getCachedAiConfigStatus();
+ const effCustom=cachedGradeCustom??getCachedCustomAiSpec();
+ const effGuest=cfgStatus?Boolean(cfgStatus.isGuest):cachedGradeIsGuest;
+ const liveSel=resolveLiveAiSelection('grade',effCustom,effGuest);
+ const rawGm=body.model!==undefined?parseGradeModel(body.model):parseGradeModel(liveSel.model);
+ const useLiveSelection=body.model===undefined||rawGm===parseGradeModel(liveSel.model);
+ const useLocal=useLiveSelection?liveSel.useLocal:(rawGm==='local'&&Boolean(liveSel.localCfg.enabled));
+ const localCfg=liveSel.localCfg;
  if(useLocal){
-  const {scopeKey,spec}=getGradeThinkingSpec('local',cachedGradeCustom,cachedGradeIsGuest,localCfg);
-  const thinkingLevel=spec.locked?'auto':getModelThinkingLevel(scopeKey,spec);
+  const thinkingLevel=useLiveSelection
+   ?liveSel.thinkingLevel
+   :(()=>{const {scopeKey,spec}=getGradeThinkingSpec('local',effCustom,effGuest,localCfg);return spec.locked?'auto':getModelThinkingLevel(scopeKey,spec)})();
   let got='',shown=0,think='',thinkStart=0,thinkSecs:number|undefined;
   const tick=setInterval(()=>{if(signal?.aborted||shown>=got.length)return;shown=Math.min(got.length,shown+Math.max(4,Math.ceil((got.length-shown)/60)));onProgress(got.slice(0,shown))},50);
   try{
@@ -128,8 +138,9 @@ async function runGradeNdjson<T>(
   }
  }
  const gm=rawGm==='local'?'auto':rawGm;
- const {scopeKey,spec}=getGradeThinkingSpec(gm,cachedGradeCustom,cachedGradeIsGuest);
- const thinkingLevel=spec.locked?'auto':getModelThinkingLevel(scopeKey,spec);
+ const thinkingLevel=useLiveSelection
+  ?liveSel.thinkingLevel
+  :(()=>{const {scopeKey,spec}=getGradeThinkingSpec(gm,effCustom,effGuest);return spec.locked?'auto':getModelThinkingLevel(scopeKey,spec)})();
  let res:Response;
  try{res=await fetch('/api/grade',{method:'POST',signal,headers:{'content-type':'application/json'},body:JSON.stringify({...body,model:gm,thinkingLevel})})}catch{return signal?.aborted?ABORTED:{ok:false,quota:false,message:NET}}
  if(!(res.headers.get('content-type')??'').includes('ndjson')){

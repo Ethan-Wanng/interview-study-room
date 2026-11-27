@@ -1,7 +1,7 @@
 import type {TutorContext,TutorEvent,TutorMessage} from '@/lib/tutor-types';
-import {getLocalBridgeConfig} from '@/lib/local-bridge-config';
 import {streamTutorViaBridge} from '@/lib/local-bridge-client';
-import {getActiveGlobalThinkingLevel,getGlobalAiModel,shouldUseLocalBridge} from '../ai/thinking-pref';
+import {ensureAiConfigStatus,getCachedCustomAiSpec} from '../ai/ai-settings';
+import {resolveLiveAiSelection} from '../ai/thinking-pref';
 
 // 流式调用 /api/tutor 或本地桥接处理笔记润色、规范化与选中文本 AI 问答
 export async function streamNoteAi(
@@ -12,10 +12,13 @@ export async function streamNoteAi(
  signal:AbortSignal,
 ):Promise<{ok:true;text:string;remaining?:number}|{ok:false;aborted?:boolean;message:string}>{
  const NET='AI 助手暂时连接失败，本次未扣除额度，请稍后重试。';
- const model=getGlobalAiModel();
- const localCfg=getLocalBridgeConfig();
- const thinkingLevel=getActiveGlobalThinkingLevel(model,localCfg);
- if(shouldUseLocalBridge('tutor',model,localCfg)){
+ if(!getCachedCustomAiSpec()){
+  await ensureAiConfigStatus();
+ }
+ const cfgStatus=getCachedCustomAiSpec();
+ const sel=resolveLiveAiSelection('tutor',cfgStatus);
+ const {model,localCfg,thinkingLevel,useLocal}=sel;
+ if(useLocal){
   let got='',think='';
   try{
    const out=await streamTutorViaBridge({

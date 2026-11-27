@@ -21,6 +21,12 @@ import CodeAnswer,{buildFiveLangStarters,untouchedStarter} from './code-answer';
 import {startersFor} from '@/content/code-starters';
 import {detectPlaygroundLang,type PlaygroundContextMeta} from '@/lib/playground-bridge';
 import {InlineRunOutput,useInlineCodeRun} from '../components/inline-code-run';
+import {
+ createThrottledCheckpoint,
+ makeCheckpointKey,
+ readAiCheckpoint,
+ removeAiCheckpoint,
+} from '@/lib/ai-checkpoint';
 
 export type Result={correct:boolean;given:string};
 export type Item={id:string;level:string;quiz:AiQuiz;order:number[]};
@@ -66,20 +72,63 @@ export default function QuestionCard({item,label,result,last,onAnswer,onNext,onP
   draftCb.current?.(clean);
  },[text,done,item.id,q.type,codeStarters]);
  const [live,setLive]=useState<GradeResult|null>(null),[retryLive,setRetryLive]=useState<GradeResult|null>(null),[liveThink,setLiveThink]=useState<GradeThinkState|null>(null),[retryThink,setRetryThink]=useState<GradeThinkState|null>(null); // AI 正在流式写出的评分
- const [grading,setGrading]=useState(false),[graded,setGraded]=useState<{result:GradeResult;remaining?:number;model?:string;think?:string;thinkSecs?:number}|null>(null),[gradeError,setGradeError]=useState('');
+ const [grading,setGrading]=useState(false),[interruptedGrade,setInterruptedGrade]=useState<{live:GradeResult|null;think:GradeThinkState|null}|null>(null),[graded,setGraded]=useState<{result:GradeResult;remaining?:number;model?:string;think?:string;thinkSecs?:number}|null>(null),[gradeError,setGradeError]=useState('');
  const [editing,setEditing]=useState(false),[refOpen,setRefOpen]=useState(false),[explainOpen,setExplainOpen]=useState(false);
  // 今天剩余的 AI 评分次数，显示在提交按钮旁边，让人一眼知道写完可以交给 AI 评分。
  const [left,setLeft]=useState<number|null>(null);
  const gradeAbortRef=useRef<AbortController|null>(null),retryAbortRef=useRef<AbortController|null>(null);
+ const gradeCpRef=useRef<ReturnType<typeof createThrottledCheckpoint<{answer:string;partial:GradeResult|null;think:GradeThinkState|null}>>|null>(null);
  useEffect(()=>{if(isWritten(q))void gradeQuota().then(setLeft)},[q]);
- useEffect(()=>()=>{gradeAbortRef.current?.abort();retryAbortRef.current?.abort()},[]);
- const stopGrade=()=>{gradeAbortRef.current?.abort()};
+ useEffect(()=>{
+  if(done||result||!isWritten(q))return;
+  const cpKey=makeCheckpointKey('grade',item.id);
+  const cp=readAiCheckpoint<{answer:string;partial:GradeResult|null;think:GradeThinkState|null}>(cpKey);
+  if(!cp||(cp.status!=='running'&&cp.status!=='interrupted')||(!cp.data.partial&&!cp.data.think?.text))return;
+  let alive=true;
+  queueMicrotask(()=>{
+   if(!alive)return;
+   if(cp.data.answer&&!text.trim())setText(cp.data.answer);
+   setInterruptedGrade({live:cp.data.partial,think:cp.data.think});
+  });
+  return()=>{alive=false};
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+ },[item.id]);
+ useEffect(()=>()=>{
+  gradeAbortRef.current?.abort();
+  retryAbortRef.current?.abort();
+  if(gradeCpRef.current){gradeCpRef.current.flush('interrupted');gradeCpRef.current.dispose();gradeCpRef.current=null}
+ },[]);
+ const stopGrade=()=>{
+  gradeAbortRef.current?.abort();
+  gradeCpRef.current?.clear();
+  gradeCpRef.current=null;
+  removeAiCheckpoint(makeCheckpointKey('grade',item.id));
+  setInterruptedGrade(null);
+ };
  const stopRetry=()=>{retryAbortRef.current?.abort()};
  const submitWritten=async()=>{if(!isWritten(q)||!text.trim()||untouchedStarter(item.id,text,codeStarters)||gradeAbortRef.current)return;
   const ctl=new AbortController();gradeAbortRef.current=ctl;
-  setEditing(false);setGrading(true);setLive(null);setLiveThink(null);setGradeError('');const r=await requestGrade([toGradeItem(q,text)],p=>setLive(p[0]),undefined,setLiveThink,ctl.signal);if(gradeAbortRef.current===ctl)gradeAbortRef.current=null;setGrading(false);setLive(null);setLiveThink(null);
-  if(ctl.signal.aborted||(!r.ok&&r.aborted)){void gradeQuota().then(setLeft);return}
-  if(r.ok){setRevealed(true);const result=r.results[0];setGraded({result,remaining:r.remaining,model:r.model,think:r.think,thinkSecs:r.thinkSecs});if(typeof r.remaining==='number')setLeft(r.remaining);onAnswer({correct:result.score>=0.6*result.max,given:text.trim()})}else{setGradeError(r.message);if(r.quota)setLeft(0)}};
+  const cpKey=makeCheckpointKey('grade',item.id);
+  gradeCpRef.current?.dispose();
+  const cp=createThrottledCheckpoint<{answer:string;partial:GradeResult|null;think:GradeThinkState|null}>(cpKey,'grade',450);
+  gradeCpRef.current=cp;
+  let curLive:GradeResult|null=null,curThink=null as GradeThinkState|null;
+  cp.update({answer:text,partial:null,think:null},'running');
+  cp.flush('running');
+  setEditing(false);setInterruptedGrade(null);setGrading(true);setLive(null);setLiveThink(null);setGradeError('');
+  const r=await requestGrade([toGradeItem(q,text)],p=>{curLive=p[0]??null;cp.update({answer:text,partial:curLive,think:curThink},'running');setLive(curLive)},undefined,t=>{curThink=t;cp.update({answer:text,partial:curLive,think:curThink},'running');setLiveThink(t)},ctl.signal);
+  if(gradeAbortRef.current===ctl)gradeAbortRef.current=null;
+  setGrading(false);setLive(null);setLiveThink(null);
+  if(ctl.signal.aborted||(!r.ok&&r.aborted)){cp.clear();if(gradeCpRef.current===cp)gradeCpRef.current=null;void gradeQuota().then(setLeft);return}
+  if(r.ok){
+   cp.clear();if(gradeCpRef.current===cp)gradeCpRef.current=null;
+   setRevealed(true);const res=r.results[0];setGraded({result:res,remaining:r.remaining,model:r.model,think:r.think,thinkSecs:r.thinkSecs});if(typeof r.remaining==='number')setLeft(r.remaining);onAnswer({correct:res.score>=0.6*res.max,given:text.trim()});
+  }else{
+   if(curLive||(curThink as GradeThinkState|null)?.text){cp.update({answer:text,partial:curLive,think:curThink},'interrupted');cp.flush('interrupted');setInterruptedGrade({live:curLive,think:curThink})}
+   else{cp.clear()}
+   if(gradeCpRef.current===cp)gradeCpRef.current=null;
+   setGradeError(r.message);if(r.quota)setLeft(0);
+  }};
  // 简答 / 代码题没答好之后，可以遮住参考答案再写一遍巩固，写完同样交给 AI 评分（不改变本题记分，题目仍留在错题本）。
  const [practising,setPractising]=useState(false),[retry,setRetry]=useState(''),[hideRef,setHideRef]=useState(true),[checked,setChecked]=useState(false);
  const [retryGrading,setRetryGrading]=useState(false),[retryGraded,setRetryGraded]=useState<GradeResult|null>(null),[retryGradedThink,setRetryGradedThink]=useState<{think?:string;secs?:number}|null>(null),[retryModel,setRetryModel]=useState(''),[retryError,setRetryError]=useState('');
@@ -119,8 +168,8 @@ export default function QuestionCard({item,label,result,last,onAnswer,onNext,onP
  else if(q.type==='judge')input=<div className="ai-options ai-judge">{[true,false].map(v=>{const o=v?1:0,state=!done?'':v===q.answer?'right':chosen.includes(o)?'wrong':'';return <button key={String(v)} className={'ai-option '+state} disabled={done} onClick={()=>{setChosen([o]);onAnswer({correct:v===q.answer,given:v?L('正确','True'):L('错误','False')})}}><b>{v?'✓':'✗'}</b><span>{v?L('正确','True'):L('错误','False')}</span>{state==='right'&&<Check size={18}/>}{state==='wrong'&&<X size={18}/>}</button>})}</div>;
  else if(q.type==='fill')input=<form className="ai-fill" onSubmit={e=>{e.preventDefault();if(!done&&text.trim())onAnswer({correct:fillMatches(q.accepted,text),given:text.trim()})}}><input value={text} disabled={done} maxLength={200} placeholder={L('输入你的答案','Type your answer')} onChange={e=>setText(e.target.value)}/>{!done&&<button className="button primary" disabled={!text.trim()}>{L('提交','Submit')}</button>}</form>;
  else if(isWritten(q)){const locked=grading||((revealed||done||!!graded)&&!editing),afterScore=(done||!!graded)&&!referenceHidden;
-  input=<div className="ai-written">{(grading||(graded&&!editing))?<AnnotatedAnswerBox answer={text} result={grading?live:graded?.result} waiting={grading&&!live} live={grading} remaining={graded?.remaining} model={graded?.model} think={grading?liveThink?.text:graded?.think} thinkSecs={grading?liveThink?.secs:graded?.thinkSecs} thinking={grading&&liveThink?.live} code={q.type!=='short'} fold={referenceHidden} onEdit={!grading&&!referenceHidden?()=>setEditing(true):undefined} onStop={grading?stopGrade:undefined}/>:q.type==='code'?<CodeAnswer id={item.id} value={text} disabled={locked} rows={9} playground={quizPgMeta} customStarters={codeStarters} placeholder={L('写代码','Write code')} onChange={setText}/>:<textarea className={q.type!=='short'?'code':''} ref={q.type==='short'?markdownEditing:codeEditing} rows={5} value={text} disabled={locked} spellCheck placeholder={(L('用自己的话写下答案，提交后 AI 直接在答题区批注哪里有错并说明原因','Write your answer; AI will annotate errors and reasons directly in your answer box'))} onChange={e=>setText(e.target.value)}/>}
-  {!revealed&&!done&&!graded&&<div className="ai-written-actions">{q.type!=='code'&&<VoiceButton className="written-voice" disabled={grading} onText={t=>setText(v=>v.trim()?v.replace(/\s+$/,'')+'\n'+t:t)}/>}<GradeModelPicker disabled={grading}/><button className="button primary" disabled={grading||!text.trim()||untouchedStarter(item.id,text,codeStarters)} onClick={()=>void submitWritten()}><Sparkles size={15}/>{grading?L('评分中…','Grading…'):gradeError?L('重试评分','Retry'):L('AI 评分','AI Grade')}</button>
+  input=<div className="ai-written">{(grading||(interruptedGrade&&!editing)||(graded&&!editing))?<AnnotatedAnswerBox answer={text} result={grading?live:interruptedGrade?interruptedGrade.live:graded?.result} waiting={grading&&!live} live={grading} remaining={graded?.remaining} model={graded?.model} think={grading?liveThink?.text:interruptedGrade?interruptedGrade.think?.text:graded?.think} thinkSecs={grading?liveThink?.secs:interruptedGrade?interruptedGrade.think?.secs:graded?.thinkSecs} thinking={grading&&liveThink?.live} code={q.type!=='short'} fold={referenceHidden} onEdit={!grading&&!referenceHidden?()=>{setInterruptedGrade(null);setEditing(true)}:undefined} onStop={grading?stopGrade:undefined}/>:q.type==='code'?<CodeAnswer id={item.id} value={text} disabled={locked} rows={9} playground={quizPgMeta} customStarters={codeStarters} placeholder={L('写代码','Write code')} onChange={setText}/>:<textarea className={q.type!=='short'?'code':''} ref={q.type==='short'?markdownEditing:codeEditing} rows={5} value={text} disabled={locked} spellCheck placeholder={(L('用自己的话写下答案，提交后 AI 直接在答题区批注哪里有错并说明原因','Write your answer; AI will annotate errors and reasons directly in your answer box'))} onChange={e=>setText(e.target.value)}/>}
+  {!revealed&&!done&&!graded&&<div className="ai-written-actions">{q.type!=='code'&&<VoiceButton className="written-voice" disabled={grading} onText={t=>setText(v=>v.trim()?v.replace(/\s+$/,'')+'\n'+t:t)}/>}<GradeModelPicker disabled={grading}/><button className="button primary" disabled={grading||!text.trim()||untouchedStarter(item.id,text,codeStarters)} onClick={()=>void submitWritten()}><Sparkles size={15}/>{grading?L('评分中…','Grading…'):interruptedGrade?L('继续评分','Continue Grading'):gradeError?L('重试评分','Retry'):L('AI 评分','AI Grade')}</button>{!grading&&interruptedGrade&&<button type="button" className="button secondary" onClick={()=>{removeAiCheckpoint(makeCheckpointKey('grade',item.id));setInterruptedGrade(null);setGradeError('')}}><X size={14}/>{L('清除','Clear')}</button>}
    {grading&&<button type="button" className="button ai-grade-stop" onClick={stopGrade}><Square size={14} fill="currentColor"/>{L('停止','Stop')}</button>}
    <button className="button secondary" disabled={grading} onClick={()=>setRevealed(true)}><Eye size={15}/>{L('参考答案','Reference')}</button></div>}
   {afterScore&&<div className="ai-written-actions">{q.type!=='code'&&!locked&&<VoiceButton className="written-voice" disabled={grading||mainStd.loading} onText={t=>setText(v=>v.trim()?v.replace(/\s+$/,'')+'\n'+t:t)}/>}<GradeModelPicker disabled={grading||mainStd.loading}/><button className="button primary" disabled={grading||mainStd.loading||!text.trim()||untouchedStarter(item.id,text,codeStarters)} onClick={()=>void submitWritten()}><Sparkles size={15}/>{grading?L('评分中…','Grading…'):graded?L('AI 重评','Re-grade'):L('AI 评分','AI Grade')}</button>

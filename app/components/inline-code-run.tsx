@@ -4,6 +4,10 @@ import {ArrowUpRight,Loader2,Sparkles,X} from 'lucide-react';
 import {useI18n} from './i18n';
 import {needsAiForInlineRun,openInPlayground,prepareForPlayground,type PlaygroundLang} from '@/lib/playground-bridge';
 import {runPlaygroundCode,type PlaygroundRunResult} from '@/lib/playground-runner';
+import {PLAYGROUND_COMPLETE_SYSTEM_PROMPT,buildPlaygroundCompleteUserPrompt,stripOuterFence} from '@/lib/ai-prompts';
+import {streamDeepViaBridge} from '@/lib/local-bridge-client';
+import {ensureAiConfigStatus,getCachedAiConfigStatus,getCachedCustomAiSpec} from '../ai/ai-settings';
+import {resolveLiveAiSelection} from '../ai/thinking-pref';
 
 export type InlineRunMeta={
  questionId?:string;
@@ -59,6 +63,21 @@ export function useInlineCodeRun(lang:PlaygroundLang|null,code:string,meta?:Inli
 
  const requestAiComplete=async(src:string,errorText:string|undefined,ctl:AbortController):Promise<string|null>=>{
   if(!lang)return null;
+  if(!getCachedAiConfigStatus())await ensureAiConfigStatus();
+  if(ctl.signal.aborted)return null;
+  const sel=resolveLiveAiSelection('tutor',getCachedCustomAiSpec(),Boolean(getCachedAiConfigStatus()?.isGuest));
+  if(sel.useLocal){
+   const out=await streamDeepViaBridge({
+    cfg:sel.localCfg,
+    system:PLAYGROUND_COMPLETE_SYSTEM_PROMPT,
+    messages:[{role:'user',content:buildPlaygroundCompleteUserPrompt({lang,code:src,error:errorText,title:meta?.title,expect:meta?.expect,questionId:meta?.questionId})}],
+    thinkingLevel:sel.thinkingLevel,
+    signal:ctl.signal,
+    onDelta:()=>{},
+   });
+   const cleaned=stripOuterFence(out.text);
+   return cleaned.trim().length>=8?cleaned:null;
+  }
   const r=await fetch('/api/playground/complete-main',{
    method:'POST',
    headers:{'content-type':'application/json'},
@@ -69,6 +88,8 @@ export function useInlineCodeRun(lang:PlaygroundLang|null,code:string,meta?:Inli
     title:meta?.title,
     expect:meta?.expect,
     questionId:meta?.questionId,
+    model:sel.model,
+    thinkingLevel:sel.thinkingLevel,
    }),
    signal:ctl.signal,
   });

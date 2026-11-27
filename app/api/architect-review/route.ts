@@ -149,6 +149,29 @@ export async function POST(req: Request) {
   }
 
   const charged = await prepareDeepModelExecution(req, user, body.model, body.thinkingLevel);
+  const runningTurn: StoredTurn = {
+   id: turnId,
+   userText: answer,
+   status: 'running',
+   text: '',
+   thoughts: '',
+  };
+  await saveAiInterviewRecord({
+   id: recordId,
+   userId: user.id,
+   kind: 'architect',
+   title: resolvedTopic || modeLabel,
+   subtitle: modeLabel,
+   status: 'running',
+   payload: {
+    mode,
+    topic: resolvedTopic,
+    cacheKey: cacheKey || existingRec?.payload?.cacheKey,
+    turns: [...priorTurns, runningTurn],
+   },
+   createdAt: existingRec?.createdAt,
+  }).catch(() => {});
+
   let out: Awaited<ReturnType<typeof runSelectedDeepModelStream>>;
   try {
    out = await runSelectedDeepModelStream({
@@ -162,6 +185,24 @@ export async function POST(req: Request) {
    });
   } catch (err) {
    await charged.refund();
+   await saveAiInterviewRecord({
+    id: recordId,
+    userId: user.id,
+    kind: 'architect',
+    title: resolvedTopic || modeLabel,
+    subtitle: modeLabel,
+    status: 'error',
+    payload: {
+     mode,
+     topic: resolvedTopic,
+     cacheKey: cacheKey || existingRec?.payload?.cacheKey,
+     turns: [
+      ...priorTurns,
+      { ...runningTurn, status: 'error', error: err instanceof Error ? err.message : '评审失败，请重试。' },
+     ],
+    },
+    createdAt: existingRec?.createdAt,
+   }).catch(() => {});
    throw err;
   }
 

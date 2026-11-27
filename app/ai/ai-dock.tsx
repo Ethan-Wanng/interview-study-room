@@ -22,17 +22,40 @@ function prepare(list:TutorMessage[]):TutorMessage[]{const out:TutorMessage[]=[]
  return out.map((m,i)=>{const imgs=m.images??[];if(i===out.length-1)return {role:m.role,text:m.text,...(imgs.length?{images:imgs.slice(-TUTOR_IMAGES.perMessage)}:{})};
   return {role:m.role,text:imgs.length?[m.text,'[图片]'].filter(Boolean).join('\n'):m.text}})}
 import {providerMeta} from '@/lib/ai-config';
-import {AiSettingsPanel,useAiConfigStatus} from './ai-settings';
+import {AiSettingsPanel,ensureAiConfigStatus,getCachedAiConfigStatus,getCachedCustomAiSpec,useAiConfigStatus} from './ai-settings';
 import ThinkBox from './think-box';
-import {getModelThinkingLevel,shouldUseLocalBridge,useGlobalAiModel,useModelThinkingLevel} from './thinking-pref';
+import {getModelThinkingLevel,resolveLiveAiSelection,shouldUseLocalBridge,useGlobalAiModel,useModelThinkingLevel} from './thinking-pref';
 import {getGlobalThinkingSpec,THINKING_META,type ThinkingLevel} from '@/lib/thinking';
-import {getLocalBridgeConfig,hasBridgeTransport,LOCAL_BRIDGE_PROVIDERS,LOCAL_PROVIDER_LABEL,useLocalBridgeConfig,type LocalBridgeProvider} from '@/lib/local-bridge-config';
+import {hasBridgeTransport,LOCAL_BRIDGE_PROVIDERS,LOCAL_PROVIDER_LABEL,useLocalBridgeConfig,type LocalBridgeProvider} from '@/lib/local-bridge-config';
 import {probeBridgeProviders,streamTutorViaBridge} from '@/lib/local-bridge-client';
 import {markdownEditing} from './code-input';
 import AddToNoteButton from '../components/add-to-note';
 import {detectPlaygroundLang,normalizePlaygroundLang,type PlaygroundLang} from '@/lib/playground-bridge';
 import {classifySafeHref,splitBareUrlTrailing} from '@/lib/safe-href';
 import {InlineRunOutput,useInlineCodeRun} from '../components/inline-code-run';
+import {createThrottledCheckpoint,makeCheckpointKey,readAiCheckpoint,removeAiCheckpoint} from '@/lib/ai-checkpoint';
+
+const DRAFT_PREFIX='isr-tutor-draft:v1:';
+function readTutorDraft(key:string):string{
+ if(typeof window==='undefined')return '';
+ try{return window.localStorage.getItem(DRAFT_PREFIX+key)||''}catch{return ''}
+}
+function writeTutorDraft(key:string,val:string){
+ if(typeof window==='undefined')return;
+ try{
+  if(val.trim())window.localStorage.setItem(DRAFT_PREFIX+key,val.slice(0,8000));
+  else window.localStorage.removeItem(DRAFT_PREFIX+key);
+ }catch{}
+}
+type TutorCheckpointData={
+ chatId:string;
+ msgs:TutorMessage[];
+ partialText:string;
+ partialThink:string;
+ partialSecs:number;
+ partialSegs:TutorSegment[];
+ model:string;
+};
 
 const KEEP=28;
 // 在同一道题（或同一张卡片）下保留临时对话，即使答题状态从“提示”切到“解析”或返回上一题也不丢失。
@@ -306,18 +329,19 @@ function createSegmentStream(onUpdate:(segs:TutorSegment[])=>void){
 }
 
 // 读 /api/tutor 或本地桥接的流：保留交错思考/输出分段，写完返回整段回复与实际响应的模型标识；支持手动中止并保留已显示内容。
-async function ask(context:TutorContext,messages:TutorMessage[],onSegments:(segs:TutorSegment[])=>void,model:string,onModel?:(m:string)=>void,signal?:AbortSignal,thinkingLevel?:ThinkingLevel):Promise<{ok:true;text:string;think:string;secs:number;segments:TutorSegment[];remaining?:number;model?:string}|{ok:false;aborted?:boolean;partial?:string;think?:string;secs?:number;segments?:TutorSegment[];model?:string;message:string}>{
+async function ask(context:TutorContext,messages:TutorMessage[],onSegments:(segs:TutorSegment[])=>void,model:string,onModel?:(m:string)=>void,signal?:AbortSignal,thinkingLevel?:ThinkingLevel,liveCfg?:{useLocal:boolean;localCfg:ReturnType<typeof resolveLiveAiSelection>['localCfg'];thinkingLevel?:ThinkingLevel}):Promise<{ok:true;text:string;think:string;secs:number;segments:TutorSegment[];remaining?:number;model?:string}|{ok:false;aborted?:boolean;partial?:string;think?:string;secs?:number;segments?:TutorSegment[];model?:string;message:string}>{
  const NET='网络连接失败，这次没有扣次数，请重试。';
  const acc=createSegmentStream(onSegments);
- const localCfg=getLocalBridgeConfig();
- if(shouldUseLocalBridge('tutor',model,localCfg)){
+ const sel=liveCfg??resolveLiveAiSelection('tutor',getCachedCustomAiSpec(),Boolean(getCachedAiConfigStatus()?.isGuest));
+ const localCfg=sel.localCfg;
+ if(sel.useLocal){
   let modelName='';
   try{
    const out=await streamTutorViaBridge({
     cfg:localCfg,
     context,
     messages,
-    thinkingLevel:thinkingLevel??'auto',
+    thinkingLevel:thinkingLevel??sel.thinkingLevel??'auto',
     signal,
     onModel:m=>{modelName=m;onModel?.(m)},
     onThink:d=>acc.pushThink(d),
@@ -333,11 +357,11 @@ async function ask(context:TutorContext,messages:TutorMessage[],onSegments:(segs
    if(signal?.aborted){
     return {ok:false,aborted:true,partial:fin.text,think:fin.think||undefined,secs:fin.secs||undefined,segments:fin.segments.length?fin.segments:undefined,model:modelName||undefined,message:''};
    }
-   return {ok:false,message:e instanceof Error&&e.message?e.message:NET};
+   return {ok:false,partial:fin.text,think:fin.think||undefined,secs:fin.secs||undefined,segments:fin.segments.length?fin.segments:undefined,model:modelName||undefined,message:e instanceof Error&&e.message?e.message:NET};
   }
  }
  let res:Response;
- try{res=await fetch('/api/tutor',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({context,messages,model,thinkingLevel:thinkingLevel??'auto'}),signal})}catch{if(signal?.aborted)return {ok:false,aborted:true,message:''};return {ok:false,message:NET}}
+ try{res=await fetch('/api/tutor',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({context,messages,model:model==='local'?'auto':model,thinkingLevel:thinkingLevel??sel.thinkingLevel??'auto'}),signal})}catch{if(signal?.aborted)return {ok:false,aborted:true,message:''};return {ok:false,message:NET}}
  if(!(res.headers.get('content-type')??'').includes('ndjson')){try{const j=await res.json() as {message?:string};return {ok:false,message:j.message??NET}}catch{return {ok:false,message:NET}}}
  let done:{remaining:number;model?:string}|null=null,err='',modelName='';
  const reader=res.body!.getReader(),onAbort=()=>{void reader.cancel().catch(()=>{})};
@@ -352,7 +376,7 @@ async function ask(context:TutorContext,messages:TutorMessage[],onSegments:(segs
  if(signal?.aborted){
   return {ok:false,aborted:true,partial:fin.text,think:fin.think||undefined,secs:fin.secs||undefined,segments:fin.segments.length?fin.segments:undefined,model:modelName||undefined,message:''};
  }
- return done&&!err?{ok:true,text:fin.text,think:fin.think,secs:fin.secs,segments:fin.segments,remaining:done.remaining,model:done.model}:{ok:false,message:err||NET}}
+ return done&&!err?{ok:true,text:fin.text,think:fin.think,secs:fin.secs,segments:fin.segments,remaining:done.remaining,model:done.model}:{ok:false,partial:fin.text||undefined,think:fin.think||undefined,secs:fin.secs||undefined,segments:fin.segments.length?fin.segments:undefined,model:modelName||undefined,message:err||NET}}
 
 async function copyText(text:string):Promise<boolean>{
  try{if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(text);return true}}catch{}
@@ -538,13 +562,29 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
  const chatTitle='quiz' in context?context.quiz.q:'lesson' in context?context.lesson.title:'playground' in context?L(`代码操场 · ${context.playground.lang}`,`Playground · ${context.playground.lang}`):L('全站提问','Site-wide chat');
  const chatId=useRef(''),[showHistory,setShowHistory]=useState(false),[chats,setChats]=useState<SavedChat[]>([]),[viewing,setViewing]=useState<SavedChat|null>(null);
  const sessionGen=useRef(0),retrySnapshotRef=useRef<{gen:number;msgs:TutorMessage[]}|null>(null),abortRef=useRef<AbortController|null>(null);
- useEffect(()=>()=>{if(copyTimer.current)clearTimeout(copyTimer.current)},[]);
+ const [interruptedCp,setInterruptedCp]=useState<TutorCheckpointData|null>(null);
+ const cpRef=useRef<ReturnType<typeof createThrottledCheckpoint<TutorCheckpointData>>|null>(null);
+ useEffect(()=>()=>{if(copyTimer.current)clearTimeout(copyTimer.current);if(cpRef.current){cpRef.current.flush('interrupted');cpRef.current.dispose();cpRef.current=null}},[]);
  const setMsgs=(next:TutorMessage[])=>{msgsRef.current=next;setMsgsState(next);if(next.length)chatCache.set(sessionKey,next);else chatCache.delete(sessionKey);
   if(next.length&&!chatId.current)chatId.current=newChatId(sessionKey);
   if(chatId.current)saveChat({id:chatId.current,key:sessionKey,title:sessionKey==='site'?(next.find(m=>m.role==='user')?.text||chatTitle):chatTitle,msgs:next})};
- useEffect(()=>{sessionGen.current++;running.current=false;retrySnapshotRef.current=null;abortRef.current=null;const saved=latestChat(sessionKey),m=chatCache.get(sessionKey)??saved?.msgs??[];chatId.current=saved?.id??'';msgsRef.current=m;setMsgsState(m);setLive(null);setLiveSegs([]);setLiveModel('');setAnswerAt(-1);setError('');setViewing(null);setCopiedAt(null)},[sessionKey]);
+ useEffect(()=>{
+  sessionGen.current++;running.current=false;retrySnapshotRef.current=null;abortRef.current=null;
+  if(cpRef.current){cpRef.current.flush('interrupted');cpRef.current.dispose();cpRef.current=null}
+  const saved=latestChat(sessionKey),cp=readAiCheckpoint<TutorCheckpointData>(makeCheckpointKey('tutor',sessionKey));
+  let m=chatCache.get(sessionKey)??saved?.msgs??[];
+  let nextChatId=saved?.id??'';
+  if(cp&&(cp.status==='running'||cp.status==='interrupted')){
+   if(cp.data.msgs.length>=m.length)m=cp.data.msgs;
+   if(cp.data.chatId)nextChatId=cp.data.chatId;
+  }
+  chatId.current=nextChatId;msgsRef.current=m;setMsgsState(m);setLive(null);setLiveSegs([]);setLiveModel('');setAnswerAt(-1);setError('');setViewing(null);setCopiedAt(null);
+  const draft=readTutorDraft(sessionKey);
+  setInput(draft);
+  setInterruptedCp(cp&&(cp.status==='running'||cp.status==='interrupted')?cp.data:null);
+ },[sessionKey]);
  useEffect(()=>{const sync=()=>setChats(loadChats());sync();return onChatsChange(sync)},[]);
- const newChat=()=>{abortRef.current?.abort();abortRef.current=null;retrySnapshotRef.current=null;chatId.current='';chatCache.delete(sessionKey);msgsRef.current=[];setMsgsState([]);setError('');setViewing(null);setShowHistory(false);setCopiedAt(null)};
+ const newChat=()=>{abortRef.current?.abort();abortRef.current=null;cpRef.current?.clear();cpRef.current=null;removeAiCheckpoint(makeCheckpointKey('tutor',sessionKey));setInterruptedCp(null);retrySnapshotRef.current=null;chatId.current='';chatCache.delete(sessionKey);msgsRef.current=[];setMsgsState([]);setError('');setViewing(null);setShowHistory(false);setCopiedAt(null)};
  // 打开一段历史对话：就是这里的对话就直接接着聊；别处的对话先只读查看，可以选择“接着这段继续问”（之后的提问按当前页面的内容回答）。
  const openChat=(c:SavedChat)=>{setShowHistory(false);setCopiedAt(null);if(c.key===sessionKey){abortRef.current?.abort();abortRef.current=null;retrySnapshotRef.current=null;chatId.current=c.id;chatCache.set(sessionKey,c.msgs);msgsRef.current=c.msgs;setMsgsState(c.msgs);setViewing(null)}else setViewing(c)};
  const adoptChat=(c:SavedChat)=>{abortRef.current?.abort();abortRef.current=null;retrySnapshotRef.current=null;chatId.current='';setViewing(null);setCopiedAt(null);setMsgs(c.msgs)};
@@ -588,7 +628,8 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
  useEffect(()=>{const el=inputRef.current;if(!el)return;el.style.height='';if(!input||el.scrollHeight<=el.clientHeight+2)return;el.style.height=Math.min(el.scrollHeight+2,160)+'px'},[input,open,showCfg]);
  // 发消息：AI 正在回复时也可以继续发，新消息先排队，等这条回复写完再一起问。
  function send(text:string,imgs:string[]=[]){const t=text.trim();if(!t&&!imgs.length)return;
-  retrySnapshotRef.current=null;setCopiedAt(null);
+  retrySnapshotRef.current=null;setCopiedAt(null);setInterruptedCp(null);removeAiCheckpoint(makeCheckpointKey('tutor',sessionKey));
+  writeTutorDraft(sessionKey,'');
   setMsgs([...msgsRef.current,{role:'user',text:t,...(imgs.length?{images:imgs}:{})}]);setInput('');setImages([]);setError('');stick.current=true;void pump()}
  // 复制单段 AI 回答内容。
  async function copyMsg(i:number,text:string){
@@ -605,6 +646,7 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
   const snapshot=msgsRef.current;
   if(snapshot[i]?.role!=='model'||snapshot[i-1]?.role!=='user')return;
   retrySnapshotRef.current={gen:sessionGen.current,msgs:snapshot};
+  setInterruptedCp(null);removeAiCheckpoint(makeCheckpointKey('tutor',sessionKey));
   setError('');setCopiedAt(null);stick.current=true;
   setMsgs(snapshot.slice(0,i));
   void pump();
@@ -613,10 +655,97 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
  function stopAnswering(){
   abortRef.current?.abort();
  }
+ function clearInterrupted(){
+  removeAiCheckpoint(makeCheckpointKey('tutor',sessionKey));
+  setInterruptedCp(null);
+  setError('');
+ }
+ function mergeInterruptedSegments(baseSegs:TutorSegment[],nextSegs:TutorSegment[]):TutorSegment[]{
+  const out=[...baseSegs];
+  for(const seg of nextSegs){
+   const last=out[out.length-1];
+   if(last&&last.kind===seg.kind){
+    out[out.length-1]={...last,text:last.kind==='think'?`${last.text}\n\n${seg.text}`:`${last.text}${seg.text}`};
+   }else{
+    out.push(seg);
+   }
+  }
+  return out;
+ }
+ async function continueInterrupted(){
+  const snap=interruptedCp;
+  if(!snap||running.current)return;
+  if(!snap.partialText.trim()){
+   setInterruptedCp(null);
+   if(snap.msgs.length>msgsRef.current.length)setMsgs(snap.msgs);
+   setError('');
+   stick.current=true;
+   void pump();
+   return;
+  }
+  running.current=true;
+  const gen=sessionGen.current,reqKey=sessionKey,reqChatId=snap.chatId||chatId.current||newChatId(reqKey);
+  setInterruptedCp(null);
+  setError('');
+  const ctl=new AbortController();
+  abortRef.current=ctl;
+  const at=snap.msgs.length;
+  const baseText=snap.partialText;
+  const baseThink=snap.partialThink;
+  const baseSecs=snap.partialSecs;
+  const baseSegs=snap.partialSegs;
+  setAnswerAt(at);
+  setLive(baseText);
+  setLiveSegs(baseSegs);
+  setLiveModel(snap.model);
+  const cpKey=makeCheckpointKey('tutor',reqKey);
+  const cp=createThrottledCheckpoint<TutorCheckpointData>(cpKey,'tutor',450);
+  cpRef.current=cp;
+  let curSegs:TutorSegment[]=baseSegs,curModel=snap.model;
+  cp.update({chatId:reqChatId,msgs:snap.msgs,partialText:baseText,partialThink:baseThink,partialSecs:baseSecs,partialSegs:baseSegs,model:curModel},'running');
+  cp.flush('running');
+  try{
+   if(!getCachedAiConfigStatus())await ensureAiConfigStatus();
+   const liveSel=resolveLiveAiSelection('tutor',getCachedCustomAiSpec(),Boolean(getCachedAiConfigStatus()?.isGuest));
+   const contMsgs:TutorMessage[]=[...prepare(snap.msgs).slice(-(KEEP-2)),{role:'model',text:baseText},{role:'user',text:'请从上次中断处无缝继续输出，不要重复已输出的内容。'}];
+   while(contMsgs[0]?.role!=='user')contMsgs.shift();
+   const r=await ask(context,contMsgs,segs=>{
+    if(sessionGen.current!==gen)return;
+    curSegs=mergeInterruptedSegments(baseSegs,segs);
+    const mergedTxt=curSegs.filter(s=>s.kind==='text').map(s=>s.text).join('\n\n');
+    cp.update({chatId:reqChatId,msgs:snap.msgs,partialText:mergedTxt,partialThink:baseThink,partialSecs:baseSecs,partialSegs:curSegs,model:curModel},'running');
+    setLiveSegs(curSegs);
+    setLive(mergedTxt);
+   },liveSel.model,m=>{if(sessionGen.current===gen){curModel=m;setLiveModel(m)}},ctl.signal,liveSel.thinkingLevel,liveSel);
+   if(abortRef.current===ctl)abortRef.current=null;
+   if(sessionGen.current!==gen){cp.dispose();if(cpRef.current===cp)cpRef.current=null;return}
+   setLive(null);setLiveSegs([]);setLiveModel('');setAnswerAt(-1);
+   if(r.ok){
+    cp.clear();if(cpRef.current===cp)cpRef.current=null;
+    const finalSegs=mergeInterruptedSegments(baseSegs,r.segments);
+    const finalText=baseText+r.text;
+    const finalThink=[baseThink,r.think].filter(Boolean).join('\n\n');
+    const finalSecs=(baseSecs||0)+(r.secs||0);
+    setMsgs([...snap.msgs,{role:'model',text:finalText,...(finalThink?{think:finalThink,secs:finalSecs}:{}),...(finalSegs.length?{segments:finalSegs}:{}),...(r.model||curModel?{model:r.model||curModel}:{}),...(typeof r.remaining==='number'?{remaining:r.remaining}:{})}]);
+    if(typeof r.remaining==='number')setLeft(r.remaining);
+   }else if(r.aborted){
+    cp.clear();if(cpRef.current===cp)cpRef.current=null;
+    const partial=baseText+(r.partial||'');
+    const finalSegs=mergeInterruptedSegments(baseSegs,r.segments||[]);
+    const finalThink=[baseThink,r.think].filter(Boolean).join('\n\n');
+    setMsgs([...snap.msgs,{role:'model',text:partial,...(finalThink?{think:finalThink,secs:baseSecs}:{}),...(finalSegs.length?{segments:finalSegs}:{}),...(r.model||curModel?{model:r.model||curModel}:{})}]);
+   }else{
+    const nextCp:TutorCheckpointData={chatId:reqChatId,msgs:snap.msgs,partialText:baseText+(r.partial||''),partialThink:[baseThink,r.think].filter(Boolean).join('\n\n'),partialSecs:(baseSecs||0)+(r.secs||0),partialSegs:mergeInterruptedSegments(baseSegs,r.segments||[]),model:r.model||curModel};
+    cp.update(nextCp,'interrupted');cp.flush('interrupted');if(cpRef.current===cp)cpRef.current=null;
+    setInterruptedCp(nextCp);
+    setError(r.message);
+   }
+  }finally{if(sessionGen.current===gen)running.current=false}
+ }
  function restoreDraft(failed:TutorMessage[]){
   const textParts=failed.map(m=>m.text).filter(Boolean),cur=inputRef.current?.value??'';
   const merged=[...textParts,cur.trim()?cur:''].filter(Boolean).join('\n\n');
-  if(merged)setInput(merged);
+  if(merged){setInput(merged);writeTutorDraft(sessionKey,merged)}
   const imgs=failed.flatMap(m=>m.images??[]);
   if(imgs.length)setImages(prev=>[...imgs,...prev].slice(0,TUTOR_IMAGES.perMessage));
   requestAnimationFrame(()=>inputRef.current?.focus());
@@ -628,19 +757,28 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
    const at=all.length;let sent=prepare(all).slice(-KEEP);while(sent[0]?.role!=='user')sent=sent.slice(1); // 对话太长时只带最近的部分，第一条必须是学习者发的
    const ctl=new AbortController();abortRef.current=ctl;
    setAnswerAt(at);setLive('');setLiveSegs([]);setLiveModel('');
-   const curSpec=getGlobalThinkingSpec(modelRef.current,customRef.current,localRef.current);
-   const curThinking=curSpec.spec.locked?'auto':getModelThinkingLevel(curSpec.scopeKey,curSpec.spec);
-   const r=await ask(context,sent,segs=>{if(sessionGen.current===gen){setLiveSegs(segs);setLive(segs.filter(s=>s.kind==='text').map(s=>s.text).join('\n\n'))}},modelRef.current,m=>{if(sessionGen.current===gen)setLiveModel(m)},ctl.signal,curThinking);
+   if(!getCachedAiConfigStatus())await ensureAiConfigStatus();
+   const liveSel=resolveLiveAiSelection('tutor',getCachedCustomAiSpec(),Boolean(getCachedAiConfigStatus()?.isGuest));
+   const cpKey=makeCheckpointKey('tutor',reqKey);
+   cpRef.current?.dispose();
+   const cp=createThrottledCheckpoint<TutorCheckpointData>(cpKey,'tutor',450);
+   cpRef.current=cp;
+   let curSegs:TutorSegment[]=[],curModel='';
+   cp.update({chatId:reqChatId,msgs:all,partialText:'',partialThink:'',partialSecs:0,partialSegs:[],model:''},'running');
+   cp.flush('running');
+   const r=await ask(context,sent,segs=>{if(sessionGen.current===gen){curSegs=segs;const txt=segs.filter(s=>s.kind==='text').map(s=>s.text).join('\n\n');const thk=segs.filter(s=>s.kind==='think').map(s=>s.text).join('\n\n');const secs=segs.filter(s=>s.kind==='think').reduce((n,s)=>n+(s.secs??0),0);cp.update({chatId:reqChatId,msgs:all,partialText:txt,partialThink:thk,partialSecs:secs,partialSegs:segs,model:curModel},'running');setLiveSegs(segs);setLive(txt)}},liveSel.model,m=>{if(sessionGen.current===gen){curModel=m;setLiveModel(m)}},ctl.signal,liveSel.thinkingLevel,liveSel);
    if(abortRef.current===ctl)abortRef.current=null;
    if(sessionGen.current!==gen){
+    cp.dispose();if(cpRef.current===cp)cpRef.current=null;
     if(retrySnapshotRef.current?.gen===gen)retrySnapshotRef.current=null;
     if(r.ok){const prev=chatCache.get(reqKey)??[];const next=[...prev,{role:'model' as const,text:r.text,...(r.think?{think:r.think,secs:r.secs}:{}),...(r.segments.length?{segments:r.segments}:{}),...(r.model?{model:r.model}:{}),...(typeof r.remaining==='number'?{remaining:r.remaining}:{})}];chatCache.set(reqKey,next);saveChat({id:reqChatId,key:reqKey,title:reqKey==='site'?(prev.find(m=>m.role==='user')?.text||reqTitle):reqTitle,msgs:next})}
     break;
    }
    setLive(null);setLiveSegs([]);setLiveModel('');setAnswerAt(-1);
    const now=msgsRef.current;
-   if(r.ok){retrySnapshotRef.current=null;setMsgs([...now.slice(0,at),{role:'model',text:r.text,...(r.think?{think:r.think,secs:r.secs}:{}),...(r.segments.length?{segments:r.segments}:{}),...(r.model?{model:r.model}:{}),...(typeof r.remaining==='number'?{remaining:r.remaining}:{})},...now.slice(at)]);if(typeof r.remaining==='number')setLeft(r.remaining)}
+   if(r.ok){cp.clear();if(cpRef.current===cp)cpRef.current=null;retrySnapshotRef.current=null;setMsgs([...now.slice(0,at),{role:'model',text:r.text,...(r.think?{think:r.think,secs:r.secs}:{}),...(r.segments.length?{segments:r.segments}:{}),...(r.model?{model:r.model}:{}),...(typeof r.remaining==='number'?{remaining:r.remaining}:{})} ,...now.slice(at)]);if(typeof r.remaining==='number')setLeft(r.remaining)}
    else if(r.aborted){
+    cp.clear();if(cpRef.current===cp)cpRef.current=null;
     const partial=r.partial?.trim()?r.partial:'';
     if(partial){
      retrySnapshotRef.current=null;
@@ -660,15 +798,11 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
     }
     break;
    }else{
-    if(retrySnapshotRef.current?.gen===gen){
-     const snap=retrySnapshotRef.current.msgs;retrySnapshotRef.current=null;
-     const extra=now.slice(at);
-     setError(r.message);setMsgs(snap);
-     if(extra.length)restoreDraft(extra);
-     break;
-    }
-    let start=at;while(start>0&&now[start-1].role==='user')start--;const failed=now.slice(start);
-    setError(r.message);setMsgs(now.slice(0,start));restoreDraft(failed);break}}}
+    retrySnapshotRef.current=null;
+    const nextCp:TutorCheckpointData={chatId:reqChatId,msgs:now,partialText:r.partial||'',partialThink:r.think||'',partialSecs:r.secs||0,partialSegs:r.segments?.length?r.segments:curSegs,model:r.model||curModel};
+    cp.update(nextCp,'interrupted');cp.flush('interrupted');if(cpRef.current===cp)cpRef.current=null;
+    setInterruptedCp(nextCp);
+    setError(r.message);break}}}
   finally{if(sessionGen.current===gen)running.current=false}}
  async function addFiles(files:FileList|File[]){const list=[...files].filter(f=>f.type.startsWith('image/'));if(!list.length)return;
   const room=TUTOR_IMAGES.perMessage-images.length;if(room<=0){setError(L(`一次最多附 ${TUTOR_IMAGES.perMessage} 张图片。`,`Up to ${TUTOR_IMAGES.perMessage} images per message.`));return}
@@ -766,6 +900,17 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
      </div>}
      {busy&&answerAt>=0&&i>=answerAt&&<small className="tutor-queued">{L('等上一条回复完接着回答','Queued')}</small>}</div></Fragment>})}
     {busy&&answerAt>=msgs.length&&liveBubble}
+    {!busy&&!viewing&&interruptedCp&&(
+     <div className="tutor-msg model">
+      {interruptedCp.model&&<div className="tutor-msg-head"><span className="tutor-model-badge"><Bot size={12}/>{tutorModelBadge(interruptedCp.model,lang)}</span></div>}
+      {interruptedCp.partialSegs.length>0?interruptedCp.partialSegs.map((seg,si)=>seg.kind==='think'?<ThinkBox key={si} text={seg.text} secs={seg.secs} L={L}/>:<Md key={si} text={seg.text} onApplyPlayground={onApplyPlaygroundCode}/>):interruptedCp.partialText?<Md text={interruptedCp.partialText} onApplyPlayground={onApplyPlaygroundCode}/>:null}
+      <div className="tutor-msg-actions">
+       <button type="button" className="tutor-msg-btn" onClick={()=>void continueInterrupted()}><Play size={12}/><span>{L('继续生成','Continue')}</span></button>
+       <button type="button" className="tutor-msg-btn" onClick={()=>{const snap=interruptedCp;setInterruptedCp(null);removeAiCheckpoint(makeCheckpointKey('tutor',sessionKey));if(snap.msgs.length>msgsRef.current.length)setMsgs(snap.msgs);setError('');stick.current=true;void pump()}}><RotateCcw size={12}/><span>{L('重试','Retry')}</span></button>
+       <button type="button" className="tutor-msg-btn" onClick={clearInterrupted}><X size={12}/><span>{L('清除','Clear')}</span></button>
+      </div>
+     </div>
+    )}
    </div>
    {error&&<p className="ai-grade-error">{error}</p>}
    {msgs.length>0&&!busy&&!viewing&&<div className={'ai-dock-prompts compact'+(hidePrompts?' folded':'')}><button type="button" className="ai-dock-prompts-label" aria-expanded={!hidePrompts} onClick={togglePrompts} title={hidePrompts?L('展开快捷提问','Show quick questions'):L('收起快捷提问','Hide quick questions')}>{L('接着问','Ask next')}{hidePrompts?<ChevronUp size={14}/>:<ChevronDown size={14}/>}</button>{!hidePrompts&&prompts.slice(0,3).map(p=><button key={p} type="button" onClick={()=>send(p)}>{p}</button>)}</div>}
@@ -773,9 +918,9 @@ export default function AiDock({context,prompts,request,title,chatKey,site,hello
    <form className="tutor-input" hidden={!!viewing} onSubmit={e=>{e.preventDefault();send(input,images)}}>
     <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={e=>{if(e.target.files)void addFiles(e.target.files);e.target.value=''}}/>
     <button type="button" className="tutor-attach-btn" onClick={()=>fileRef.current?.click()} disabled={images.length>=TUTOR_IMAGES.perMessage} title={L('附图片（也可以直接粘贴截图）','Attach image (or paste a screenshot)')} aria-label={L('附图片','Attach image')}><ImagePlus size={17}/></button>
-    <VoiceButton className="tutor-voice" onText={t=>{setInput(v=>v.trim()?v.replace(/\s+$/,'')+' '+t:t);inputRef.current?.focus()}}/>
+    <VoiceButton className="tutor-voice" onText={t=>{setInput(v=>{const next=v.trim()?v.replace(/\s+$/,'')+' '+t:t;writeTutorDraft(sessionKey,next);return next});inputRef.current?.focus()}}/>
     <textarea ref={el=>{inputRef.current=el;markdownEditing(el)}} value={input} rows={1} placeholder={busy?L('回复中也可以继续发…','Keep typing while it replies…'):L('输入问题，可粘贴截图','Ask, or paste a screenshot')} title={L('Enter 发送，Shift+Enter 换行','Enter to send, Shift+Enter for a new line')}
-     onChange={e=>setInput(e.target.value)} onPaste={e=>{const files=[...e.clipboardData.files];if(files.some(f=>f.type.startsWith('image/'))){e.preventDefault();void addFiles(files)}}}
+     onChange={e=>{const next=e.target.value;setInput(next);writeTutorDraft(sessionKey,next)}} onPaste={e=>{const files=[...e.clipboardData.files];if(files.some(f=>f.type.startsWith('image/'))){e.preventDefault();void addFiles(files)}}}
      onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();send(input,images)}}}/>
     {busy&&<button type="button" className="button tutor-stop" onClick={stopAnswering} title={L('停止当前回答','Stop generating')} aria-label={L('停止回答','Stop generating')}><Square size={14} fill="currentColor"/></button>}
     {(!busy||input.trim()||images.length>0)&&<button className="button primary tutor-send" disabled={!input.trim()&&!images.length} aria-label={L('发送','Send')}><Send size={15}/></button>}</form>

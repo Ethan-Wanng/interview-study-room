@@ -620,6 +620,37 @@ type ConfigResponse={
 };
 
 let cachedStatus:ConfigResponse|null=null;
+let pendingStatusFetch:Promise<ConfigResponse|null>|null=null;
+
+export function getCachedAiConfigStatus():ConfigResponse|null{
+ return cachedStatus;
+}
+
+export function getCachedCustomAiSpec():{provider:string;model?:string}|null{
+ if(!cachedStatus||cachedStatus.isGuest||!cachedStatus.settings?.enabled||!cachedStatus.settings?.hasKey){
+  return null;
+ }
+ return {provider:cachedStatus.settings.provider,model:cachedStatus.settings.model};
+}
+
+export async function ensureAiConfigStatus():Promise<ConfigResponse|null>{
+ if(cachedStatus)return cachedStatus;
+ if(typeof window==='undefined')return null;
+ if(!pendingStatusFetch){
+  pendingStatusFetch=fetch('/api/ai-config',{cache:'no-store'})
+   .then(async res=>{
+    if(!res.ok)return null;
+    const data=(await res.json()) as ConfigResponse;
+    cachedStatus=data;
+    return data;
+   })
+   .catch(()=>null)
+   .finally(()=>{
+    pendingStatusFetch=null;
+   });
+ }
+ return pendingStatusFetch;
+}
 
 export function useAiConfigStatus(){
  const [state,setState]=useState<ConfigResponse|null>(cachedStatus);

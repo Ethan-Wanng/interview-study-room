@@ -27,10 +27,18 @@ import AddToNoteButton from '../../components/add-to-note';
 import AiDock from '../../ai/ai-dock';
 import QuestionCard, { type Item, type Result } from '../../ai/question-card';
 import { Annotated } from '../annotated';
-import { getActiveGlobalThinkingLevel, shouldUseLocalBridge, useGlobalAiModel } from '../../ai/thinking-pref';
+import { ensureAiConfigStatus, getCachedCustomAiSpec } from '../../ai/ai-settings';
+import { resolveLiveAiSelection } from '../../ai/thinking-pref';
 import { useI18n } from '../../components/i18n';
-import { LOCAL_PROVIDER_LABEL, useLocalBridgeConfig } from '@/lib/local-bridge-config';
+import { LOCAL_PROVIDER_LABEL } from '@/lib/local-bridge-config';
 import { streamDeepViaBridge } from '@/lib/local-bridge-client';
+import {
+ createThrottledCheckpoint,
+ makeCheckpointKey,
+ readAiCheckpoint,
+ removeAiCheckpoint,
+ writeAiCheckpoint,
+} from '@/lib/ai-checkpoint';
 import { aiQuizTypes, type AiQuiz } from '@/content/journey';
 import type { PlaygroundLang } from '@/lib/playground-bridge';
 import type { JdProjectDrill, JdResearchReport } from '@/lib/jd-research-types';
@@ -139,10 +147,6 @@ export default function ProjectDrillClient({
 }) {
  const { locale } = useI18n();
  const L = (zh: string, en: string) => (locale === 'en' ? en : zh);
- const [globalModel] = useGlobalAiModel();
- const [localCfg] = useLocalBridgeConfig();
- const useLocal = shouldUseLocalBridge('deep', globalModel, localCfg);
- const thinkingLevel = getActiveGlobalThinkingLevel(globalModel, localCfg);
 
  const [reportOverrides, setReportOverrides] = useState<Record<string, JdResearchReport>>({});
  const topicList = useMemo(
@@ -193,20 +197,37 @@ export default function ProjectDrillClient({
  const [genErr, setGenErr] = useState('');
  const genAbortRef = useRef<AbortController | null>(null);
  const genTimerRef = useRef<number | null>(null);
+ const genCpRef = useRef<ReturnType<typeof createThrottledCheckpoint<{
+  recordId: string;
+  projIdx: number;
+  bypassCache: boolean;
+  thoughts: string;
+  tail: string;
+  model: string;
+ }>> | null>(null);
  const thinkPreRef = useRef<HTMLPreElement | null>(null);
  const autoStartedRef = useRef<string>('');
+ const resumedRegenRef = useRef<string>('');
 
  // Single-quiz regeneration state
  const [regenKey, setRegenKey] = useState('');
  const [regenErr, setRegenErr] = useState('');
  const [regenNonce, setRegenNonce] = useState<Record<string, number>>({});
 
- const stopGenerate = () => {
+ const stopGenerate = (clearCheckpoint = false) => {
   genAbortRef.current?.abort();
   genAbortRef.current = null;
   if (genTimerRef.current !== null) {
    window.clearInterval(genTimerRef.current);
    genTimerRef.current = null;
+  }
+  if (genCpRef.current) {
+   if (clearCheckpoint) genCpRef.current.clear();
+   else {
+    genCpRef.current.flush('interrupted');
+    genCpRef.current.dispose();
+   }
+   genCpRef.current = null;
   }
   setGenerating(false);
  };
@@ -215,6 +236,11 @@ export default function ProjectDrillClient({
   () => () => {
    genAbortRef.current?.abort();
    if (genTimerRef.current !== null) window.clearInterval(genTimerRef.current);
+   if (genCpRef.current) {
+    genCpRef.current.flush('interrupted');
+    genCpRef.current.dispose();
+    genCpRef.current = null;
+   }
   },
   [],
  );
@@ -234,32 +260,73 @@ export default function ProjectDrillClient({
   window.history.replaceState(null, '', `/interview/project-drill?${qs.toString()}`);
  };
 
- const generateDrill = async (opts?: { bypassCache?: boolean; targetTopicId?: string; targetProjIdx?: number }) => {
+ const generateDrill = async (opts?: {
+  bypassCache?: boolean;
+  targetTopicId?: string;
+  targetProjIdx?: number;
+  initialThoughts?: string;
+  initialTail?: string;
+  initialModel?: string;
+ }) => {
   const tid = opts?.targetTopicId ?? activeTopic?.id;
   const pi = opts?.targetProjIdx ?? safeProjIdx;
   if (!tid || generating) return;
 
-  stopGenerate();
+  stopGenerate(false);
   const ctl = new AbortController();
   genAbortRef.current = ctl;
   setGenerating(true);
   setGenErr('');
-  setGenModel('');
-  setGenThoughts('');
-  setGenTail('');
+  setGenModel(opts?.initialModel ?? '');
+  setGenThoughts(opts?.initialThoughts ?? '');
+  setGenTail(opts?.initialTail ?? '');
   setGenElapsed(0);
   const t0 = Date.now();
   genTimerRef.current = window.setInterval(() => {
    setGenElapsed(Math.floor((Date.now() - t0) / 1000));
   }, 1000);
 
-  let accTh = '';
-  let accTail = '';
+  const cpKey = makeCheckpointKey('project-drill', `${tid}:${pi}`);
+  const cp = createThrottledCheckpoint<{
+   recordId: string;
+   projIdx: number;
+   bypassCache: boolean;
+   thoughts: string;
+   tail: string;
+   model: string;
+  }>(cpKey, 'project-drill', 450);
+  genCpRef.current = cp;
+
+  let accTh = opts?.initialThoughts ?? '';
+  let accTail = opts?.initialTail ?? '';
+  let curModel = opts?.initialModel ?? '';
+  const saveCp = (status: 'running' | 'interrupted' = 'running') => {
+   cp.update(
+    {
+     recordId: tid,
+     projIdx: pi,
+     bypassCache: Boolean(opts?.bypassCache),
+     thoughts: accTh.slice(-16_000),
+     tail: accTail,
+     model: curModel,
+    },
+    status,
+    curModel || undefined,
+   );
+  };
+  saveCp('running');
+  cp.flush('running');
+
   try {
-   if (useLocal) {
+   if (!getCachedCustomAiSpec()) await ensureAiConfigStatus();
+   if (ctl.signal.aborted) return;
+   const sel = resolveLiveAiSelection('deep', getCachedCustomAiSpec(), !username);
+   if (sel.useLocal) {
     const targetTopic = topicList.find(t => t.id === tid) ?? activeTopic;
     if (!targetTopic) throw new Error(L('未找到对应的简历报告', 'Report not found'));
-    setGenModel(`${LOCAL_PROVIDER_LABEL[localCfg.provider]} · ${localCfg.model.trim() || 'default'}`);
+    curModel = `${LOCAL_PROVIDER_LABEL[sel.localCfg.provider]} · ${sel.localCfg.model.trim() || 'default'}`;
+    setGenModel(curModel);
+    saveCp('running');
     const pRes = await fetch('/api/jd-research/local-helper', {
      method: 'POST',
      headers: { 'content-type': 'application/json' },
@@ -276,19 +343,25 @@ export default function ProjectDrillClient({
      throw new Error(pData.error || L('准备本地提示词失败', 'Failed to prepare prompt'));
     }
     const out = await streamDeepViaBridge({
-     cfg: localCfg,
+     cfg: sel.localCfg,
      system: pData.system,
      messages: [{ role: 'user', content: pData.user }],
-     thinkingLevel,
+     thinkingLevel: sel.thinkingLevel,
      jsonMode: true,
-     onModel: m => setGenModel(m),
+     onModel: m => {
+      curModel = m;
+      setGenModel(m);
+      saveCp('running');
+     },
      onThink: d => {
       accTh += d;
       setGenThoughts(accTh);
+      saveCp('running');
      },
      onDelta: d => {
       accTail = (accTail + d).replace(/\s+/g, ' ').slice(-200);
       setGenTail(accTail);
+      saveCp('running');
      },
      signal: ctl.signal,
     });
@@ -315,7 +388,7 @@ export default function ProjectDrillClient({
       projects: baseResume.projects.map((item, idx) => (idx === pi ? { ...item, drill: parseData.drill } : item)),
      },
     };
-    fetch('/api/ai-interview-records', {
+    await fetch('/api/ai-interview-records', {
      method: 'POST',
      headers: { 'content-type': 'application/json' },
      body: JSON.stringify({
@@ -325,6 +398,8 @@ export default function ProjectDrillClient({
       payload: { report: doneReport },
      }),
     }).catch(() => {});
+    cp.clear();
+    if (genCpRef.current === cp) genCpRef.current = null;
     setReportOverrides(prev => ({ ...prev, [tid]: doneReport }));
     setLessonIdx(0);
     setQuizIdx(0);
@@ -337,8 +412,8 @@ export default function ProjectDrillClient({
      recordId: tid,
      projIdx: pi,
      bypassCache: Boolean(opts?.bypassCache),
-     model: globalModel,
-     thinkingLevel,
+     model: sel.model,
+     thinkingLevel: sel.thinkingLevel,
     }),
     signal: ctl.signal,
    });
@@ -378,20 +453,27 @@ export default function ProjectDrillClient({
      } catch {
       continue;
      }
-     if (ev.model) setGenModel(ev.model);
+     if (ev.model) {
+      curModel = ev.model;
+      setGenModel(ev.model);
+      saveCp('running');
+     }
      if (ev.type === 'reset') {
       accTail = '';
       setGenTail('');
+      saveCp('running');
       continue;
      }
      if (ev.type === 'thought' && typeof ev.text === 'string' && ev.text) {
       accTh += ev.text;
       setGenThoughts(accTh);
+      saveCp('running');
       continue;
      }
      if (ev.type === 'delta' && typeof ev.text === 'string' && ev.text) {
       accTail = (accTail + ev.text).replace(/\s+/g, ' ').slice(-200);
       setGenTail(accTail);
+      saveCp('running');
       continue;
      }
      if (ev.type === 'error') {
@@ -407,11 +489,15 @@ export default function ProjectDrillClient({
     throw new Error(L('预判结果不完整，请重试', 'Incomplete drill — please retry'));
    }
 
+   cp.clear();
+   if (genCpRef.current === cp) genCpRef.current = null;
    setReportOverrides(prev => ({ ...prev, [tid]: doneReport! }));
    setLessonIdx(0);
    setQuizIdx(0);
   } catch (e) {
    if (!ctl.signal.aborted) {
+    saveCp('interrupted');
+    cp.flush('interrupted');
     setGenErr((e as Error).message || L('预判生成失败，请重试', 'Generation failed'));
    }
   } finally {
@@ -420,17 +506,56 @@ export default function ProjectDrillClient({
     window.clearInterval(genTimerRef.current);
     genTimerRef.current = null;
    }
+   if (genCpRef.current === cp) {
+    cp.dispose();
+    genCpRef.current = null;
+   }
    setGenerating(false);
   }
  };
 
- // Auto-start once on initial navigation if requested and project has no drill yet
+ // Auto-resume interrupted drill generation or honor ?autostart=1 on initial navigation
  useEffect(() => {
-  if (!autoStart || !activeTopic || !proj || proj.drill) return;
+  if (!activeTopic || !proj) return;
+  const cpKey = makeCheckpointKey('project-drill', `${activeTopic.id}:${safeProjIdx}`);
+  if (proj.drill) {
+   removeAiCheckpoint(cpKey);
+   return;
+  }
   const key = `${activeTopic.id}:${safeProjIdx}`;
   if (autoStartedRef.current === key) return;
-  autoStartedRef.current = key;
-  void generateDrill({ targetTopicId: activeTopic.id, targetProjIdx: safeProjIdx });
+  const cp = readAiCheckpoint<{
+   recordId: string;
+   projIdx: number;
+   bypassCache: boolean;
+   thoughts: string;
+   tail: string;
+   model: string;
+  }>(cpKey, 20 * 60_000);
+  if (cp && (cp.status === 'running' || cp.status === 'interrupted')) {
+   let alive = true;
+   queueMicrotask(() => {
+    if (!alive || autoStartedRef.current === key) return;
+    autoStartedRef.current = key;
+    void generateDrill({
+     targetTopicId: activeTopic.id,
+     targetProjIdx: safeProjIdx,
+     bypassCache: cp.data.bypassCache,
+     initialThoughts: cp.data.thoughts,
+     initialTail: cp.data.tail,
+     initialModel: cp.data.model,
+    });
+   });
+   return () => { alive = false; };
+  }
+  if (!autoStart) return;
+  let alive = true;
+  queueMicrotask(() => {
+   if (!alive || autoStartedRef.current === key) return;
+   autoStartedRef.current = key;
+   void generateDrill({ targetTopicId: activeTopic.id, targetProjIdx: safeProjIdx });
+  });
+  return () => { alive = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
  }, [autoStart, activeTopic?.id, safeProjIdx]);
 
@@ -546,10 +671,21 @@ export default function ProjectDrillClient({
   if (!activeTopic || !quizzes[targetQIdx] || regenKey) return;
   const qz = quizzes[targetQIdx];
   const targetKey = `${activeTopic.id}:p${safeProjIdx}:${qz.id}`;
+  const cpKey = makeCheckpointKey('project-drill-regen', `${activeTopic.id}:${safeProjIdx}:${targetQIdx}`);
+  writeAiCheckpoint({
+   key: cpKey,
+   kind: 'project-drill-regen',
+   status: 'running',
+   startedAt: Date.now(),
+   updatedAt: Date.now(),
+   data: { quizId: qz.id, quizIdx: targetQIdx },
+  });
   setRegenKey(targetKey);
   setRegenErr('');
   try {
-   if (useLocal) {
+   if (!getCachedCustomAiSpec()) await ensureAiConfigStatus();
+   const sel = resolveLiveAiSelection('deep', getCachedCustomAiSpec(), !username);
+   if (sel.useLocal) {
     const pRes = await fetch('/api/jd-research/local-helper', {
      method: 'POST',
      headers: { 'content-type': 'application/json' },
@@ -566,10 +702,10 @@ export default function ProjectDrillClient({
      throw new Error(pData.error || L('准备本地提示词失败', 'Failed to prepare prompt'));
     }
     const out = await streamDeepViaBridge({
-     cfg: localCfg,
+     cfg: sel.localCfg,
      system: pData.system,
      messages: [{ role: 'user', content: pData.user }],
-     thinkingLevel,
+     thinkingLevel: sel.thinkingLevel,
      jsonMode: true,
      onDelta: () => {},
     });
@@ -602,7 +738,7 @@ export default function ProjectDrillClient({
       ),
      },
     };
-    fetch('/api/ai-interview-records', {
+    await fetch('/api/ai-interview-records', {
      method: 'POST',
      headers: { 'content-type': 'application/json' },
      body: JSON.stringify({
@@ -612,6 +748,7 @@ export default function ProjectDrillClient({
       payload: { report: nextReport },
      }),
     }).catch(() => {});
+    removeAiCheckpoint(cpKey);
     setReportOverrides(prev => ({ ...prev, [activeTopic.id]: nextReport }));
     updateSession(prev => {
      const results = { ...prev.results };
@@ -633,8 +770,8 @@ export default function ProjectDrillClient({
      projIdx: safeProjIdx,
      mode: 'regen-quiz',
      quizIdx: targetQIdx,
-     model: globalModel,
-     thinkingLevel,
+     model: sel.model,
+     thinkingLevel: sel.thinkingLevel,
     }),
    });
    const d = (await r.json()) as {
@@ -645,6 +782,7 @@ export default function ProjectDrillClient({
    if (!r.ok || !d.ok || !d.report) {
     throw new Error(d.error || L('重出题目失败，请重试', 'Regeneration failed'));
    }
+   removeAiCheckpoint(cpKey);
    setReportOverrides(prev => ({ ...prev, [activeTopic.id]: d.report! }));
    updateSession(prev => {
     const results = { ...prev.results };
@@ -657,11 +795,32 @@ export default function ProjectDrillClient({
    });
    setRegenNonce(prev => ({ ...prev, [targetKey]: (prev[targetKey] || 0) + 1 }));
   } catch (e) {
+   removeAiCheckpoint(cpKey);
    setRegenErr((e as Error).message || L('重出题目失败，请重试', 'Regeneration failed'));
   } finally {
    setRegenKey('');
   }
  };
+
+ useEffect(() => {
+  if (!activeTopic || !drill || regenKey) return;
+  const idx = tab === 'practice' ? safeQuizIdx : -1;
+  if (idx < 0 || !quizzes[idx]) return;
+  const key = `${activeTopic.id}:${safeProjIdx}:${idx}`;
+  if (resumedRegenRef.current === key) return;
+  const cpKey = makeCheckpointKey('project-drill-regen', key);
+  const cp = readAiCheckpoint<{ quizId: string; quizIdx: number }>(cpKey, 10 * 60_000);
+  if (cp && cp.data.quizId === quizzes[idx].id) {
+   let alive = true;
+   queueMicrotask(() => {
+    if (!alive || resumedRegenRef.current === key) return;
+    resumedRegenRef.current = key;
+    void regenerateQuiz(idx);
+   });
+   return () => { alive = false; };
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [activeTopic?.id, safeProjIdx, tab, safeQuizIdx, Boolean(drill)]);
 
  const currentItem: Item | null = useMemo(() => {
   if (!activeTopic || !currentQuiz || !quizKey) return null;
@@ -861,7 +1020,7 @@ export default function ProjectDrillClient({
           <button
            type="button"
            className="button secondary arch-stop-btn"
-           onClick={stopGenerate}
+           onClick={() => stopGenerate(true)}
           >
            <Square size={12} fill="currentColor" />
            <span>{L('停止', 'Stop')}</span>
@@ -928,21 +1087,17 @@ export default function ProjectDrillClient({
         {tab === 'lessons' && currentLesson && (
          <>
           <div className="jds-qnums" aria-label={L('教学卡切换', 'Lesson index')}>
-           {lessons.map((ls, i) => {
-            const read = Boolean(session.readLessons[`${activeTopic.id}:p${safeProjIdx}:l${i}`]);
-            return (
-             <button
-              key={i}
-              type="button"
-              className={'jds-qnum' + (i === safeLessonIdx ? ' cur' : '') + (read ? ' done' : '')}
-              onClick={() => switchLesson(i)}
-             >
-              {read && <Check size={12} />}
-              <span>{i + 1}</span>
-              <small>{ls.angle}</small>
-             </button>
-            );
-           })}
+           {lessons.map((ls, i) => (
+            <button
+             key={i}
+             type="button"
+             className={'jds-qnum' + (i === safeLessonIdx ? ' cur' : '')}
+             onClick={() => switchLesson(i)}
+            >
+             <span>{i + 1}</span>
+             <small>{ls.angle}</small>
+            </button>
+           ))}
           </div>
 
           <CardSideNav

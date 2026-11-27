@@ -386,13 +386,17 @@ export async function completePlaygroundCode(input:{
  title?:string;
  expect?:string;
  questionId?:string;
+ model?:string;
+ thinkingLevel?:ThinkingLevel;
  custom?:RuntimeAiConfig;
 }):Promise<string>{
- const candidates=resolveRuntime(input.custom,false,'deepseek-flash');
+ const siteModel=input.model&&input.model!=='auto'&&input.model!=='custom'?input.model:'deepseek-flash';
+ const lv=parseThinkingLevel(input.thinkingLevel);
+ const candidates=resolveRuntime(input.custom,false,siteModel);
  const userParts=buildPlaygroundCompleteUserPrompt(input);
 
  const isCustom=Boolean(input.custom?.isCustom&&input.custom.apiKey);
- const cacheKey=!isCustom?'pgc:'+(await sha256Hex([input.lang,userParts])):'';
+ const cacheKey=!isCustom?'pgc:'+(await sha256Hex([siteModel,lv,input.lang,userParts])):'';
  if(cacheKey){
   const hit=await readPromptCache<{code:string}>(cacheKey);
   if(hit?.payload?.code)return hit.payload.code;
@@ -411,7 +415,7 @@ export async function completePlaygroundCode(input:{
     false,
     cand.maxTokens,
     ()=>{},
-    {thinking:false,thinkingLevel:'off'},
+    {thinking:cand.thinking,thinkingLevel:lv},
    );
    const cleaned=stripOuterFence(text);
    if(cleaned.trim().length>=8){
